@@ -2326,7 +2326,7 @@ impl TermWindow {
     }
 
     fn show_tab_navigator(&mut self) {
-        self.show_launcher_impl("Tab Navigator", LauncherFlags::TABS);
+        self.show_launcher_impl("Tab Navigator", LauncherFlags::TABS, None, None);
     }
 
     fn show_launcher(&mut self) {
@@ -2337,10 +2337,18 @@ impl TermWindow {
                 | LauncherFlags::DOMAINS
                 | LauncherFlags::KEY_ASSIGNMENTS
                 | LauncherFlags::COMMANDS,
+            None,
+            None,
         );
     }
 
-    fn show_launcher_impl(&mut self, title: &str, flags: LauncherFlags) {
+    fn show_launcher_impl(
+        &mut self,
+        title: &str,
+        flags: LauncherFlags,
+        description: Option<String>,
+        fuzzy_description: Option<String>,
+    ) {
         let mux_window_id = self.mux_window_id;
         let window = self.window.as_ref().unwrap().clone();
 
@@ -2362,7 +2370,12 @@ impl TermWindow {
         let pane_id = pane.pane_id();
         let tab_id = tab.tab_id();
         let title = title.to_string();
-
+        let description = description.unwrap_or(
+            "Select an item and press Enter=launch  \
+                                                            Esc=cancel  /=filter"
+                .to_string(),
+        );
+        let fuzzy_description = fuzzy_description.unwrap_or("Fuzzy matching: ".to_string());
         promise::spawn::spawn(async move {
             let args = LauncherArgs::new(
                 &title,
@@ -2370,6 +2383,8 @@ impl TermWindow {
                 mux_window_id,
                 pane_id,
                 domain_id_of_current_pane,
+                &description,
+                &fuzzy_description,
             )
             .await;
 
@@ -2703,9 +2718,12 @@ impl TermWindow {
             ShowTabNavigator => self.show_tab_navigator(),
             ShowDebugOverlay => self.show_debug_overlay(),
             ShowLauncher => self.show_launcher(),
-            ShowLauncherArgs(args) => {
-                self.show_launcher_impl(args.title.as_deref().unwrap_or("Launcher"), args.flags)
-            }
+            ShowLauncherArgs(args) => self.show_launcher_impl(
+                args.title.as_deref().unwrap_or("Launcher"),
+                args.flags,
+                args.description.clone(),
+                args.fuzzy_description.clone(),
+            ),
             HideApplication => {
                 let con = Connection::get().expect("call on gui thread");
                 con.hide_application();

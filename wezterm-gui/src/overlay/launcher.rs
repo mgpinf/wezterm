@@ -57,6 +57,8 @@ pub struct LauncherArgs {
     title: String,
     active_workspace: String,
     workspaces: Vec<String>,
+    description: String,
+    fuzzy_description: String,
 }
 
 impl LauncherArgs {
@@ -67,6 +69,8 @@ impl LauncherArgs {
         mux_window_id: WindowId,
         pane_id: PaneId,
         domain_id_of_current_tab: DomainId,
+        description: &str,
+        fuzzy_description: &str,
     ) -> Self {
         let mux = Mux::get();
 
@@ -155,6 +159,8 @@ impl LauncherArgs {
             title: title.to_string(),
             workspaces,
             active_workspace,
+            description: description.to_string(),
+            fuzzy_description: fuzzy_description.to_string(),
         }
     }
 }
@@ -172,6 +178,8 @@ struct LauncherState {
     window: ::window::Window,
     filtering: bool,
     flags: LauncherFlags,
+    description: String,
+    fuzzy_description: String,
 }
 
 impl LauncherState {
@@ -361,11 +369,7 @@ impl LauncherState {
             },
             Change::Text(format!(
                 "{}\r\n",
-                truncate_right(
-                    "Select an item and press Enter=launch  \
-                     Esc=cancel  /=filter",
-                    max_width
-                )
+                truncate_right(&self.description, max_width)
             )),
             Change::AllAttributes(CellAttributes::default()),
         ];
@@ -416,7 +420,7 @@ impl LauncherState {
                 },
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Text(truncate_right(
-                    &format!("Fuzzy matching: {}", self.filter_term),
+                    &format!("{}{}", &self.fuzzy_description, self.filter_term),
                     max_width,
                 )),
             ]);
@@ -607,6 +611,8 @@ pub fn launcher(
         window,
         filtering: args.flags.contains(LauncherFlags::FUZZY),
         flags: args.flags,
+        description: args.description.clone(),
+        fuzzy_description: args.fuzzy_description.clone(),
     };
 
     term.set_raw_mode()?;
