@@ -824,6 +824,8 @@ pub enum CopyModeAssignment {
     JumpAgain,
     JumpReverse,
     JumpToMatchingBracket,
+    SearchForwardRelativeToCursor,
+    SearchBackwardRelativeToCursor,
 }
 
 pub type KeyTable = HashMap<(KeyCode, Modifiers), KeyTableEntry>;
