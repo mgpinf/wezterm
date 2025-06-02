@@ -31,8 +31,8 @@ use ::window::*;
 use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
     Confirmation, KeyAssignment, LauncherActionArgs, PaneDirection, Pattern, PromptInputLine,
-    QuickSelectArguments, RotationDirection, SearchDirection, SelectorActions, SpawnCommand,
-    SplitSize, TransientMenu,
+    QuickSelectArguments, RotationDirection, SelectorActions, SpawnCommand, SplitSize,
+    TransientMenu,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2951,8 +2951,12 @@ impl TermWindow {
                 if let Some(pane) = self.get_active_pane_or_overlay() {
                     let mut replace_current = false;
                     let activate_match_pos = match direction {
-                        SearchDirection::Forward => ActivateMatchPosition::AfterCursor,
-                        SearchDirection::Backward => ActivateMatchPosition::BeforeCursor,
+                        config::keyassignment::ActivateMatchPosition::AfterCursor => {
+                            ActivateMatchPosition::AfterCursor
+                        }
+                        config::keyassignment::ActivateMatchPosition::BeforeCursor => {
+                            ActivateMatchPosition::BeforeCursor
+                        }
                     };
                     if let Some(existing) = pane.downcast_ref::<CopyOverlay>() {
                         let mut params = existing.get_params();
