@@ -111,6 +111,18 @@ pub enum SelectionMode {
     Block,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
+pub enum SearchDirection {
+    Forward,
+    Backward,
+}
+
+impl Default for SearchDirection {
+    fn default() -> Self {
+        Self::Forward
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
 pub enum Pattern {
     CaseSensitiveString(String),
@@ -681,6 +693,10 @@ pub enum KeyAssignment {
     ShowLauncherArgs(LauncherActionArgs),
     ClearScrollback(ScrollbackEraseMode),
     Search(Pattern),
+    ExtendedSearch {
+        pattern: Pattern,
+        direction: SearchDirection,
+    },
     ActivateCopyMode,
 
     SelectTextAtMouseCursor(SelectionMode),
@@ -824,8 +840,6 @@ pub enum CopyModeAssignment {
     JumpAgain,
     JumpReverse,
     JumpToMatchingBracket,
-    SearchForwardRelativeToCursor,
-    SearchBackwardRelativeToCursor,
 }
 
 pub type KeyTable = HashMap<(KeyCode, Modifiers), KeyTableEntry>;
