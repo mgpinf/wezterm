@@ -599,7 +599,7 @@ pub enum KeyAssignment {
     Search(Pattern),
     ExtendedSearch {
         pattern: Pattern,
-        direction: ActivateMatchPosition,
+        activate_match: ActivateMatchPosition,
     },
     ActivateCopyMode,
 
