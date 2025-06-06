@@ -128,6 +128,11 @@ return {
         mods = 'SHIFT',
         action = act.CopyMode 'MoveToStartOfLineContent',
       },
+      {
+        key = 'B',
+        mods = 'SHIFT',
+        action = act.CopyMode 'MoveBackwardLongWord',
+      },
       { key = 'b', mods = 'NONE', action = act.CopyMode 'MoveBackwardWord' },
       { key = 'b', mods = 'ALT', action = act.CopyMode 'MoveBackwardWord' },
       { key = 'b', mods = 'CTRL', action = act.CopyMode 'PageUp' },
@@ -143,6 +148,11 @@ return {
         key = 'd',
         mods = 'CTRL',
         action = act.CopyMode { MoveByPage = 0.5 },
+      },
+      {
+        key = 'E',
+        mods = 'SHIFT',
+        action = act.CopyMode 'MoveForwardLongWordEnd',
       },
       {
         key = 'e',
@@ -210,6 +220,11 @@ return {
         key = 'v',
         mods = 'CTRL',
         action = act.CopyMode { SetSelectionMode = 'Block' },
+      },
+      {
+        key = 'W',
+        mods = 'SHIFT',
+        action = act.CopyMode 'MoveForwardLongWord',
       },
       { key = 'w', mods = 'NONE', action = act.CopyMode 'MoveForwardWord' },
       {
