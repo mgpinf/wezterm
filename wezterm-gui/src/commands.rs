@@ -846,6 +846,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: None,
         },
+        DisplayText(_) => CommandDef {
+            brief: "Displays provided text".into(),
+            doc: "Activates the display overlay and displays provided text".into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &[],
+            icon: None,
+        },
         QuickSelect => CommandDef {
             brief: "Enter QuickSelect mode".into(),
             doc: "Activates the quick selection UI for the current pane".into(),

@@ -640,6 +640,11 @@ pub struct SelectorActions {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct DisplayText {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub enum KeyAssignment {
     SpawnTab(SpawnTabDomain),
     SpawnWindow,
@@ -760,6 +765,7 @@ pub enum KeyAssignment {
     Confirmation(Confirmation),
     TransientMenu(TransientMenu),
     SelectorActions(SelectorActions),
+    DisplayText(DisplayText),
 }
 impl_lua_conversion_dynamic!(KeyAssignment);
 
