@@ -12,6 +12,7 @@ pub mod confirm;
 pub mod confirm_close_pane;
 pub mod copy;
 pub mod debug;
+pub mod display;
 pub mod launcher;
 pub mod prompt;
 pub mod quickselect;
