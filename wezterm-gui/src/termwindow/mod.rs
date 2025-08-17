@@ -31,9 +31,9 @@ use ::wezterm_term::input::{ClickPosition, MouseButton as TMB};
 use ::window::*;
 use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
-    Confirmation, InnerPattern, KeyAssignment, LauncherActionArgs, PaneDirection, Pattern,
-    PromptInputLine, QuickSelectArguments, RotationDirection, SelectorActions, SpawnCommand,
-    SplitSize, TransientMenu,
+    Confirmation, DisplayText, InnerPattern, KeyAssignment, LauncherActionArgs, PaneDirection,
+    Pattern, PromptInputLine, QuickSelectArguments, RotationDirection, SelectorActions,
+    SpawnCommand, SplitSize, TransientMenu,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2423,6 +2423,22 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
+    fn show_display_text(&mut self, args: &DisplayText) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let args = args.clone();
+
+        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::display::show_display_text_overlay(term, args)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
     fn show_debug_overlay(&mut self) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
@@ -3267,6 +3283,7 @@ impl TermWindow {
             CommandRunner(args) => self.show_command_runner(args),
             TransientMenu(args) => self.show_transient_menu(args),
             SelectorActions(args) => self.show_selector_actions(args),
+            DisplayText(args) => self.show_display_text(args),
         };
         Ok(PerformAssignmentResult::Handled)
     }
