@@ -370,6 +370,12 @@ end
             })?,
         )?;
 
+        wezterm_mod.set("trim_newlines", lua.create_function(trim_newlines)?)?;
+        wezterm_mod.set(
+            "trim_newlines_right",
+            lua.create_function(trim_newlines_right)?,
+        )?;
+
         // Define our own os.getenv function that knows how to resolve current
         // environment values from eg: the registry on Windows, or for
         // the current SHELL value on unix, even if the user has changed
@@ -696,6 +702,14 @@ fn split_by_newlines<'lua>(_: &'lua Lua, text: String) -> mlua::Result<Vec<Strin
             s.trim_end_matches('\r').to_string()
         })
         .collect())
+}
+
+fn trim_newlines_right<'lua>(_: &'lua Lua, text: String) -> mlua::Result<String> {
+    Ok(text.trim_end_matches("\r\n").to_string())
+}
+
+fn trim_newlines<'lua>(_: &'lua Lua, text: String) -> mlua::Result<String> {
+    Ok(text.trim_matches(&['\r', '\n']).to_string())
 }
 
 /// This implements `wezterm.on`, whose goal is to register an event handler
