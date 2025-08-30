@@ -705,7 +705,7 @@ fn split_by_newlines<'lua>(_: &'lua Lua, text: String) -> mlua::Result<Vec<Strin
 }
 
 fn trim_newlines_right<'lua>(_: &'lua Lua, text: String) -> mlua::Result<String> {
-    Ok(text.trim_end_matches("\r\n").to_string())
+    Ok(text.trim_end_matches(&['\r', '\n']).to_string())
 }
 
 fn trim_newlines<'lua>(_: &'lua Lua, text: String) -> mlua::Result<String> {
