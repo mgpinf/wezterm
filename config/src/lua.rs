@@ -371,10 +371,7 @@ end
         )?;
 
         wezterm_mod.set("trim_newlines", lua.create_function(trim_newlines)?)?;
-        wezterm_mod.set(
-            "trim_newlines_right",
-            lua.create_function(trim_newlines_right)?,
-        )?;
+        wezterm_mod.set("trim_newlines_end", lua.create_function(trim_newlines_end)?)?;
 
         // Define our own os.getenv function that knows how to resolve current
         // environment values from eg: the registry on Windows, or for
@@ -704,7 +701,7 @@ fn split_by_newlines<'lua>(_: &'lua Lua, text: String) -> mlua::Result<Vec<Strin
         .collect())
 }
 
-fn trim_newlines_right<'lua>(_: &'lua Lua, text: String) -> mlua::Result<String> {
+fn trim_newlines_end<'lua>(_: &'lua Lua, text: String) -> mlua::Result<String> {
     Ok(text.trim_end_matches(&['\r', '\n']).to_string())
 }
 
