@@ -320,7 +320,8 @@ impl<'a> TrieNode<'a> {
 
 struct TransientColors {
     key_fg: ColorAttribute,
-    flag_fg: ColorAttribute,
+    active_flag_fg: ColorAttribute,
+    inactive_flag_fg: ColorAttribute,
 }
 
 impl TransientColors {
@@ -333,10 +334,13 @@ impl TransientColors {
                 .transient_entry_key_fg
                 .unwrap_or(AnsiColor::Purple.into())
                 .into(),
-            flag_fg: colors
-                .transient_entry_flag_fg
+            active_flag_fg: colors
+                .transient_entry_active_flag_fg
                 .unwrap_or(AnsiColor::Red.into())
                 .into(),
+            inactive_flag_fg: colors
+                .transient_entry_inactive_flag_fg
+                .map_or_else(|| ColorAttribute::default(), |fg_color| fg_color.into()),
         }
     }
 }
@@ -372,14 +376,19 @@ impl<'a> TransientSwitch<'a> {
         if self.value.get() {
             changes.append(&mut vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(colors.flag_fg)),
-                Change::Text(delegate.flag.clone()),
-                Change::AllAttributes(CellAttributes::default()),
+                Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
             ]);
         } else {
-            changes.push(Change::Text(delegate.flag.clone()));
+            changes.push(Change::Attribute(AttributeChange::Foreground(
+                colors.inactive_flag_fg,
+            )));
         }
-        changes.push(Change::Text(")".to_string()));
+
+        changes.append(&mut vec![
+            Change::Text(delegate.flag.clone()),
+            Change::AllAttributes(CellAttributes::default()),
+            Change::Text(")".to_string()),
+        ]);
 
         if render_now {
             term.render(changes)?;
@@ -421,15 +430,20 @@ impl<'a> TransientOption<'a> {
         if let Some(val) = self.value.borrow().as_ref() {
             changes.append(&mut vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(colors.flag_fg)),
+                Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(format!("{}{}", delegate.flag, val)),
-                Change::AllAttributes(CellAttributes::default()),
             ]);
         } else {
-            changes.push(Change::Text(format!("{}", delegate.flag)));
+            changes.append(&mut vec![
+                Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
+                Change::Text(format!("{}", delegate.flag)),
+            ])
         }
 
-        changes.push(Change::Text(")".to_string()));
+        changes.append(&mut vec![
+            Change::AllAttributes(CellAttributes::default()),
+            Change::Text(")".to_string()),
+        ]);
 
         if render_now {
             term.render(changes)?;
@@ -471,20 +485,24 @@ impl<'a> TransientCyclicSwitch<'a> {
         if let Some(idx) = self.active_idx.get() {
             changes.append(&mut vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(colors.flag_fg)),
+                Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-                let mut prefix = " [";
             if !delegate.choices.is_empty() {
+                changes.push(Change::Attribute(AttributeChange::Foreground(
+                    colors.inactive_flag_fg,
+                )));
+                let mut prefix = " [";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     if cur_idx == idx {
                         changes.append(&mut vec![
                             Change::Text(prefix.to_string()),
                             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                            Change::Attribute(AttributeChange::Foreground(colors.flag_fg)),
+                            Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                             Change::Text(choice.to_string()),
                             Change::AllAttributes(CellAttributes::default()),
+                            Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                         ]);
                     } else {
                         changes.push(Change::Text(format!("{}{}", prefix, choice)));
@@ -493,19 +511,32 @@ impl<'a> TransientCyclicSwitch<'a> {
                         prefix = "|";
                     }
                 }
-                changes.push(Change::Text("]".to_string()));
+                changes.append(&mut vec![
+                    Change::Text("]".to_string()),
+                    Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+                ]);
             }
         } else {
-            changes.push(Change::Text(delegate.flag.clone()));
-                let mut prefix = " [";
+            changes.append(&mut vec![
+                Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
+                Change::Text(delegate.flag.clone()),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
             if !delegate.choices.is_empty() {
+                changes.push(Change::Attribute(AttributeChange::Foreground(
+                    colors.inactive_flag_fg,
+                )));
+                let mut prefix = " [";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     changes.push(Change::Text(format!("{}{}", prefix, choice)));
                     if cur_idx == 0 {
                         prefix = "|";
                     }
                 }
-                changes.push(Change::Text("]".to_string()));
+                changes.append(&mut vec![
+                    Change::Text("]".to_string()),
+                    Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+                ]);
             }
         }
         changes.push(Change::Text(")".to_string()));
