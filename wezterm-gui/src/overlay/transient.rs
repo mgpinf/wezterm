@@ -493,7 +493,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
-                let mut prefix = " [";
+                let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     if cur_idx == idx {
                         changes.append(&mut vec![
@@ -526,7 +526,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
-                let mut prefix = " [";
+                let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     changes.push(Change::Text(format!("{}{}", prefix, choice)));
                     if cur_idx == 0 {
