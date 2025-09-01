@@ -475,8 +475,8 @@ impl<'a> TransientCyclicSwitch<'a> {
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-            if delegate.choices.first().is_some() {
                 let mut prefix = " [";
+            if !delegate.choices.is_empty() {
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     if cur_idx == idx {
                         changes.append(&mut vec![
@@ -497,8 +497,8 @@ impl<'a> TransientCyclicSwitch<'a> {
             }
         } else {
             changes.push(Change::Text(delegate.flag.clone()));
-            if delegate.choices.first().is_some() {
                 let mut prefix = " [";
+            if !delegate.choices.is_empty() {
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     changes.push(Change::Text(format!("{}{}", prefix, choice)));
                     if cur_idx == 0 {
