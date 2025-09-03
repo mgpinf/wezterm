@@ -140,6 +140,7 @@ config.colors = {
   transient_entry_key_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
   transient_entry_active_flag_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   transient_entry_inactive_flag_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  transient_entry_active_value_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
 }
 
 return config
