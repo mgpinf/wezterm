@@ -322,6 +322,7 @@ struct TransientColors {
     key_fg: ColorAttribute,
     active_flag_fg: ColorAttribute,
     inactive_flag_fg: ColorAttribute,
+    active_value_fg: ColorAttribute,
 }
 
 impl TransientColors {
@@ -341,6 +342,10 @@ impl TransientColors {
             inactive_flag_fg: colors
                 .transient_entry_inactive_flag_fg
                 .map_or_else(|| ColorAttribute::default(), |fg_color| fg_color.into()),
+            active_value_fg: colors
+                .transient_entry_active_value_fg
+                .unwrap_or(AnsiColor::Green.into())
+                .into(),
         }
     }
 }
@@ -431,7 +436,9 @@ impl<'a> TransientOption<'a> {
             changes.append(&mut vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
-                Change::Text(format!("{}{}", delegate.flag, val)),
+                Change::Text(delegate.flag.clone()),
+                Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
+                Change::Text(val.to_string()),
             ]);
         } else {
             changes.append(&mut vec![
@@ -499,7 +506,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                         changes.append(&mut vec![
                             Change::Text(prefix.to_string()),
                             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                            Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
+                            Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                             Change::Text(choice.to_string()),
                             Change::AllAttributes(CellAttributes::default()),
                             Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),

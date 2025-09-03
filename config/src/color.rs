@@ -183,6 +183,7 @@ pub struct Palette {
     pub transient_entry_key_fg: Option<ColorSpec>,
     pub transient_entry_active_flag_fg: Option<ColorSpec>,
     pub transient_entry_inactive_flag_fg: Option<ColorSpec>,
+    pub transient_entry_active_value_fg: Option<ColorSpec>,
 
     pub selector_multiple_marker_bg: Option<ColorSpec>,
 }
@@ -243,6 +244,7 @@ impl Palette {
             transient_entry_key_fg: overlay!(transient_entry_key_fg),
             transient_entry_active_flag_fg: overlay!(transient_entry_active_flag_fg),
             transient_entry_inactive_flag_fg: overlay!(transient_entry_inactive_flag_fg),
+            transient_entry_active_value_fg: overlay!(transient_entry_active_value_fg),
             selector_multiple_marker_bg: overlay!(selector_multiple_marker_bg),
         }
     }
