@@ -16,7 +16,7 @@ use termwiz::terminal::{ScreenSize, Terminal};
 use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_term::{AttributeChange, CellAttributes};
-use window::Modifiers;
+use window::{Clipboard, Modifiers, WindowOps};
 
 struct TrieNode<'a> {
     children: HashMap<char, Box<TrieNode<'a>>>,
@@ -288,6 +288,16 @@ impl<'a> SelectorState<'a> {
         }
     }
 
+    fn copy_active_choice_to_clipboard(&self) {
+        if let Some(entry) = self.filtered_entries.get(self.active_idx) {
+            let text = entry.delegate.id.as_ref().unwrap_or(&entry.delegate.label);
+            let clipboard = [Clipboard::Clipboard, Clipboard::PrimarySelection];
+            for &c in &clipboard {
+                self.window.window.set_clipboard(c, text.to_string());
+            }
+        }
+    }
+
     fn update_filter(&mut self) {
         if self.filter_term.is_empty() {
             self.filtered_entries = self.choices.iter().collect();
@@ -532,6 +542,20 @@ impl<'a> SelectorState<'a> {
                     .contains_key(&'/') =>
                 {
                     self.set_search(true);
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('y'),
+                    modifiers: Modifiers::NONE,
+                }) if !self
+                    .traversed_nodes
+                    .last()
+                    .as_ref()
+                    .unwrap()
+                    .children
+                    .contains_key(&'y') =>
+                {
+                    self.copy_active_choice_to_clipboard();
+                    continue;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char(c),
