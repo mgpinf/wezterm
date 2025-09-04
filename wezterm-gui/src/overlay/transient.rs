@@ -437,6 +437,7 @@ impl<'a> TransientOption<'a> {
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
+                Change::Attribute(AttributeChange::Intensity(Intensity::Normal)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                 Change::Text(val.to_string()),
             ]);
@@ -505,7 +506,6 @@ impl<'a> TransientCyclicSwitch<'a> {
                     if cur_idx == idx {
                         changes.append(&mut vec![
                             Change::Text(prefix.to_string()),
-                            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                             Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                             Change::Text(choice.to_string()),
                             Change::AllAttributes(CellAttributes::default()),
