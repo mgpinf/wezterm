@@ -621,7 +621,8 @@ impl<'a> SelectorState<'a> {
                         continue;
                     }
 
-                    if let Some(entry) = self.filtered_entries.get(self.active_idx) {
+                    if choices.is_empty() {
+                        let entry = &self.choices[self.filtered_entries[self.active_idx].idx];
                         choices = vec![InputSelectorEntry {
                             label: entry.delegate.label.clone(),
                             id: entry.delegate.id.clone(),
