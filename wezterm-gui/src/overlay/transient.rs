@@ -762,7 +762,7 @@ impl<'a> TransientState<'a> {
 
         if let Some(line) = editor.read_line(&mut host)? {
             let new_val = if line.is_empty() {
-                option.delegate.default.clone()
+                Some(option.delegate.default.clone().unwrap_or_default())
             } else {
                 Some(line)
             };
