@@ -680,7 +680,6 @@ struct TransientState<'a> {
     pane: MuxPane,
     description: String,
     colors: TransientColors,
-    root_node: &'a TrieNode<'a>,
     traversed_nodes: Vec<&'a TrieNode<'a>>,
     changes: Vec<Change>,
     row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
@@ -700,7 +699,6 @@ impl<'a> TransientState<'a> {
             pane,
             description: args.description.clone(),
             colors: TransientColors::new(),
-            root_node: trie_node,
             traversed_nodes: vec![trie_node],
             changes: vec![Change::CursorVisibility(CursorVisibility::Hidden)],
             row_entities,
@@ -824,7 +822,7 @@ impl<'a> TransientState<'a> {
                     let cur_node = match cur_node.find_char(c) {
                         Some(cur_node) => cur_node,
                         None => {
-                            self.traversed_nodes = vec![self.root_node];
+                            self.traversed_nodes.truncate(1);
                             continue;
                         }
                     };
@@ -916,7 +914,7 @@ impl<'a> TransientState<'a> {
                         }
                         _ => {}
                     }
-                    self.traversed_nodes = vec![self.root_node];
+                    self.traversed_nodes.truncate(1);
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Backspace,
