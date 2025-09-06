@@ -603,15 +603,16 @@ impl<'a> SelectorState<'a> {
                     let mut choices: Vec<InputSelectorEntry> = vec![];
 
                     if let Some(multiple_idx) = self.multiple_idx.as_ref() {
-                        choices = multiple_idx
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, val)| **val)
-                            .map(|(idx, _)| InputSelectorEntry {
-                                label: self.choices[idx].delegate.label.clone(),
-                                id: self.choices[idx].delegate.id.clone(),
-                            })
-                            .collect();
+                        choices.extend(
+                            multiple_idx
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, val)| **val)
+                                .map(|(idx, _)| InputSelectorEntry {
+                                    label: self.choices[idx].delegate.label.clone(),
+                                    id: self.choices[idx].delegate.id.clone(),
+                                }),
+                        );
                     }
 
                     if choices.is_empty() && self.filtered_entries.is_empty() {
@@ -621,10 +622,10 @@ impl<'a> SelectorState<'a> {
 
                     if choices.is_empty() {
                         let entry = &self.choices[self.filtered_entries[self.active_idx].idx];
-                        choices = vec![InputSelectorEntry {
+                        choices.push(InputSelectorEntry {
                             label: entry.delegate.label.clone(),
                             id: entry.delegate.id.clone(),
-                        }];
+                        });
                     }
 
                     let result = SelectorActionsResult { choices };
