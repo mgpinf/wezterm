@@ -96,7 +96,6 @@ struct SelectorState<'a> {
     fuzzy_description: String,
     window: GuiWin,
     pane: MuxPane,
-    root_node: &'a TrieNode<'a>,
     traversed_nodes: Vec<&'a TrieNode<'a>>,
     context: Option<&'a TransientContext>,
     changes: Vec<Change>,
@@ -161,7 +160,6 @@ impl<'a> SelectorState<'a> {
             fuzzy_description,
             window,
             pane,
-            root_node: trie_node,
             traversed_nodes: vec![trie_node],
             context: args.context.as_ref(),
             changes,
@@ -584,7 +582,7 @@ impl<'a> SelectorState<'a> {
                     let cur_node = match cur_node.find_char(c) {
                         Some(cur_node) => cur_node,
                         None => {
-                            self.traversed_nodes = vec![self.root_node];
+                            self.traversed_nodes.truncate(1);
                             continue;
                         }
                     };
@@ -617,7 +615,7 @@ impl<'a> SelectorState<'a> {
                     }
 
                     if choices.is_empty() && self.filtered_entries.is_empty() {
-                        self.traversed_nodes = vec![self.root_node];
+                        self.traversed_nodes.truncate(1);
                         continue;
                     }
 
