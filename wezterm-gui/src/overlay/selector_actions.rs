@@ -621,7 +621,7 @@ impl<'a> SelectorState<'a> {
                     }
 
                     if choices.is_empty() {
-                        let entry = &self.choices[self.filtered_entries[self.active_idx].idx];
+                        let entry = self.filtered_entries[self.active_idx];
                         choices.push(InputSelectorEntry {
                             label: entry.delegate.label.clone(),
                             id: entry.delegate.id.clone(),
