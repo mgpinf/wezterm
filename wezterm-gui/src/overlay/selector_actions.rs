@@ -661,6 +661,7 @@ impl<'a> SelectorState<'a> {
                     let positional_args_size = self.section.arguments.len() + 1;
                     let overhead = context_size + positional_args_size + 3;
                     let max_items = rows.saturating_sub(overhead);
+                    self.max_items = max_items;
                     self.selector_size = self.choices.len().min(max_items);
 
                     self.changes
