@@ -664,8 +664,13 @@ impl<'a> SelectorState<'a> {
                     self.max_items = max_items;
                     self.selector_size = self.choices.len().min(max_items);
 
-                    self.changes
-                        .push(Change::ClearScreen(ColorAttribute::Default));
+                    self.changes.append(&mut vec![
+                        Change::ClearScreen(ColorAttribute::Default),
+                        Change::CursorPosition {
+                            x: Position::Absolute(0),
+                            y: Position::Absolute(0),
+                        },
+                    ]);
                     self.render_constants()?;
                 }
                 _ => continue,
