@@ -78,6 +78,7 @@ struct SelectorState<'a> {
     colors: &'a TransientColors,
     option: &'a TransientOption<'a>,
     row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
+    description: &'a str,
 }
 
 impl SelectorState<'_> {
@@ -230,6 +231,37 @@ impl SelectorState<'_> {
                         self.clear_selector(term)?;
                         break;
                     }
+                }
+                InputEvent::Resized { cols, rows } => {
+                    self.cols = cols;
+
+                    let max_items = rows.saturating_sub(ROW_OVERHEAD);
+                    self.selector_size = self.choices.len().min(max_items);
+
+                    let description_len =
+                        crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
+                            .len();
+
+                    self.changes.append(&mut vec![
+                        Change::ClearScreen(ColorAttribute::Default),
+                        Change::CursorPosition {
+                            x: Position::Absolute(0),
+                            y: Position::Absolute(0),
+                        },
+                        Change::Text(self.description.to_string()),
+                        Change::AllAttributes(CellAttributes::default()),
+                        Change::Text("\r\n".to_string()),
+                        Change::Text("─".repeat(description_len)),
+                    ]);
+
+                    for entity in self.row_entities.iter().skip(3) {
+                        self.changes.push(Change::Text("\r\n".to_string()));
+                        if let Some(entity) = entity {
+                            entity.render(&self.colors, &mut self.changes, term)?;
+                        }
+                    }
+
+                    self.draw_separator_and_show_cursor();
                 }
                 _ => continue,
             }
@@ -864,6 +896,7 @@ impl<'a> TransientState<'a> {
                                         colors: &self.colors,
                                         option,
                                         row_entities: self.row_entities,
+                                        description: &self.description,
                                     };
 
                                     selector_state.draw_separator_and_show_cursor();

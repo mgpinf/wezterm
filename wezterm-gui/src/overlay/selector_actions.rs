@@ -654,6 +654,12 @@ impl<'a> SelectorState<'a> {
                         continue;
                     }
                 }
+                InputEvent::Resized { cols, .. } => {
+                    self.cols = cols;
+                    self.changes
+                        .push(Change::ClearScreen(ColorAttribute::Default));
+                    self.render_constants()?;
+                }
                 _ => continue,
             }
             self.render(term)?;
