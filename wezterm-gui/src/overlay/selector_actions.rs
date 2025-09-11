@@ -654,8 +654,15 @@ impl<'a> SelectorState<'a> {
                         continue;
                     }
                 }
-                InputEvent::Resized { cols, .. } => {
+                InputEvent::Resized { cols, rows } => {
                     self.cols = cols;
+
+                    let context_size = self.context.as_ref().map_or(0, |v| v.entries.len() + 2);
+                    let positional_args_size = self.section.arguments.len() + 1;
+                    let overhead = context_size + positional_args_size + 3;
+                    let max_items = rows.saturating_sub(overhead);
+                    self.selector_size = self.choices.len().min(max_items);
+
                     self.changes
                         .push(Change::ClearScreen(ColorAttribute::Default));
                     self.render_constants()?;
