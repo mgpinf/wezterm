@@ -16,7 +16,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
-use termwiz::lineedit::{Action, BasicHistory, History, LineEditor, LineEditorHost};
 use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
@@ -25,45 +24,6 @@ use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::Modifiers;
 
 const ROW_OVERHEAD: usize = 6;
-
-struct PromptHost {
-    history: BasicHistory,
-}
-
-impl PromptHost {
-    fn new() -> Self {
-        Self {
-            history: BasicHistory::default(),
-        }
-    }
-}
-
-impl LineEditorHost for PromptHost {
-    fn history(&mut self) -> &mut dyn History {
-        &mut self.history
-    }
-
-    fn resolve_action(
-        &mut self,
-        event: &InputEvent,
-        editor: &mut LineEditor<'_>,
-    ) -> Option<Action> {
-        let (line, _cursor) = editor.get_line_and_cursor();
-        if line.is_empty()
-            && matches!(
-                event,
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Escape,
-                    ..
-                })
-            )
-        {
-            Some(Action::Cancel)
-        } else {
-            None
-        }
-    }
-}
 
 struct SelectorState<'a> {
     active_idx: usize,
@@ -318,6 +278,136 @@ impl SelectorState<'_> {
         if self.active_idx > self.top_row + self.max_items {
             self.top_row = self.active_idx.saturating_sub(self.max_items);
         }
+    }
+}
+
+struct PromptState<'a> {
+    line: String,
+    cols: usize,
+    changes: &'a mut Vec<Change>,
+    colors: &'a TransientColors,
+    option: &'a TransientOption<'a>,
+    row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
+    description: &'a str,
+}
+
+impl PromptState<'_> {
+    fn render(&mut self, term: &mut TermWizTerminal) -> termwiz::Result<()> {
+        let mut prompt_with_value = self.option.delegate.description.clone();
+        if let Some(default) = self.option.delegate.default.clone() {
+            prompt_with_value.push_str(&format!(" (default {})", default));
+        }
+        prompt_with_value.push_str(&format!(": {}", self.line));
+        self.changes.append(&mut vec![
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Relative(0),
+            },
+            Change::ClearToEndOfLine(ColorAttribute::Default),
+            Change::Text(prompt_with_value),
+        ]);
+
+        term.render(self.changes)?;
+        self.changes.clear();
+
+        Ok(())
+    }
+
+    fn run_loop(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
+        while let Ok(Some(event)) = term.poll_input(None) {
+            match event {
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('G' | 'C' | 'D' | '['),
+                    modifiers: Modifiers::CTRL,
+                })
+                | InputEvent::Key(KeyEvent {
+                    key: KeyCode::Escape,
+                    ..
+                }) => {
+                    break;
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char(c),
+                    ..
+                }) => {
+                    self.line.push(c);
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Enter,
+                    ..
+                }) => {
+                    let new_val = if self.line.is_empty() {
+                        Some(self.option.delegate.default.clone().unwrap_or_default())
+                    } else {
+                        Some(self.line.clone())
+                    };
+                    self.option.value.replace(new_val);
+                    break;
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Backspace,
+                    ..
+                }) => {
+                    if self.line.pop().is_none() {
+                        continue;
+                    }
+                }
+                InputEvent::Resized { cols, .. } => {
+                    self.cols = cols;
+
+                    let description_len =
+                        crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
+                            .len();
+
+                    self.changes.append(&mut vec![
+                        Change::ClearScreen(ColorAttribute::Default),
+                        Change::CursorPosition {
+                            x: Position::Absolute(0),
+                            y: Position::Absolute(0),
+                        },
+                        Change::Text(self.description.to_string()),
+                        Change::AllAttributes(CellAttributes::default()),
+                        Change::Text("\r\n".to_string()),
+                        Change::Text("─".repeat(description_len)),
+                    ]);
+
+                    for entity in self.row_entities.iter().skip(3) {
+                        self.changes.push(Change::Text("\r\n".to_string()));
+                        if let Some(entity) = entity {
+                            entity.render(self.colors, self.changes, term)?;
+                        }
+                    }
+
+                    self.draw_separator_and_show_cursor();
+                }
+                _ => {}
+            }
+            self.render(term)?;
+        }
+
+        self.changes.append(&mut vec![
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::EndRelative(2),
+            },
+            Change::ClearToEndOfScreen(ColorAttribute::Default),
+            Change::CursorVisibility(CursorVisibility::Hidden),
+        ]);
+
+        Ok(())
+    }
+
+    fn draw_separator_and_show_cursor(&mut self) {
+        self.changes.append(&mut vec![
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::EndRelative(2),
+            },
+            Change::ClearToEndOfScreen(ColorAttribute::Default),
+            Change::Text("─".repeat(self.cols)),
+            Change::Text("\r\n".to_string()),
+            Change::CursorVisibility(CursorVisibility::Visible),
+        ]);
     }
 }
 
@@ -765,53 +855,6 @@ impl<'a> TransientState<'a> {
         Ok(())
     }
 
-    fn line_prompt(
-        &mut self,
-        term: &mut TermWizTerminal,
-        option: &TransientOption<'_>,
-    ) -> anyhow::Result<()> {
-        let size = term.get_screen_size()?;
-        self.changes.append(&mut vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(2),
-            },
-            Change::Text("─".repeat(size.cols)),
-            Change::Text("\r\n".to_string()),
-            Change::CursorVisibility(CursorVisibility::Visible),
-        ]);
-        term.render(&self.changes)?;
-        self.changes.clear();
-
-        let mut host = PromptHost::new();
-        let mut editor = LineEditor::new(term);
-        let mut prompt = option.delegate.description.clone();
-        if let Some(default) = option.delegate.default.clone() {
-            prompt.push_str(&format!(" (default {})", default));
-        }
-        prompt.push_str(": ");
-        editor.set_prompt(&prompt);
-
-        if let Some(line) = editor.read_line(&mut host)? {
-            let new_val = if line.is_empty() {
-                Some(option.delegate.default.clone().unwrap_or_default())
-            } else {
-                Some(line)
-            };
-            option.value.replace(new_val);
-        }
-        self.changes.append(&mut vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(2),
-            },
-            Change::ClearToEndOfScreen(ColorAttribute::Default),
-            Change::CursorVisibility(CursorVisibility::Hidden),
-        ]);
-
-        Ok(())
-    }
-
     fn trigger_event(&self, name: &str, result: Option<TransientResult>) {
         let name = name.to_string();
         let window = self.window.clone();
@@ -903,7 +946,21 @@ impl<'a> TransientState<'a> {
                                     selector_state.render(term)?;
                                     selector_state.run_loop(term)?;
                                 } else {
-                                    self.line_prompt(term, option)?;
+                                    let size = term.get_screen_size()?;
+
+                                    let mut prompt_state = PromptState {
+                                        line: String::new(),
+                                        cols: size.cols,
+                                        changes: &mut self.changes,
+                                        colors: &self.colors,
+                                        option,
+                                        row_entities: &self.row_entities,
+                                        description: &self.description,
+                                    };
+
+                                    prompt_state.draw_separator_and_show_cursor();
+                                    prompt_state.render(term)?;
+                                    prompt_state.run_loop(term)?;
                                 }
                             } else {
                                 option.value.replace(None);
