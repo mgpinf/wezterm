@@ -918,9 +918,9 @@ impl<'a> TransientState<'a> {
                         }
                         RenderableEntity::TransientOption(option) => {
                             if option.value.borrow().is_none() || !option.delegate.allow_nil {
-                                if let Some(choices) = option.delegate.choices.as_ref() {
-                                    let size = term.get_screen_size()?;
+                                let size = term.get_screen_size()?;
 
+                                if let Some(choices) = option.delegate.choices.as_ref() {
                                     let max_items = size.rows.saturating_sub(ROW_OVERHEAD);
                                     let selector_size = choices.len().min(max_items);
                                     let filtered_entries =
@@ -946,8 +946,6 @@ impl<'a> TransientState<'a> {
                                     selector_state.render(term)?;
                                     selector_state.run_loop(term)?;
                                 } else {
-                                    let size = term.get_screen_size()?;
-
                                     let mut prompt_state = PromptState {
                                         line: String::new(),
                                         cols: size.cols,
