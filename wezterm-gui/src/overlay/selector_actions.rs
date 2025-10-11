@@ -13,7 +13,7 @@ use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::buffered::BufferedTerminal;
-use termwiz::terminal::{ScreenSize, Terminal};
+use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_term::{AttributeChange, CellAttributes};
@@ -111,7 +111,6 @@ impl<'a> SelectorState<'a> {
         args: &'a SelectorActions,
         window: GuiWin,
         pane: MuxPane,
-        size: &ScreenSize,
         trie_node: &'a TrieNode<'_>,
         choices: &'a Vec<SelectorEntry<'_>>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
@@ -120,7 +119,8 @@ impl<'a> SelectorState<'a> {
         let positional_args_size = args.section.arguments.len() + 1;
         let overhead = context_size + positional_args_size + 3;
 
-        let max_items = size.rows.saturating_sub(overhead);
+        let (cols, rows) = buf.dimensions();
+        let max_items = rows.saturating_sub(overhead);
         let selector_size = choices.len().min(max_items);
 
         let multiple_idx = args.multiple.then(|| vec![false; choices.len()]);
@@ -150,7 +150,7 @@ impl<'a> SelectorState<'a> {
             max_items,
             top_row: 0,
             choices,
-            cols: size.cols,
+            cols,
             selector_size,
             multiple_idx,
             filtered_entries,
@@ -747,8 +747,6 @@ pub fn show_selector_actions_overlay(
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
 
-    let size = buf.terminal().get_screen_size()?;
-
     let choices: Vec<SelectorEntry<'_>> = args
         .choices
         .iter()
@@ -759,7 +757,7 @@ pub fn show_selector_actions_overlay(
     let mut trie_node = TrieNode::new();
     create_trie(&args, &mut trie_node);
 
-    let mut state = SelectorState::new(&args, window, pane, &size, &trie_node, &choices, &mut buf);
+    let mut state = SelectorState::new(&args, window, pane, &trie_node, &choices, &mut buf);
 
     state.render_constants()?;
     state.render()?;
