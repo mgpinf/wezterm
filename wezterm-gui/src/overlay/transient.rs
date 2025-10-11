@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::surface::{Change, CursorVisibility, Position};
+use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
@@ -34,20 +35,20 @@ struct SelectorState<'a> {
     choices: &'a Vec<String>,
     cols: usize,
     selector_size: usize,
-    changes: &'a mut Vec<Change>,
     colors: &'a TransientColors,
     option: &'a TransientOption<'a>,
     row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
     description: &'a str,
+    buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
 
 impl SelectorState<'_> {
-    fn clear_selector(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
+    fn clear_selector(&mut self) -> anyhow::Result<()> {
         let rows = self.max_items.saturating_add(ROW_OVERHEAD);
         let start_row = self.selector_size + 2;
         let skip_rows = rows - start_row - 1;
 
-        self.changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::CursorVisibility(CursorVisibility::Hidden),
             Change::CursorPosition {
                 x: Position::Absolute(0),
@@ -57,9 +58,9 @@ impl SelectorState<'_> {
         ]);
 
         for renderable_entity in self.row_entities.iter().skip(skip_rows) {
-            self.changes.push(Change::Text("\r\n".to_string()));
+            self.buf.add_change(Change::Text("\r\n".to_string()));
             if let Some(renderable_entity) = renderable_entity {
-                renderable_entity.render(&self.colors, &mut self.changes, term)?;
+                renderable_entity.render(&self.colors, self.buf)?;
             }
         }
 
@@ -67,7 +68,7 @@ impl SelectorState<'_> {
     }
 
     fn draw_separator_and_show_cursor(&mut self) {
-        self.changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::EndRelative(2 + self.selector_size),
@@ -79,12 +80,11 @@ impl SelectorState<'_> {
         ]);
     }
 
-    fn render(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
+    fn render(&mut self) -> anyhow::Result<()> {
         let max_width = self.cols.saturating_sub(6);
-        let changes = &mut self.changes;
         let input_selector_size = self.selector_size;
 
-        changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::EndRelative(1 + input_selector_size),
@@ -109,42 +109,44 @@ impl SelectorState<'_> {
                 break;
             }
 
-            changes.push(Change::Text("\r\n".to_string()));
+            self.buf.add_change(Change::Text("\r\n".to_string()));
 
             let mut attr = CellAttributes::blank();
 
             if entry_idx == self.active_idx {
-                changes.push(AttributeChange::Reverse(true).into());
+                self.buf
+                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
                 attr.set_reverse(true);
             }
 
-            changes.push(Change::Text("    ".to_string()));
+            self.buf.add_change(Change::Text("    ".to_string()));
             let mut line = crate::tabbar::parse_status_text(entry, attr.clone());
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
-            changes.append(&mut line.changes(&attr));
-            changes.push(Change::Text(" ".to_string()));
+            self.buf.add_changes(line.changes(&attr));
+            self.buf.add_change(Change::Text(" ".to_string()));
             if entry_idx == self.active_idx {
-                changes.push(AttributeChange::Reverse(false).into());
+                self.buf
+                    .add_change(Change::Attribute(AttributeChange::Reverse(false)));
             }
-            changes.push(Change::AllAttributes(CellAttributes::default()));
+            self.buf
+                .add_change(Change::AllAttributes(CellAttributes::default()));
         }
-        changes.push(Change::CursorPosition {
+        self.buf.add_change(Change::CursorPosition {
             x: Position::Absolute(
                 2 + self.option.delegate.description.len() + self.filter_term.len(),
             ),
             y: Position::EndRelative(1 + input_selector_size),
         });
 
-        term.render(changes)?;
-        changes.clear();
+        self.buf.flush()?;
 
         Ok(())
     }
 
-    fn run_loop(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
-        while let Ok(Some(event)) = term.poll_input(None) {
+    fn run_loop(&mut self) -> anyhow::Result<()> {
+        while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             match event {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('P' | 'K'),
@@ -172,7 +174,7 @@ impl SelectorState<'_> {
                     key: KeyCode::Escape,
                     ..
                 }) => {
-                    self.clear_selector(term)?;
+                    self.clear_selector()?;
                     break;
                 }
                 InputEvent::Key(KeyEvent {
@@ -188,7 +190,7 @@ impl SelectorState<'_> {
                 }) => {
                     if let Some(entry) = self.filtered_entries.get(self.active_idx).cloned() {
                         self.option.value.replace(Some(entry.to_string()));
-                        self.clear_selector(term)?;
+                        self.clear_selector()?;
                         break;
                     }
                 }
@@ -202,7 +204,7 @@ impl SelectorState<'_> {
                         crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
                             .len();
 
-                    self.changes.append(&mut vec![
+                    self.buf.add_changes(vec![
                         Change::ClearScreen(ColorAttribute::Default),
                         Change::CursorPosition {
                             x: Position::Absolute(0),
@@ -215,9 +217,9 @@ impl SelectorState<'_> {
                     ]);
 
                     for entity in self.row_entities.iter().skip(3) {
-                        self.changes.push(Change::Text("\r\n".to_string()));
+                        self.buf.add_change(Change::Text("\r\n".to_string()));
                         if let Some(entity) = entity {
-                            entity.render(&self.colors, &mut self.changes, term)?;
+                            entity.render(&self.colors, self.buf)?;
                         }
                     }
 
@@ -225,7 +227,7 @@ impl SelectorState<'_> {
                 }
                 _ => continue,
             }
-            self.render(term)?;
+            self.render()?;
         }
 
         Ok(())
@@ -284,21 +286,21 @@ impl SelectorState<'_> {
 struct PromptState<'a> {
     line: String,
     cols: usize,
-    changes: &'a mut Vec<Change>,
     colors: &'a TransientColors,
     option: &'a TransientOption<'a>,
     row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
     description: &'a str,
+    buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
 
 impl PromptState<'_> {
-    fn render(&mut self, term: &mut TermWizTerminal) -> termwiz::Result<()> {
+    fn render(&mut self) -> termwiz::Result<()> {
         let mut prompt_with_value = self.option.delegate.description.clone();
         if let Some(default) = self.option.delegate.default.clone() {
             prompt_with_value.push_str(&format!(" (default {})", default));
         }
         prompt_with_value.push_str(&format!(": {}", self.line));
-        self.changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Relative(0),
@@ -307,14 +309,13 @@ impl PromptState<'_> {
             Change::Text(prompt_with_value),
         ]);
 
-        term.render(self.changes)?;
-        self.changes.clear();
+        self.buf.flush()?;
 
         Ok(())
     }
 
-    fn run_loop(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
-        while let Ok(Some(event)) = term.poll_input(None) {
+    fn run_loop(&mut self) -> anyhow::Result<()> {
+        while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             match event {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('G' | 'C' | 'D' | '['),
@@ -359,7 +360,7 @@ impl PromptState<'_> {
                         crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
                             .len();
 
-                    self.changes.append(&mut vec![
+                    self.buf.add_changes(vec![
                         Change::ClearScreen(ColorAttribute::Default),
                         Change::CursorPosition {
                             x: Position::Absolute(0),
@@ -372,9 +373,9 @@ impl PromptState<'_> {
                     ]);
 
                     for entity in self.row_entities.iter().skip(3) {
-                        self.changes.push(Change::Text("\r\n".to_string()));
+                        self.buf.add_change(Change::Text("\r\n".to_string()));
                         if let Some(entity) = entity {
-                            entity.render(self.colors, self.changes, term)?;
+                            entity.render(self.colors, self.buf)?;
                         }
                     }
 
@@ -382,10 +383,10 @@ impl PromptState<'_> {
                 }
                 _ => {}
             }
-            self.render(term)?;
+            self.render()?;
         }
 
-        self.changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::EndRelative(2),
@@ -398,7 +399,7 @@ impl PromptState<'_> {
     }
 
     fn draw_separator_and_show_cursor(&mut self) {
-        self.changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::EndRelative(2),
@@ -482,12 +483,11 @@ impl<'a> TransientSwitch<'a> {
     fn render(
         &self,
         colors: &TransientColors,
-        changes: &mut Vec<Change>,
-        term: &mut TermWizTerminal,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
         render_now: bool,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
-        changes.append(&mut vec![
+        buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(self.row),
@@ -501,25 +501,24 @@ impl<'a> TransientSwitch<'a> {
         ]);
 
         if self.value.get() {
-            changes.append(&mut vec![
+            buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
             ]);
         } else {
-            changes.push(Change::Attribute(AttributeChange::Foreground(
+            buf.add_change(Change::Attribute(AttributeChange::Foreground(
                 colors.inactive_flag_fg,
             )));
         }
 
-        changes.append(&mut vec![
+        buf.add_changes(vec![
             Change::Text(delegate.flag.clone()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(")".to_string()),
         ]);
 
         if render_now {
-            term.render(changes)?;
-            changes.clear();
+            buf.flush()?;
         }
 
         Ok(())
@@ -536,12 +535,11 @@ impl<'a> TransientOption<'a> {
     fn render(
         &self,
         colors: &TransientColors,
-        changes: &mut Vec<Change>,
-        term: &mut TermWizTerminal,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
         render_now: bool,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
-        changes.append(&mut vec![
+        buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(self.row),
@@ -555,7 +553,7 @@ impl<'a> TransientOption<'a> {
         ]);
 
         if let Some(val) = self.value.borrow().as_ref() {
-            changes.append(&mut vec![
+            buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
@@ -564,20 +562,19 @@ impl<'a> TransientOption<'a> {
                 Change::Text(val.to_string()),
             ]);
         } else {
-            changes.append(&mut vec![
+            buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                 Change::Text(format!("{}", delegate.flag)),
-            ])
+            ]);
         }
 
-        changes.append(&mut vec![
+        buf.add_changes(vec![
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(")".to_string()),
         ]);
 
         if render_now {
-            term.render(changes)?;
-            changes.clear();
+            buf.flush()?;
         }
 
         Ok(())
@@ -594,12 +591,11 @@ impl<'a> TransientCyclicSwitch<'a> {
     fn render(
         &self,
         colors: &TransientColors,
-        changes: &mut Vec<Change>,
-        term: &mut TermWizTerminal,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
         render_now: bool,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
-        changes.append(&mut vec![
+        buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(self.row),
@@ -613,20 +609,20 @@ impl<'a> TransientCyclicSwitch<'a> {
         ]);
 
         if let Some(idx) = self.active_idx.get() {
-            changes.append(&mut vec![
+            buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if !delegate.choices.is_empty() {
-                changes.push(Change::Attribute(AttributeChange::Foreground(
+                buf.add_change(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     if cur_idx == idx {
-                        changes.append(&mut vec![
+                        buf.add_changes(vec![
                             Change::Text(prefix.to_string()),
                             Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                             Change::Text(choice.to_string()),
@@ -634,45 +630,44 @@ impl<'a> TransientCyclicSwitch<'a> {
                             Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                         ]);
                     } else {
-                        changes.push(Change::Text(format!("{}{}", prefix, choice)));
+                        buf.add_change(Change::Text(format!("{}{}", prefix, choice)));
                     }
                     if cur_idx == 0 {
                         prefix = "|";
                     }
                 }
-                changes.append(&mut vec![
+                buf.add_changes(vec![
                     Change::Text("]".to_string()),
                     Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
                 ]);
             }
         } else {
-            changes.append(&mut vec![
+            buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if !delegate.choices.is_empty() {
-                changes.push(Change::Attribute(AttributeChange::Foreground(
+                buf.add_change(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
-                    changes.push(Change::Text(format!("{}{}", prefix, choice)));
+                    buf.add_change(Change::Text(format!("{}{}", prefix, choice)));
                     if cur_idx == 0 {
                         prefix = "|";
                     }
                 }
-                changes.append(&mut vec![
+                buf.add_changes(vec![
                     Change::Text("]".to_string()),
                     Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
                 ]);
             }
         }
-        changes.push(Change::Text(")".to_string()));
+        buf.add_change(Change::Text(")".to_string()));
 
         if render_now {
-            term.render(changes)?;
-            changes.clear();
+            buf.flush()?;
         }
 
         Ok(())
@@ -685,8 +680,12 @@ struct TransientArgument<'a> {
 }
 
 impl<'a> TransientArgument<'a> {
-    fn render(&self, colors: &TransientColors, changes: &mut Vec<Change>) -> termwiz::Result<()> {
-        changes.append(&mut vec![
+    fn render(
+        &self,
+        colors: &TransientColors,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
+    ) -> termwiz::Result<()> {
+        buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(self.row),
@@ -709,8 +708,8 @@ struct TransientSection<'a> {
 }
 
 impl<'a> TransientSection<'a> {
-    fn render(&self, changes: &mut Vec<Change>) -> termwiz::Result<()> {
-        changes.append(&mut vec![
+    fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
+        buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(self.row),
@@ -737,19 +736,16 @@ impl RenderableEntity<'_> {
     fn render(
         &self,
         colors: &TransientColors,
-        changes: &mut Vec<Change>,
-        term: &mut TermWizTerminal,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
         match self {
-            Self::TransientOption(option) => option.render(colors, changes, term, false),
-            Self::TransientSwitch(switch) => switch.render(colors, changes, term, false),
-            Self::TransientCyclicSwitch(cyclic_switch) => {
-                cyclic_switch.render(colors, changes, term, false)
-            }
-            Self::TransientArgument(positional_arg) => positional_arg.render(colors, changes),
-            Self::TransientSection(section) => section.render(changes),
-            Self::TransientContext(context) => context.render(changes),
-            Self::TransientContextEntry(entry) => entry.render(changes),
+            Self::TransientOption(option) => option.render(colors, buf, false),
+            Self::TransientSwitch(switch) => switch.render(colors, buf, false),
+            Self::TransientCyclicSwitch(cyclic_switch) => cyclic_switch.render(colors, buf, false),
+            Self::TransientArgument(positional_arg) => positional_arg.render(colors, buf),
+            Self::TransientSection(section) => section.render(buf),
+            Self::TransientContext(context) => context.render(buf),
+            Self::TransientContextEntry(entry) => entry.render(buf),
         }
     }
 }
@@ -761,8 +757,8 @@ struct TransientContextEntry<'a> {
 }
 
 impl<'a> TransientContextEntry<'a> {
-    fn render(&self, changes: &mut Vec<Change>) -> termwiz::Result<()> {
-        changes.append(&mut vec![
+    fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
+        buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(self.row),
@@ -784,8 +780,8 @@ struct TransientContext<'a> {
 }
 
 impl<'a> TransientContext<'a> {
-    fn render(&self, changes: &mut Vec<Change>) -> termwiz::Result<()> {
-        changes.append(&mut vec![
+    fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
+        buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(self.row),
@@ -803,9 +799,9 @@ struct TransientState<'a> {
     description: String,
     colors: TransientColors,
     traversed_nodes: Vec<&'a TrieNode<'a>>,
-    changes: Vec<Change>,
     row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
     cancel: Option<Box<KeyAssignment>>,
+    buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
 
 impl<'a> TransientState<'a> {
@@ -815,24 +811,27 @@ impl<'a> TransientState<'a> {
         pane: MuxPane,
         row_entities: &'a Vec<Option<RenderableEntity<'_>>>,
         trie_node: &'a TrieNode<'_>,
+        buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
+        buf.add_change(Change::CursorVisibility(CursorVisibility::Hidden));
+
         Self {
             window,
             pane,
             description: args.description.clone(),
             colors: TransientColors::new(),
             traversed_nodes: vec![trie_node],
-            changes: vec![Change::CursorVisibility(CursorVisibility::Hidden)],
             row_entities,
             cancel: args.cancel.clone(),
+            buf,
         }
     }
 
-    fn render(&mut self, term: &mut TermWizTerminal) -> termwiz::Result<()> {
+    fn render(&mut self) -> termwiz::Result<()> {
         let description_len =
             crate::tabbar::parse_status_text(&self.description, CellAttributes::blank()).len();
 
-        self.changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::ClearScreen(ColorAttribute::Default),
             Change::CursorPosition {
                 x: Position::Absolute(0),
@@ -845,12 +844,12 @@ impl<'a> TransientState<'a> {
         ]);
 
         for entity in self.row_entities.iter().skip(3) {
-            self.changes.push(Change::Text("\r\n".to_string()));
+            self.buf.add_change(Change::Text("\r\n".to_string()));
             if let Some(entity) = entity {
-                entity.render(&self.colors, &mut self.changes, term)?;
+                entity.render(&self.colors, self.buf)?;
             }
         }
-        term.render(&self.changes)?;
+        self.buf.flush()?;
 
         Ok(())
     }
@@ -867,8 +866,8 @@ impl<'a> TransientState<'a> {
         .detach();
     }
 
-    fn run_loop(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
-        while let Ok(Some(event)) = term.poll_input(None) {
+    fn run_loop(&mut self) -> anyhow::Result<()> {
+        while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             match event {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('G' | 'C' | 'D' | '['),
@@ -914,11 +913,11 @@ impl<'a> TransientState<'a> {
                         RenderableEntity::TransientSwitch(switch) => {
                             switch.value.update(|val| !val);
 
-                            switch.render(&self.colors, &mut self.changes, term, true)?;
+                            switch.render(&self.colors, self.buf, true)?;
                         }
                         RenderableEntity::TransientOption(option) => {
                             if option.value.borrow().is_none() || !option.delegate.allow_nil {
-                                let size = term.get_screen_size()?;
+                                let size = self.buf.terminal().get_screen_size()?;
 
                                 if let Some(choices) = option.delegate.choices.as_ref() {
                                     let max_items = size.rows.saturating_sub(ROW_OVERHEAD);
@@ -935,35 +934,35 @@ impl<'a> TransientState<'a> {
                                         choices,
                                         cols: size.cols,
                                         selector_size,
-                                        changes: &mut self.changes,
                                         colors: &self.colors,
                                         option,
                                         row_entities: self.row_entities,
                                         description: &self.description,
+                                        buf: self.buf,
                                     };
 
                                     selector_state.draw_separator_and_show_cursor();
-                                    selector_state.render(term)?;
-                                    selector_state.run_loop(term)?;
+                                    selector_state.render()?;
+                                    selector_state.run_loop()?;
                                 } else {
                                     let mut prompt_state = PromptState {
                                         line: String::new(),
                                         cols: size.cols,
-                                        changes: &mut self.changes,
                                         colors: &self.colors,
                                         option,
                                         row_entities: &self.row_entities,
                                         description: &self.description,
+                                        buf: self.buf,
                                     };
 
                                     prompt_state.draw_separator_and_show_cursor();
-                                    prompt_state.render(term)?;
-                                    prompt_state.run_loop(term)?;
+                                    prompt_state.render()?;
+                                    prompt_state.run_loop()?;
                                 }
                             } else {
                                 option.value.replace(None);
                             }
-                            option.render(&self.colors, &mut self.changes, term, true)?;
+                            option.render(&self.colors, self.buf, true)?;
                         }
                         RenderableEntity::TransientCyclicSwitch(cyclic_switch) => {
                             if !cyclic_switch.delegate.choices.is_empty() {
@@ -982,12 +981,7 @@ impl<'a> TransientState<'a> {
                                         Some(0)
                                     }
                                 });
-                                cyclic_switch.render(
-                                    &self.colors,
-                                    &mut self.changes,
-                                    term,
-                                    true,
-                                )?;
+                                cyclic_switch.render(&self.colors, self.buf, true)?;
                             }
                         }
                         RenderableEntity::TransientArgument(positional_arg) => {
@@ -1205,20 +1199,22 @@ async fn do_event(
 }
 
 pub fn show_transient_menu_overlay(
-    mut term: TermWizTerminal,
+    term: TermWizTerminal,
     args: KTransientMenu,
     window: GuiWin,
     pane: MuxPane,
 ) -> anyhow::Result<()> {
-    term.no_grab_mouse_in_raw_mode();
+    let mut buf = BufferedTerminal::new(term)?;
+    buf.terminal().no_grab_mouse_in_raw_mode();
+
     let mut row_entities: Vec<Option<RenderableEntity>> = vec![None, None];
     create_row_entities(&args, &mut row_entities);
 
     let mut trie_node = TrieNode::new();
     create_trie(&row_entities, &mut trie_node);
 
-    let mut state = TransientState::new(&args, window, pane, &row_entities, &trie_node);
+    let mut state = TransientState::new(&args, window, pane, &row_entities, &trie_node, &mut buf);
 
-    state.render(&mut term)?;
-    state.run_loop(&mut term)
+    state.render()?;
+    state.run_loop()
 }

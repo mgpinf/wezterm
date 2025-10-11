@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::surface::{Change, CursorVisibility, Position};
+use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::{ScreenSize, Terminal};
 use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
@@ -98,11 +99,11 @@ struct SelectorState<'a> {
     pane: MuxPane,
     traversed_nodes: Vec<&'a TrieNode<'a>>,
     context: Option<&'a TransientContext>,
-    changes: Vec<Change>,
     colors: SelectorActionsColors,
     section: ArgumentSection<'a>,
     cancel: Option<Box<KeyAssignment>>,
     repeat: [u8; 2],
+    buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
 
 impl<'a> SelectorState<'a> {
@@ -113,6 +114,7 @@ impl<'a> SelectorState<'a> {
         size: &ScreenSize,
         trie_node: &'a TrieNode<'_>,
         choices: &'a Vec<SelectorEntry<'_>>,
+        buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context_size = args.context.as_ref().map_or(0, |v| v.entries.len() + 2);
         let positional_args_size = args.section.arguments.len() + 1;
@@ -139,11 +141,9 @@ impl<'a> SelectorState<'a> {
             .clone()
             .unwrap_or_else(|| args.description.clone());
 
-        let changes = if args.fuzzy {
-            vec![]
-        } else {
-            vec![Change::CursorVisibility(CursorVisibility::Hidden)]
-        };
+        if args.fuzzy {
+            buf.add_change(Change::CursorVisibility(CursorVisibility::Hidden));
+        }
 
         SelectorState {
             active_idx: 0,
@@ -162,36 +162,37 @@ impl<'a> SelectorState<'a> {
             pane,
             traversed_nodes: vec![trie_node],
             context: args.context.as_ref(),
-            changes,
             colors: SelectorActionsColors::new(),
             section,
             cancel: args.cancel.clone(),
             repeat: [1, 1],
+            buf,
         }
     }
 
     fn render_constants(&mut self) -> termwiz::Result<()> {
         if let Some(context) = self.context.as_ref() {
-            self.changes.append(&mut vec![
+            self.buf.add_changes(vec![
                 Change::Text(context.header.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             for entry in &context.entries {
-                self.changes.append(&mut vec![
+                self.buf.add_changes(vec![
                     Change::Text(format!("\r\n{}", entry.label)),
                     Change::AllAttributes(CellAttributes::default()),
                     Change::Text(format!(": {}", entry.id)),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
             }
-            self.changes.push(Change::Text("\r\n\r\n".to_string()));
+            self.buf.add_change(Change::Text("\r\n\r\n".to_string()));
         }
 
-        self.changes.push(Change::Text(self.section.header.clone()));
-        self.changes
-            .push(Change::AllAttributes(CellAttributes::default()));
+        self.buf
+            .add_change(Change::Text(self.section.header.clone()));
+        self.buf
+            .add_change(Change::AllAttributes(CellAttributes::default()));
         for positional_arg in &self.section.arguments {
-            self.changes.append(&mut vec![
+            self.buf.add_changes(vec![
                 Change::Text("\r\n".to_string()),
                 Change::Attribute(AttributeChange::Foreground(self.colors.action_key_fg)),
                 Change::Text(positional_arg.key.clone()),
@@ -201,11 +202,11 @@ impl<'a> SelectorState<'a> {
             ]);
         }
 
-        self.changes.push(Change::CursorPosition {
+        self.buf.add_change(Change::CursorPosition {
             x: Position::Absolute(0),
             y: Position::EndRelative(self.selector_size + 2),
         });
-        self.changes.push(Change::Text("─".repeat(self.cols)));
+        self.buf.add_change(Change::Text("─".repeat(self.cols)));
 
         Ok(())
     }
@@ -262,8 +263,8 @@ impl<'a> SelectorState<'a> {
         } else {
             CursorVisibility::Hidden
         };
-        self.changes
-            .push(Change::CursorVisibility(cursor_visibility));
+        self.buf
+            .add_change(Change::CursorVisibility(cursor_visibility));
     }
 
     fn toggle_search(&mut self) {
@@ -331,11 +332,10 @@ impl<'a> SelectorState<'a> {
         self.top_row = 0;
     }
 
-    fn render(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
-        let changes = &mut self.changes;
+    fn render(&mut self) -> anyhow::Result<()> {
         let max_width = self.cols.saturating_sub(6);
 
-        changes.append(&mut vec![
+        self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::EndRelative(self.selector_size + 1),
@@ -361,14 +361,14 @@ impl<'a> SelectorState<'a> {
             }
 
             if row_num != 0 {
-                changes.push(Change::Text("\r\n".to_string()));
+                self.buf.add_change(Change::Text("\r\n".to_string()));
             }
 
             let mut attr = CellAttributes::blank();
 
             if let Some(multiple_idx) = self.multiple_idx.as_ref() {
                 if multiple_idx[self.filtered_entries[entry_idx].idx] {
-                    changes.append(&mut vec![
+                    self.buf.add_changes(vec![
                         Change::Attribute(AttributeChange::Background(
                             self.colors.multiple_marker_bg,
                         )),
@@ -376,30 +376,33 @@ impl<'a> SelectorState<'a> {
                         Change::Attribute(AttributeChange::Background(ColorAttribute::Default)),
                     ]);
                 } else {
-                    changes.push(Change::Text(" ".to_string()));
+                    self.buf.add_change(Change::Text(" ".to_string()));
                 }
             }
 
             if entry_idx == self.active_idx {
-                changes.push(AttributeChange::Reverse(true).into());
+                self.buf
+                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
                 attr.set_reverse(true);
             }
 
-            changes.push(Change::Text("    ".to_string()));
+            self.buf.add_change(Change::Text("    ".to_string()));
             let mut line = crate::tabbar::parse_status_text(&entry.delegate.label, attr.clone());
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
-            changes.append(&mut line.changes(&attr));
-            changes.push(Change::Text(" ".to_string()));
+            self.buf.add_changes(line.changes(&attr));
+            self.buf.add_change(Change::Text(" ".to_string()));
             if entry_idx == self.active_idx {
-                changes.push(AttributeChange::Reverse(false).into());
+                self.buf
+                    .add_change(Change::Attribute(AttributeChange::Reverse(false)));
             }
-            changes.push(Change::AllAttributes(CellAttributes::default()));
+            self.buf
+                .add_change(Change::AllAttributes(CellAttributes::default()));
         }
 
         if self.filtering {
-            changes.append(&mut vec![
+            self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::EndRelative(self.selector_size + 1),
@@ -412,14 +415,13 @@ impl<'a> SelectorState<'a> {
             ]);
         }
 
-        term.render(changes)?;
-        changes.clear();
+        self.buf.flush()?;
 
         Ok(())
     }
 
-    fn run_loop(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
-        while let Ok(Some(event)) = term.poll_input(None) {
+    fn run_loop(&mut self) -> anyhow::Result<()> {
+        while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             self.repeat[0] = self.repeat[1];
             if self.repeat[1] != 1 {
                 self.repeat[1] = 1;
@@ -664,7 +666,7 @@ impl<'a> SelectorState<'a> {
                     self.max_items = max_items;
                     self.selector_size = self.choices.len().min(max_items);
 
-                    self.changes.append(&mut vec![
+                    self.buf.add_changes(vec![
                         Change::ClearScreen(ColorAttribute::Default),
                         Change::CursorPosition {
                             x: Position::Absolute(0),
@@ -675,7 +677,7 @@ impl<'a> SelectorState<'a> {
                 }
                 _ => continue,
             }
-            self.render(term)?;
+            self.render()?;
         }
 
         Ok(())
@@ -737,13 +739,15 @@ async fn do_event(
 }
 
 pub fn show_selector_actions_overlay(
-    mut term: TermWizTerminal,
+    term: TermWizTerminal,
     args: SelectorActions,
     window: GuiWin,
     pane: MuxPane,
 ) -> anyhow::Result<()> {
-    term.no_grab_mouse_in_raw_mode();
-    let size = term.get_screen_size()?;
+    let mut buf = BufferedTerminal::new(term)?;
+    buf.terminal().no_grab_mouse_in_raw_mode();
+
+    let size = buf.terminal().get_screen_size()?;
 
     let choices: Vec<SelectorEntry<'_>> = args
         .choices
@@ -755,10 +759,10 @@ pub fn show_selector_actions_overlay(
     let mut trie_node = TrieNode::new();
     create_trie(&args, &mut trie_node);
 
-    let mut state = SelectorState::new(&args, window, pane, &size, &trie_node, &choices);
+    let mut state = SelectorState::new(&args, window, pane, &size, &trie_node, &choices, &mut buf);
 
     state.render_constants()?;
-    state.render(&mut term)?;
-    state.run_loop(&mut term)?;
+    state.render()?;
+    state.run_loop()?;
     Ok(())
 }
