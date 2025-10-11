@@ -16,7 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
-use termwiz::surface::{Change, CursorVisibility, Position};
+use termwiz::surface::{Change, CursorVisibility, Position, Surface};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
@@ -487,11 +487,11 @@ impl<'a> TransientSwitch<'a> {
         render_now: bool,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
-        buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.row),
-            },
+
+        let cols = buf.terminal().get_screen_size()?.cols;
+        let mut switch_surface = Surface::new(cols, 1);
+
+        switch_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
@@ -501,21 +501,23 @@ impl<'a> TransientSwitch<'a> {
         ]);
 
         if self.value.get() {
-            buf.add_changes(vec![
+            switch_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
             ]);
         } else {
-            buf.add_change(Change::Attribute(AttributeChange::Foreground(
+            switch_surface.add_change(Change::Attribute(AttributeChange::Foreground(
                 colors.inactive_flag_fg,
             )));
         }
 
-        buf.add_changes(vec![
+        switch_surface.add_changes(vec![
             Change::Text(delegate.flag.clone()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(")".to_string()),
         ]);
+
+        buf.draw_from_screen(&switch_surface, 0, self.row);
 
         if render_now {
             buf.flush()?;
@@ -539,11 +541,11 @@ impl<'a> TransientOption<'a> {
         render_now: bool,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
-        buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.row),
-            },
+
+        let cols = buf.terminal().get_screen_size()?.cols;
+        let mut option_surface = Surface::new(cols, 1);
+
+        option_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
@@ -553,7 +555,7 @@ impl<'a> TransientOption<'a> {
         ]);
 
         if let Some(val) = self.value.borrow().as_ref() {
-            buf.add_changes(vec![
+            option_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
@@ -562,16 +564,18 @@ impl<'a> TransientOption<'a> {
                 Change::Text(val.to_string()),
             ]);
         } else {
-            buf.add_changes(vec![
+            option_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                 Change::Text(format!("{}", delegate.flag)),
             ]);
         }
 
-        buf.add_changes(vec![
+        option_surface.add_changes(vec![
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(")".to_string()),
         ]);
+
+        buf.draw_from_screen(&option_surface, 0, self.row);
 
         if render_now {
             buf.flush()?;
@@ -595,11 +599,11 @@ impl<'a> TransientCyclicSwitch<'a> {
         render_now: bool,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
-        buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.row),
-            },
+
+        let cols = buf.terminal().get_screen_size()?.cols;
+        let mut cyclic_switch_surface = Surface::new(cols, 1);
+
+        cyclic_switch_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
@@ -609,20 +613,20 @@ impl<'a> TransientCyclicSwitch<'a> {
         ]);
 
         if let Some(idx) = self.active_idx.get() {
-            buf.add_changes(vec![
+            cyclic_switch_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if !delegate.choices.is_empty() {
-                buf.add_change(Change::Attribute(AttributeChange::Foreground(
+                cyclic_switch_surface.add_change(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     if cur_idx == idx {
-                        buf.add_changes(vec![
+                        cyclic_switch_surface.add_changes(vec![
                             Change::Text(prefix.to_string()),
                             Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                             Change::Text(choice.to_string()),
@@ -630,41 +634,44 @@ impl<'a> TransientCyclicSwitch<'a> {
                             Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                         ]);
                     } else {
-                        buf.add_change(Change::Text(format!("{}{}", prefix, choice)));
+                        cyclic_switch_surface
+                            .add_change(Change::Text(format!("{}{}", prefix, choice)));
                     }
                     if cur_idx == 0 {
                         prefix = "|";
                     }
                 }
-                buf.add_changes(vec![
+                cyclic_switch_surface.add_changes(vec![
                     Change::Text("]".to_string()),
                     Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
                 ]);
             }
         } else {
-            buf.add_changes(vec![
+            cyclic_switch_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if !delegate.choices.is_empty() {
-                buf.add_change(Change::Attribute(AttributeChange::Foreground(
+                cyclic_switch_surface.add_change(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
-                    buf.add_change(Change::Text(format!("{}{}", prefix, choice)));
+                    cyclic_switch_surface.add_change(Change::Text(format!("{}{}", prefix, choice)));
                     if cur_idx == 0 {
                         prefix = "|";
                     }
                 }
-                buf.add_changes(vec![
+                cyclic_switch_surface.add_changes(vec![
                     Change::Text("]".to_string()),
                     Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
                 ]);
             }
         }
-        buf.add_change(Change::Text(")".to_string()));
+        cyclic_switch_surface.add_change(Change::Text(")".to_string()));
+
+        buf.draw_from_screen(&cyclic_switch_surface, 0, self.row);
 
         if render_now {
             buf.flush()?;
@@ -685,11 +692,10 @@ impl<'a> TransientArgument<'a> {
         colors: &TransientColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
-        buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.row),
-            },
+        let cols = buf.terminal().get_screen_size()?.cols;
+        let mut argument_surface = Surface::new(cols, 1);
+
+        argument_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
@@ -697,6 +703,8 @@ impl<'a> TransientArgument<'a> {
             Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
             Change::Text(format!(" {}", self.delegate.description)),
         ]);
+
+        buf.draw_from_screen(&argument_surface, 0, self.row);
 
         Ok(())
     }
@@ -709,14 +717,15 @@ struct TransientSection<'a> {
 
 impl<'a> TransientSection<'a> {
     fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
-        buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.row),
-            },
+        let cols = buf.terminal().get_screen_size()?.cols;
+        let mut section_surface = Surface::new(cols, 1);
+
+        section_surface.add_changes(vec![
             Change::Text(self.delegate.header.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
+
+        buf.draw_from_screen(&section_surface, 0, self.row);
 
         Ok(())
     }
@@ -758,16 +767,17 @@ struct TransientContextEntry<'a> {
 
 impl<'a> TransientContextEntry<'a> {
     fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
-        buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.row),
-            },
+        let cols = buf.terminal().get_screen_size()?.cols;
+        let mut context_entry_surface = Surface::new(cols, 1);
+
+        context_entry_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text(self.delegate.label.clone()),
             Change::Text(": ".to_string()),
             Change::Text(self.delegate.id.clone()),
         ]);
+
+        buf.draw_from_screen(&context_entry_surface, 0, self.row);
 
         Ok(())
     }
@@ -781,13 +791,12 @@ struct TransientContext<'a> {
 
 impl<'a> TransientContext<'a> {
     fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
-        buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.row),
-            },
-            Change::Text(self.delegate.header.clone()),
-        ]);
+        let cols = buf.terminal().get_screen_size()?.cols;
+        let mut context_surface = Surface::new(cols, 1);
+
+        context_surface.add_change(Change::Text(self.delegate.header.clone()));
+
+        buf.draw_from_screen(&context_surface, 0, self.row);
 
         Ok(())
     }
