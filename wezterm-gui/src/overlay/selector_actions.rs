@@ -141,7 +141,7 @@ impl<'a> SelectorState<'a> {
             .clone()
             .unwrap_or_else(|| args.description.clone());
 
-        if args.fuzzy {
+        if !args.fuzzy {
             buf.add_change(Change::CursorVisibility(CursorVisibility::Hidden));
         }
 
