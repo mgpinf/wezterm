@@ -299,14 +299,24 @@ impl PromptState<'_> {
             prompt_with_value.push_str(&format!(" (default {})", default));
         }
         prompt_with_value.push_str(&format!(": {}", self.line));
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Relative(0),
-            },
+
+        let (cols, rows) = self.buf.dimensions();
+
+        let mut prompt_line_surface = Surface::new(cols, 1);
+        prompt_line_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text(prompt_with_value),
         ]);
+        self.buf.draw_from_screen(&prompt_line_surface, 0, rows - 2);
+
+        let (xpos, _) = prompt_line_surface.cursor_position();
+
+        // Adjust the cursor position because it is reset after the selector surface is drawn to
+        // the buffered terminal
+        self.buf.add_change(Change::CursorPosition {
+            x: Position::Absolute(xpos),
+            y: Position::Absolute(rows - 2),
+        });
 
         self.buf.flush()?;
 
@@ -358,8 +368,14 @@ impl PromptState<'_> {
                             .len();
 
                     self.buf.resize(cols, rows);
-                    self.buf
-                        .add_change(Change::ClearScreen(ColorAttribute::Default));
+
+                    self.buf.add_changes(vec![
+                        Change::ClearScreen(ColorAttribute::Default),
+                        Change::CursorPosition {
+                            x: Position::Absolute(0),
+                            y: Position::Absolute(0),
+                        },
+                    ]);
 
                     let mut description_surface = Surface::new(cols, 2);
                     description_surface.add_changes(vec![
@@ -384,30 +400,29 @@ impl PromptState<'_> {
             self.render()?;
         }
 
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(2),
-            },
-            Change::ClearToEndOfScreen(ColorAttribute::Default),
-            Change::CursorVisibility(CursorVisibility::Hidden),
-        ]);
+        let (cols, rows) = self.buf.dimensions();
+        let mut line_and_prompt_surface = Surface::new(cols, 2);
+        line_and_prompt_surface.add_change(Change::ClearScreen(ColorAttribute::Default));
+        self.buf
+            .draw_from_screen(&line_and_prompt_surface, 0, rows - 3);
+
+        self.buf
+            .add_change(Change::CursorVisibility(CursorVisibility::Hidden));
 
         Ok(())
     }
 
     fn draw_separator_and_show_cursor(&mut self) {
-        let (cols, _) = self.buf.dimensions();
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(2),
-            },
+        let (cols, rows) = self.buf.dimensions();
+        let mut line_surface = Surface::new(cols, 1);
+        line_surface.add_changes(vec![
             Change::ClearToEndOfScreen(ColorAttribute::Default),
             Change::Text("─".repeat(cols)),
-            Change::Text("\r\n".to_string()),
-            Change::CursorVisibility(CursorVisibility::Visible),
         ]);
+        self.buf.draw_from_screen(&line_surface, 0, rows - 3);
+
+        self.buf
+            .add_change(Change::CursorVisibility(CursorVisibility::Visible));
     }
 }
 
