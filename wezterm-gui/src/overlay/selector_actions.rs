@@ -87,7 +87,6 @@ struct SelectorState<'a> {
     max_items: usize,
     top_row: usize,
     choices: &'a Vec<SelectorEntry<'a>>,
-    selector_size: usize,
     multiple_idx: Option<Vec<bool>>,
     filtered_entries: Vec<&'a SelectorEntry<'a>>,
     filtering: bool,
@@ -120,7 +119,6 @@ impl<'a> SelectorState<'a> {
 
         let (_, rows) = buf.dimensions();
         let max_items = rows.saturating_sub(overhead);
-        let selector_size = choices.len().min(max_items);
 
         let multiple_idx = args.multiple.then(|| vec![false; choices.len()]);
         let filtered_entries = choices.iter().collect();
@@ -149,7 +147,6 @@ impl<'a> SelectorState<'a> {
             max_items,
             top_row: 0,
             choices,
-            selector_size,
             multiple_idx,
             filtered_entries,
             filtering: args.fuzzy,
@@ -220,8 +217,9 @@ impl<'a> SelectorState<'a> {
 
         let mut line_surface = Surface::new(cols, 1);
         line_surface.add_change(Change::Text("─".repeat(cols)));
+        let selector_size = self.choices.len().min(self.max_items);
         self.buf
-            .draw_from_screen(&line_surface, 0, rows - self.selector_size - 3);
+            .draw_from_screen(&line_surface, 0, rows - selector_size - 3);
 
         Ok(())
     }
@@ -351,7 +349,8 @@ impl<'a> SelectorState<'a> {
         let (cols, rows) = self.buf.dimensions();
         let max_width = cols.saturating_sub(6);
 
-        let mut selector_surface = Surface::new(cols, self.selector_size + 2);
+        let selector_size = self.choices.len().min(self.max_items);
+        let mut selector_surface = Surface::new(cols, selector_size + 2);
 
         selector_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
@@ -428,8 +427,9 @@ impl<'a> SelectorState<'a> {
             ]);
         }
 
+        let selector_size = self.choices.len().min(self.max_items);
         self.buf
-            .draw_from_screen(&selector_surface, 0, rows - self.selector_size - 2);
+            .draw_from_screen(&selector_surface, 0, rows - selector_size - 2);
 
         let (xpos, _) = selector_surface.cursor_position();
 
@@ -437,7 +437,7 @@ impl<'a> SelectorState<'a> {
         // the buffered terminal
         self.buf.add_change(Change::CursorPosition {
             x: Position::Absolute(xpos),
-            y: Position::Absolute(rows - self.selector_size - 2),
+            y: Position::Absolute(rows - selector_size - 2),
         });
 
         self.buf.flush()?;
@@ -685,9 +685,7 @@ impl<'a> SelectorState<'a> {
                     let context_size = self.context.as_ref().map_or(0, |v| v.entries.len() + 2);
                     let positional_args_size = self.section.arguments.len() + 1;
                     let overhead = context_size + positional_args_size + 3;
-                    let max_items = rows.saturating_sub(overhead);
-                    self.max_items = max_items;
-                    self.selector_size = self.choices.len().min(max_items);
+                    self.max_items = rows.saturating_sub(overhead);
 
                     self.buf.resize(cols, rows);
 
