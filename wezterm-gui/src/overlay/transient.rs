@@ -43,53 +43,48 @@ struct SelectorState<'a> {
 
 impl SelectorState<'_> {
     fn clear_selector(&mut self) -> anyhow::Result<()> {
-        let rows = self.max_items.saturating_add(ROW_OVERHEAD);
-        let start_row = self.selector_size + 2;
-        let skip_rows = rows - start_row - 1;
+        let (cols, rows) = self.buf.dimensions();
 
-        self.buf.add_changes(vec![
-            Change::CursorVisibility(CursorVisibility::Hidden),
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(start_row),
-            },
-            Change::ClearToEndOfScreen(ColorAttribute::Default),
-        ]);
+        let mut line_and_selector_surface = Surface::new(cols, 2 + self.selector_size);
+        line_and_selector_surface.add_change(Change::ClearScreen(ColorAttribute::Default));
 
-        for renderable_entity in self.row_entities.iter().skip(skip_rows) {
-            self.buf.add_change(Change::Text("\r\n".to_string()));
+        self.buf
+            .draw_from_screen(&line_and_selector_surface, 0, rows - self.selector_size - 3);
+
+        for renderable_entity in self.row_entities.iter().skip(rows - self.selector_size - 3) {
             if let Some(renderable_entity) = renderable_entity {
                 renderable_entity.render(&self.colors, self.buf)?;
             }
         }
 
+        self.buf
+            .add_change(Change::CursorVisibility(CursorVisibility::Hidden));
+
         Ok(())
     }
 
     fn draw_separator_and_show_cursor(&mut self) {
-        let (cols, _) = self.buf.dimensions();
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(2 + self.selector_size),
-            },
+        let (cols, rows) = self.buf.dimensions();
+
+        let mut line_surface = Surface::new(cols, 1);
+        line_surface.add_changes(vec![
             Change::ClearToEndOfScreen(ColorAttribute::Default),
             Change::Text("─".repeat(cols)),
-            Change::Text("\r\n".to_string()),
-            Change::CursorVisibility(CursorVisibility::Visible),
         ]);
+        self.buf
+            .draw_from_screen(&line_surface, 0, rows - self.selector_size - 3);
+
+        self.buf
+            .add_change(Change::CursorVisibility(CursorVisibility::Visible));
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        let (cols, _) = self.buf.dimensions();
+        let (cols, rows) = self.buf.dimensions();
         let max_width = cols.saturating_sub(6);
         let input_selector_size = self.selector_size;
 
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(1 + input_selector_size),
-            },
+        let mut selector_surface = Surface::new(cols, input_selector_size + 2);
+        selector_surface.add_changes(vec![
             Change::ClearToEndOfScreen(ColorAttribute::Default),
             Change::Text(truncate_right(
                 &format!("{}: {}", self.option.delegate.description, self.filter_term),
@@ -110,35 +105,38 @@ impl SelectorState<'_> {
                 break;
             }
 
-            self.buf.add_change(Change::Text("\r\n".to_string()));
+            selector_surface.add_change(Change::Text("\r\n".to_string()));
 
             let mut attr = CellAttributes::blank();
 
             if entry_idx == self.active_idx {
-                self.buf
-                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
+                selector_surface.add_change(Change::Attribute(AttributeChange::Reverse(true)));
                 attr.set_reverse(true);
             }
 
-            self.buf.add_change(Change::Text("    ".to_string()));
+            selector_surface.add_change(Change::Text("    ".to_string()));
             let mut line = crate::tabbar::parse_status_text(entry, attr.clone());
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
-            self.buf.add_changes(line.changes(&attr));
-            self.buf.add_change(Change::Text(" ".to_string()));
+            selector_surface.add_changes(line.changes(&attr));
+            selector_surface.add_change(Change::Text(" ".to_string()));
             if entry_idx == self.active_idx {
-                self.buf
-                    .add_change(Change::Attribute(AttributeChange::Reverse(false)));
+                selector_surface.add_change(Change::Attribute(AttributeChange::Reverse(false)));
             }
-            self.buf
-                .add_change(Change::AllAttributes(CellAttributes::default()));
+            selector_surface.add_change(Change::AllAttributes(CellAttributes::default()));
         }
+
+        self.buf
+            .draw_from_screen(&selector_surface, 0, rows - self.selector_size - 2);
+
+        // Adjust the cursor position because it is reset after the selector surface is drawn to
+        // the buffered terminal
         self.buf.add_change(Change::CursorPosition {
             x: Position::Absolute(
                 2 + self.option.delegate.description.len() + self.filter_term.len(),
             ),
-            y: Position::EndRelative(1 + input_selector_size),
+            y: Position::Absolute(rows - self.selector_size - 2),
         });
 
         self.buf.flush()?;
@@ -204,17 +202,24 @@ impl SelectorState<'_> {
                             .len();
 
                     self.buf.resize(cols, rows);
+
                     self.buf.add_changes(vec![
                         Change::ClearScreen(ColorAttribute::Default),
                         Change::CursorPosition {
                             x: Position::Absolute(0),
                             y: Position::Absolute(0),
                         },
+                    ]);
+
+                    let mut description_surface = Surface::new(cols, 2);
+                    description_surface.add_changes(vec![
                         Change::Text(self.description.to_string()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text("\r\n".to_string()),
                         Change::Text("─".repeat(description_len)),
                     ]);
+
+                    self.buf.draw_from_screen(&description_surface, 0, 0);
 
                     for entity in self.row_entities.iter().skip(3) {
                         self.buf.add_change(Change::Text("\r\n".to_string()));
