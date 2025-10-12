@@ -419,7 +419,7 @@ impl<'a> SelectorState<'a> {
                 Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
                 Change::Text(truncate_right(&self.fuzzy_description, max_width)),
                 Change::AllAttributes(CellAttributes::default()),
-                Change::Text(self.filter_term.clone()),
+                Change::Text(format!(": {}", self.filter_term)),
             ]);
         }
 
