@@ -33,7 +33,6 @@ struct SelectorState<'a> {
     filter_term: String,
     filtered_entries: Vec<&'a str>,
     choices: &'a Vec<String>,
-    selector_size: usize,
     colors: &'a TransientColors,
     option: &'a TransientOption<'a>,
     row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
@@ -44,14 +43,15 @@ struct SelectorState<'a> {
 impl SelectorState<'_> {
     fn clear_selector(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
+        let selector_size = self.choices.len().min(self.max_items);
 
-        let mut line_and_selector_surface = Surface::new(cols, 2 + self.selector_size);
+        let mut line_and_selector_surface = Surface::new(cols, 2 + selector_size);
         line_and_selector_surface.add_change(Change::ClearScreen(ColorAttribute::Default));
 
         self.buf
-            .draw_from_screen(&line_and_selector_surface, 0, rows - self.selector_size - 3);
+            .draw_from_screen(&line_and_selector_surface, 0, rows - selector_size - 3);
 
-        for renderable_entity in self.row_entities.iter().skip(rows - self.selector_size - 3) {
+        for renderable_entity in self.row_entities.iter().skip(rows - selector_size - 3) {
             if let Some(renderable_entity) = renderable_entity {
                 renderable_entity.render(&self.colors, self.buf)?;
             }
@@ -65,6 +65,7 @@ impl SelectorState<'_> {
 
     fn draw_separator_and_show_cursor(&mut self) {
         let (cols, rows) = self.buf.dimensions();
+        let selector_size = self.choices.len().min(self.max_items);
 
         let mut line_surface = Surface::new(cols, 1);
         line_surface.add_changes(vec![
@@ -72,7 +73,7 @@ impl SelectorState<'_> {
             Change::Text("─".repeat(cols)),
         ]);
         self.buf
-            .draw_from_screen(&line_surface, 0, rows - self.selector_size - 3);
+            .draw_from_screen(&line_surface, 0, rows - selector_size - 3);
 
         self.buf
             .add_change(Change::CursorVisibility(CursorVisibility::Visible));
@@ -81,7 +82,7 @@ impl SelectorState<'_> {
     fn render(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
         let max_width = cols.saturating_sub(6);
-        let input_selector_size = self.selector_size;
+        let input_selector_size = self.choices.len().min(self.max_items);
 
         let mut selector_surface = Surface::new(cols, input_selector_size + 2);
         selector_surface.add_changes(vec![
@@ -128,7 +129,7 @@ impl SelectorState<'_> {
         }
 
         self.buf
-            .draw_from_screen(&selector_surface, 0, rows - self.selector_size - 2);
+            .draw_from_screen(&selector_surface, 0, rows - input_selector_size - 2);
 
         // Adjust the cursor position because it is reset after the selector surface is drawn to
         // the buffered terminal
@@ -136,7 +137,7 @@ impl SelectorState<'_> {
             x: Position::Absolute(
                 2 + self.option.delegate.description.len() + self.filter_term.len(),
             ),
-            y: Position::Absolute(rows - self.selector_size - 2),
+            y: Position::Absolute(rows - input_selector_size - 2),
         });
 
         self.buf.flush()?;
@@ -194,8 +195,7 @@ impl SelectorState<'_> {
                     }
                 }
                 InputEvent::Resized { cols, rows } => {
-                    let max_items = rows.saturating_sub(ROW_OVERHEAD);
-                    self.selector_size = self.choices.len().min(max_items);
+                    self.max_items = rows.saturating_sub(ROW_OVERHEAD);
 
                     let description_len =
                         crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
@@ -959,7 +959,6 @@ impl<'a> TransientState<'a> {
                                 if let Some(choices) = option.delegate.choices.as_ref() {
                                     let (_, rows) = self.buf.dimensions();
                                     let max_items = rows.saturating_sub(ROW_OVERHEAD);
-                                    let selector_size = choices.len().min(max_items);
                                     let filtered_entries =
                                         choices.iter().map(|choice| choice.as_str()).collect();
 
@@ -970,7 +969,6 @@ impl<'a> TransientState<'a> {
                                         filter_term: String::new(),
                                         filtered_entries,
                                         choices,
-                                        selector_size,
                                         colors: &self.colors,
                                         option,
                                         row_entities: self.row_entities,
