@@ -222,7 +222,6 @@ impl SelectorState<'_> {
                     self.buf.draw_from_screen(&description_surface, 0, 0);
 
                     for entity in self.row_entities.iter().skip(3) {
-                        self.buf.add_change(Change::Text("\r\n".to_string()));
                         if let Some(entity) = entity {
                             entity.render(&self.colors, self.buf)?;
                         }
@@ -885,7 +884,6 @@ impl<'a> TransientState<'a> {
         self.buf.draw_from_screen(&description_surface, 0, 0);
 
         for entity in self.row_entities.iter().skip(3) {
-            self.buf.add_change(Change::Text("\r\n".to_string()));
             if let Some(entity) = entity {
                 entity.render(&self.colors, self.buf)?;
             }
