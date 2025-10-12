@@ -721,6 +721,8 @@ impl<'a> TransientSection<'a> {
         let mut section_surface = Surface::new(cols, 1);
 
         section_surface.add_changes(vec![
+            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+            Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
             Change::Text(self.delegate.header.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
@@ -771,8 +773,9 @@ impl<'a> TransientContextEntry<'a> {
         let mut context_entry_surface = Surface::new(cols, 1);
 
         context_entry_surface.add_changes(vec![
-            Change::ClearToEndOfLine(ColorAttribute::Default),
+            Change::Attribute(AttributeChange::Foreground(AnsiColor::Olive.into())),
             Change::Text(self.delegate.label.clone()),
+            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
             Change::Text(": ".to_string()),
             Change::Text(self.delegate.id.clone()),
         ]);
@@ -794,7 +797,12 @@ impl<'a> TransientContext<'a> {
         let cols = buf.terminal().get_screen_size()?.cols;
         let mut context_surface = Surface::new(cols, 1);
 
-        context_surface.add_change(Change::Text(self.delegate.header.clone()));
+        context_surface.add_changes(vec![
+            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+            Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
+            Change::Text(self.delegate.header.clone()),
+            Change::AllAttributes(CellAttributes::default()),
+        ]);
 
         buf.draw_from_screen(&context_surface, 0, self.row);
 
@@ -847,6 +855,8 @@ impl<'a> TransientState<'a> {
 
         let mut description_surface = Surface::new(cols, 2);
         description_surface.add_changes(vec![
+            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+            Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
             Change::Text(self.description.clone()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
