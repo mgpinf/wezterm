@@ -33,7 +33,6 @@ struct SelectorState<'a> {
     filter_term: String,
     filtered_entries: Vec<&'a str>,
     choices: &'a Vec<String>,
-    cols: usize,
     selector_size: usize,
     colors: &'a TransientColors,
     option: &'a TransientOption<'a>,
@@ -68,20 +67,22 @@ impl SelectorState<'_> {
     }
 
     fn draw_separator_and_show_cursor(&mut self) {
+        let (cols, _) = self.buf.dimensions();
         self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::EndRelative(2 + self.selector_size),
             },
             Change::ClearToEndOfScreen(ColorAttribute::Default),
-            Change::Text("─".repeat(self.cols)),
+            Change::Text("─".repeat(cols)),
             Change::Text("\r\n".to_string()),
             Change::CursorVisibility(CursorVisibility::Visible),
         ]);
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        let max_width = self.cols.saturating_sub(6);
+        let (cols, _) = self.buf.dimensions();
+        let max_width = cols.saturating_sub(6);
         let input_selector_size = self.selector_size;
 
         self.buf.add_changes(vec![
@@ -195,8 +196,6 @@ impl SelectorState<'_> {
                     }
                 }
                 InputEvent::Resized { cols, rows } => {
-                    self.cols = cols;
-
                     let max_items = rows.saturating_sub(ROW_OVERHEAD);
                     self.selector_size = self.choices.len().min(max_items);
 
@@ -204,6 +203,7 @@ impl SelectorState<'_> {
                         crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
                             .len();
 
+                    self.buf.resize(cols, rows);
                     self.buf.add_changes(vec![
                         Change::ClearScreen(ColorAttribute::Default),
                         Change::CursorPosition {
@@ -285,7 +285,6 @@ impl SelectorState<'_> {
 
 struct PromptState<'a> {
     line: String,
-    cols: usize,
     colors: &'a TransientColors,
     option: &'a TransientOption<'a>,
     row_entities: &'a Vec<Option<RenderableEntity<'a>>>,
@@ -353,13 +352,12 @@ impl PromptState<'_> {
                         continue;
                     }
                 }
-                InputEvent::Resized { cols, .. } => {
-                    self.cols = cols;
-
+                InputEvent::Resized { cols, rows } => {
                     let description_len =
                         crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
                             .len();
 
+                    self.buf.resize(cols, rows);
                     self.buf
                         .add_change(Change::ClearScreen(ColorAttribute::Default));
 
@@ -399,13 +397,14 @@ impl PromptState<'_> {
     }
 
     fn draw_separator_and_show_cursor(&mut self) {
+        let (cols, _) = self.buf.dimensions();
         self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::EndRelative(2),
             },
             Change::ClearToEndOfScreen(ColorAttribute::Default),
-            Change::Text("─".repeat(self.cols)),
+            Change::Text("─".repeat(cols)),
             Change::Text("\r\n".to_string()),
             Change::CursorVisibility(CursorVisibility::Visible),
         ]);
@@ -488,7 +487,7 @@ impl<'a> TransientSwitch<'a> {
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
 
-        let cols = buf.terminal().get_screen_size()?.cols;
+        let (cols, _) = buf.dimensions();
         let mut switch_surface = Surface::new(cols, 1);
 
         switch_surface.add_changes(vec![
@@ -542,7 +541,7 @@ impl<'a> TransientOption<'a> {
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
 
-        let cols = buf.terminal().get_screen_size()?.cols;
+        let (cols, _) = buf.dimensions();
         let mut option_surface = Surface::new(cols, 1);
 
         option_surface.add_changes(vec![
@@ -600,7 +599,7 @@ impl<'a> TransientCyclicSwitch<'a> {
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
 
-        let cols = buf.terminal().get_screen_size()?.cols;
+        let (cols, _) = buf.dimensions();
         let mut cyclic_switch_surface = Surface::new(cols, 1);
 
         cyclic_switch_surface.add_changes(vec![
@@ -692,7 +691,7 @@ impl<'a> TransientArgument<'a> {
         colors: &TransientColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
-        let cols = buf.terminal().get_screen_size()?.cols;
+        let (cols, _) = buf.dimensions();
         let mut argument_surface = Surface::new(cols, 1);
 
         argument_surface.add_changes(vec![
@@ -717,7 +716,7 @@ struct TransientSection<'a> {
 
 impl<'a> TransientSection<'a> {
     fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
-        let cols = buf.terminal().get_screen_size()?.cols;
+        let (cols, _) = buf.dimensions();
         let mut section_surface = Surface::new(cols, 1);
 
         section_surface.add_changes(vec![
@@ -769,7 +768,7 @@ struct TransientContextEntry<'a> {
 
 impl<'a> TransientContextEntry<'a> {
     fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
-        let cols = buf.terminal().get_screen_size()?.cols;
+        let (cols, _) = buf.dimensions();
         let mut context_entry_surface = Surface::new(cols, 1);
 
         context_entry_surface.add_changes(vec![
@@ -794,7 +793,7 @@ struct TransientContext<'a> {
 
 impl<'a> TransientContext<'a> {
     fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
-        let cols = buf.terminal().get_screen_size()?.cols;
+        let (cols, _) = buf.dimensions();
         let mut context_surface = Surface::new(cols, 1);
 
         context_surface.add_changes(vec![
@@ -939,10 +938,9 @@ impl<'a> TransientState<'a> {
                         }
                         RenderableEntity::TransientOption(option) => {
                             if option.value.borrow().is_none() || !option.delegate.allow_nil {
-                                let size = self.buf.terminal().get_screen_size()?;
-
                                 if let Some(choices) = option.delegate.choices.as_ref() {
-                                    let max_items = size.rows.saturating_sub(ROW_OVERHEAD);
+                                    let (_, rows) = self.buf.dimensions();
+                                    let max_items = rows.saturating_sub(ROW_OVERHEAD);
                                     let selector_size = choices.len().min(max_items);
                                     let filtered_entries =
                                         choices.iter().map(|choice| choice.as_str()).collect();
@@ -954,7 +952,6 @@ impl<'a> TransientState<'a> {
                                         filter_term: String::new(),
                                         filtered_entries,
                                         choices,
-                                        cols: size.cols,
                                         selector_size,
                                         colors: &self.colors,
                                         option,
@@ -969,7 +966,6 @@ impl<'a> TransientState<'a> {
                                 } else {
                                     let mut prompt_state = PromptState {
                                         line: String::new(),
-                                        cols: size.cols,
                                         colors: &self.colors,
                                         option,
                                         row_entities: &self.row_entities,
