@@ -360,20 +360,20 @@ impl PromptState<'_> {
                         crate::tabbar::parse_status_text(self.description, CellAttributes::blank())
                             .len();
 
-                    self.buf.add_changes(vec![
-                        Change::ClearScreen(ColorAttribute::Default),
-                        Change::CursorPosition {
-                            x: Position::Absolute(0),
-                            y: Position::Absolute(0),
-                        },
+                    self.buf
+                        .add_change(Change::ClearScreen(ColorAttribute::Default));
+
+                    let mut description_surface = Surface::new(cols, 2);
+                    description_surface.add_changes(vec![
                         Change::Text(self.description.to_string()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text("\r\n".to_string()),
                         Change::Text("─".repeat(description_len)),
                     ]);
 
+                    self.buf.draw_from_screen(&description_surface, 0, 0);
+
                     for entity in self.row_entities.iter().skip(3) {
-                        self.buf.add_change(Change::Text("\r\n".to_string()));
                         if let Some(entity) = entity {
                             entity.render(self.colors, self.buf)?;
                         }
@@ -840,17 +840,20 @@ impl<'a> TransientState<'a> {
         let description_len =
             crate::tabbar::parse_status_text(&self.description, CellAttributes::blank()).len();
 
-        self.buf.add_changes(vec![
-            Change::ClearScreen(ColorAttribute::Default),
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(0),
-            },
+        self.buf
+            .add_change(Change::ClearScreen(ColorAttribute::Default));
+
+        let (cols, _) = self.buf.dimensions();
+
+        let mut description_surface = Surface::new(cols, 2);
+        description_surface.add_changes(vec![
             Change::Text(self.description.clone()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
             Change::Text("─".repeat(description_len)),
         ]);
+
+        self.buf.draw_from_screen(&description_surface, 0, 0);
 
         for entity in self.row_entities.iter().skip(3) {
             self.buf.add_change(Change::Text("\r\n".to_string()));
