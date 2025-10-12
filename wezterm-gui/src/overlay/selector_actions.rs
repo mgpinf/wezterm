@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
-use termwiz::surface::{Change, CursorVisibility, Position};
+use termwiz::surface::{Change, CursorVisibility, Position, Surface};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
@@ -171,15 +171,21 @@ impl<'a> SelectorState<'a> {
     }
 
     fn render_constants(&mut self) -> termwiz::Result<()> {
+        let mut row = 0;
+        let size = self.buf.terminal().get_screen_size()?;
+
         if let Some(context) = self.context.as_ref() {
-            self.buf.add_changes(vec![
+            let rows = 2 + context.entries.len();
+            let mut context_surface = Surface::new(size.cols, rows);
+
+            context_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
                 Change::Text(context.header.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             for entry in &context.entries {
-                self.buf.add_changes(vec![
+                context_surface.add_changes(vec![
                     Change::Text("\r\n".to_string()),
                     Change::Attribute(AttributeChange::Foreground(AnsiColor::Olive.into())),
                     Change::Text(entry.label.clone()),
@@ -188,17 +194,22 @@ impl<'a> SelectorState<'a> {
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
             }
-            self.buf.add_change(Change::Text("\r\n\r\n".to_string()));
+
+            self.buf.draw_from_screen(&context_surface, 0, 0);
+            row = rows;
         }
 
-        self.buf.add_changes(vec![
+        let rows = 1 + self.section.arguments.len();
+
+        let mut arguments_surface = Surface::new(size.cols, rows);
+        arguments_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
             Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
             Change::Text(self.section.header.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
         for positional_arg in &self.section.arguments {
-            self.buf.add_changes(vec![
+            arguments_surface.add_changes(vec![
                 Change::Text("\r\n".to_string()),
                 Change::Attribute(AttributeChange::Foreground(self.colors.action_key_fg)),
                 Change::Text(positional_arg.key.clone()),
@@ -207,12 +218,12 @@ impl<'a> SelectorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
+        self.buf.draw_from_screen(&arguments_surface, 0, row);
 
-        self.buf.add_change(Change::CursorPosition {
-            x: Position::Absolute(0),
-            y: Position::EndRelative(self.selector_size + 2),
-        });
-        self.buf.add_change(Change::Text("─".repeat(self.cols)));
+        let mut line_surface = Surface::new(size.cols, 1);
+        line_surface.add_change(Change::Text("─".repeat(self.cols)));
+        self.buf
+            .draw_from_screen(&line_surface, 0, size.rows - self.selector_size - 3);
 
         Ok(())
     }
@@ -341,12 +352,10 @@ impl<'a> SelectorState<'a> {
     fn render(&mut self) -> anyhow::Result<()> {
         let max_width = self.cols.saturating_sub(6);
 
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::EndRelative(self.selector_size + 1),
-            },
-            Change::ClearToEndOfScreen(ColorAttribute::Default),
+        let size = self.buf.terminal().get_screen_size()?;
+        let mut selector_surface = Surface::new(size.cols, self.selector_size + 2);
+
+        selector_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
             Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
             Change::Text(truncate_right(&self.description, max_width)),
@@ -368,14 +377,14 @@ impl<'a> SelectorState<'a> {
             }
 
             if row_num != 0 {
-                self.buf.add_change(Change::Text("\r\n".to_string()));
+                selector_surface.add_change(Change::Text("\r\n".to_string()));
             }
 
             let mut attr = CellAttributes::blank();
 
             if let Some(multiple_idx) = self.multiple_idx.as_ref() {
                 if multiple_idx[self.filtered_entries[entry_idx].idx] {
-                    self.buf.add_changes(vec![
+                    selector_surface.add_changes(vec![
                         Change::Attribute(AttributeChange::Background(
                             self.colors.multiple_marker_bg,
                         )),
@@ -383,37 +392,35 @@ impl<'a> SelectorState<'a> {
                         Change::Attribute(AttributeChange::Background(ColorAttribute::Default)),
                     ]);
                 } else {
-                    self.buf.add_change(Change::Text(" ".to_string()));
+                    selector_surface.add_change(Change::Text(" ".to_string()));
                 }
             }
 
             if entry_idx == self.active_idx {
-                self.buf
-                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
+                selector_surface.add_change(Change::Attribute(AttributeChange::Reverse(true)));
                 attr.set_reverse(true);
             }
 
-            self.buf.add_change(Change::Text("    ".to_string()));
+            selector_surface.add_change(Change::Text("    ".to_string()));
             let mut line = crate::tabbar::parse_status_text(&entry.delegate.label, attr.clone());
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
-            self.buf.add_changes(line.changes(&attr));
-            self.buf.add_change(Change::Text(" ".to_string()));
+            selector_surface.add_changes(line.changes(&attr));
+            selector_surface.add_change(Change::Text(" ".to_string()));
             if entry_idx == self.active_idx {
-                self.buf
-                    .add_change(Change::Attribute(AttributeChange::Reverse(false)));
+                selector_surface.add_change(Change::Attribute(AttributeChange::Reverse(false)));
             }
-            self.buf
-                .add_change(Change::AllAttributes(CellAttributes::default()));
+            selector_surface.add_change(Change::AllAttributes(CellAttributes::default()));
         }
 
         if self.filtering {
-            self.buf.add_changes(vec![
+            selector_surface.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
-                    y: Position::EndRelative(self.selector_size + 1),
+                    y: Position::Absolute(0),
                 },
+                Change::CursorVisibility(CursorVisibility::Visible),
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
@@ -422,6 +429,18 @@ impl<'a> SelectorState<'a> {
                 Change::Text(format!(": {}", self.filter_term)),
             ]);
         }
+
+        self.buf
+            .draw_from_screen(&selector_surface, 0, size.rows - self.selector_size - 2);
+
+        let (xpos, _) = selector_surface.cursor_position();
+
+        // Adjust the cursor position because it is reset after the selector surface is drawn to
+        // the buffered terminal
+        self.buf.add_change(Change::CursorPosition {
+            x: Position::Absolute(xpos),
+            y: Position::Absolute(size.rows - self.selector_size - 2),
+        });
 
         self.buf.flush()?;
 
