@@ -87,7 +87,6 @@ struct SelectorState<'a> {
     max_items: usize,
     top_row: usize,
     choices: &'a Vec<SelectorEntry<'a>>,
-    cols: usize,
     selector_size: usize,
     multiple_idx: Option<Vec<bool>>,
     filtered_entries: Vec<&'a SelectorEntry<'a>>,
@@ -119,7 +118,7 @@ impl<'a> SelectorState<'a> {
         let positional_args_size = args.section.arguments.len() + 1;
         let overhead = context_size + positional_args_size + 3;
 
-        let (cols, rows) = buf.dimensions();
+        let (_, rows) = buf.dimensions();
         let max_items = rows.saturating_sub(overhead);
         let selector_size = choices.len().min(max_items);
 
@@ -150,7 +149,6 @@ impl<'a> SelectorState<'a> {
             max_items,
             top_row: 0,
             choices,
-            cols,
             selector_size,
             multiple_idx,
             filtered_entries,
@@ -171,12 +169,12 @@ impl<'a> SelectorState<'a> {
     }
 
     fn render_constants(&mut self) -> termwiz::Result<()> {
+        let (cols, rows) = self.buf.dimensions();
         let mut row = 0;
-        let size = self.buf.terminal().get_screen_size()?;
 
         if let Some(context) = self.context.as_ref() {
-            let rows = 2 + context.entries.len();
-            let mut context_surface = Surface::new(size.cols, rows);
+            let context_rows = 2 + context.entries.len();
+            let mut context_surface = Surface::new(cols, context_rows);
 
             context_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
@@ -196,12 +194,12 @@ impl<'a> SelectorState<'a> {
             }
 
             self.buf.draw_from_screen(&context_surface, 0, 0);
-            row = rows;
+            row = context_rows;
         }
 
-        let rows = 1 + self.section.arguments.len();
+        let arg_rows = 1 + self.section.arguments.len();
+        let mut arguments_surface = Surface::new(cols, arg_rows);
 
-        let mut arguments_surface = Surface::new(size.cols, rows);
         arguments_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
             Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
@@ -220,10 +218,10 @@ impl<'a> SelectorState<'a> {
         }
         self.buf.draw_from_screen(&arguments_surface, 0, row);
 
-        let mut line_surface = Surface::new(size.cols, 1);
-        line_surface.add_change(Change::Text("─".repeat(self.cols)));
+        let mut line_surface = Surface::new(cols, 1);
+        line_surface.add_change(Change::Text("─".repeat(cols)));
         self.buf
-            .draw_from_screen(&line_surface, 0, size.rows - self.selector_size - 3);
+            .draw_from_screen(&line_surface, 0, rows - self.selector_size - 3);
 
         Ok(())
     }
@@ -350,10 +348,10 @@ impl<'a> SelectorState<'a> {
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        let max_width = self.cols.saturating_sub(6);
+        let (cols, rows) = self.buf.dimensions();
+        let max_width = cols.saturating_sub(6);
 
-        let size = self.buf.terminal().get_screen_size()?;
-        let mut selector_surface = Surface::new(size.cols, self.selector_size + 2);
+        let mut selector_surface = Surface::new(cols, self.selector_size + 2);
 
         selector_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
@@ -431,7 +429,7 @@ impl<'a> SelectorState<'a> {
         }
 
         self.buf
-            .draw_from_screen(&selector_surface, 0, size.rows - self.selector_size - 2);
+            .draw_from_screen(&selector_surface, 0, rows - self.selector_size - 2);
 
         let (xpos, _) = selector_surface.cursor_position();
 
@@ -439,7 +437,7 @@ impl<'a> SelectorState<'a> {
         // the buffered terminal
         self.buf.add_change(Change::CursorPosition {
             x: Position::Absolute(xpos),
-            y: Position::Absolute(size.rows - self.selector_size - 2),
+            y: Position::Absolute(rows - self.selector_size - 2),
         });
 
         self.buf.flush()?;
@@ -684,14 +682,14 @@ impl<'a> SelectorState<'a> {
                     }
                 }
                 InputEvent::Resized { cols, rows } => {
-                    self.cols = cols;
-
                     let context_size = self.context.as_ref().map_or(0, |v| v.entries.len() + 2);
                     let positional_args_size = self.section.arguments.len() + 1;
                     let overhead = context_size + positional_args_size + 3;
                     let max_items = rows.saturating_sub(overhead);
                     self.max_items = max_items;
                     self.selector_size = self.choices.len().min(max_items);
+
+                    self.buf.resize(cols, rows);
 
                     self.buf.add_changes(vec![
                         Change::ClearScreen(ColorAttribute::Default),
