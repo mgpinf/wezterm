@@ -16,7 +16,7 @@ use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_term::{AttributeChange, CellAttributes};
+use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::{Clipboard, Modifiers, WindowOps};
 
 struct TrieNode<'a> {
@@ -173,12 +173,16 @@ impl<'a> SelectorState<'a> {
     fn render_constants(&mut self) -> termwiz::Result<()> {
         if let Some(context) = self.context.as_ref() {
             self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
                 Change::Text(context.header.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             for entry in &context.entries {
                 self.buf.add_changes(vec![
-                    Change::Text(format!("\r\n{}", entry.label)),
+                    Change::Text("\r\n".to_string()),
+                    Change::Attribute(AttributeChange::Foreground(AnsiColor::Olive.into())),
+                    Change::Text(entry.label.clone()),
                     Change::AllAttributes(CellAttributes::default()),
                     Change::Text(format!(": {}", entry.id)),
                     Change::AllAttributes(CellAttributes::default()),
@@ -187,10 +191,12 @@ impl<'a> SelectorState<'a> {
             self.buf.add_change(Change::Text("\r\n\r\n".to_string()));
         }
 
-        self.buf
-            .add_change(Change::Text(self.section.header.clone()));
-        self.buf
-            .add_change(Change::AllAttributes(CellAttributes::default()));
+        self.buf.add_changes(vec![
+            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+            Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
+            Change::Text(self.section.header.clone()),
+            Change::AllAttributes(CellAttributes::default()),
+        ]);
         for positional_arg in &self.section.arguments {
             self.buf.add_changes(vec![
                 Change::Text("\r\n".to_string()),
@@ -341,10 +347,11 @@ impl<'a> SelectorState<'a> {
                 y: Position::EndRelative(self.selector_size + 1),
             },
             Change::ClearToEndOfScreen(ColorAttribute::Default),
-            Change::Text(format!(
-                "{}\r\n",
-                truncate_right(&self.description, max_width)
-            )),
+            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+            Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
+            Change::Text(truncate_right(&self.description, max_width)),
+            Change::AllAttributes(CellAttributes::default()),
+            Change::Text("\r\n".to_string()),
         ]);
 
         let max_items = self.max_items;
@@ -408,10 +415,11 @@ impl<'a> SelectorState<'a> {
                     y: Position::EndRelative(self.selector_size + 1),
                 },
                 Change::ClearToEndOfLine(ColorAttribute::Default),
-                Change::Text(truncate_right(
-                    &format!("{}{}", self.fuzzy_description, self.filter_term),
-                    max_width,
-                )),
+                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
+                Change::Text(truncate_right(&self.fuzzy_description, max_width)),
+                Change::AllAttributes(CellAttributes::default()),
+                Change::Text(self.filter_term.clone()),
             ]);
         }
 
