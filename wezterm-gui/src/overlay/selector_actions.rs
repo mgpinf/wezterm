@@ -232,9 +232,8 @@ impl<'a> SelectorState<'a> {
                 Change::Text("\r\n".to_string()),
                 Change::Attribute(AttributeChange::Foreground(self.colors.action_key_fg)),
                 Change::Text(positional_arg.key.clone()),
-                Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
-                Change::Text(format!(" {}", positional_arg.description)),
                 Change::AllAttributes(CellAttributes::default()),
+                Change::Text(format!(" {}", positional_arg.description)),
             ]);
         }
         self.buf.draw_from_screen(&arguments_surface, 0, row);
@@ -243,7 +242,7 @@ impl<'a> SelectorState<'a> {
         line_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(cols)),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
         ]);
         let selector_size = self.choices.len().min(self.max_items);
         self.buf
