@@ -55,6 +55,7 @@ struct SelectorActionsColors {
     context_header_fg: ColorAttribute,
     section_header_fg: ColorAttribute,
     description_fg: ColorAttribute,
+    separator_fg: ColorAttribute,
 }
 
 impl SelectorActionsColors {
@@ -87,6 +88,9 @@ impl SelectorActionsColors {
                 .transient_description_fg
                 .unwrap_or(AnsiColor::Teal.into())
                 .into(),
+            separator_fg: colors
+                .transient_separator_fg
+                .map_or_else(|| ColorAttribute::Default, |fg_color| fg_color.into()),
         }
     }
 }
@@ -236,7 +240,11 @@ impl<'a> SelectorState<'a> {
         self.buf.draw_from_screen(&arguments_surface, 0, row);
 
         let mut line_surface = Surface::new(cols, 1);
-        line_surface.add_change(Change::Text("─".repeat(cols)));
+        line_surface.add_changes(vec![
+            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
+            Change::Text("─".repeat(cols)),
+            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+        ]);
         let selector_size = self.choices.len().min(self.max_items);
         self.buf
             .draw_from_screen(&line_surface, 0, rows - selector_size - 3);
@@ -443,7 +451,10 @@ impl<'a> SelectorState<'a> {
                 Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
                 Change::Text(truncate_right(&self.fuzzy_description, max_width)),
                 Change::AllAttributes(CellAttributes::default()),
-                Change::Text(format!(": {}", self.filter_term)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
+                Change::Text(":".to_string()),
+                Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+                Change::Text(format!(" {}", self.filter_term)),
             ]);
         }
 
