@@ -51,6 +51,10 @@ impl<'a> TrieNode<'a> {
 struct SelectorActionsColors {
     action_key_fg: ColorAttribute,
     multiple_marker_bg: ColorAttribute,
+    context_label_fg: ColorAttribute,
+    context_header_fg: ColorAttribute,
+    section_header_fg: ColorAttribute,
+    description_fg: ColorAttribute,
 }
 
 impl SelectorActionsColors {
@@ -66,6 +70,22 @@ impl SelectorActionsColors {
             multiple_marker_bg: colors
                 .selector_multiple_marker_bg
                 .unwrap_or(AnsiColor::Purple.into())
+                .into(),
+            context_label_fg: colors
+                .transient_context_label_fg
+                .unwrap_or(AnsiColor::Olive.into())
+                .into(),
+            context_header_fg: colors
+                .transient_context_header_fg
+                .unwrap_or(AnsiColor::Navy.into())
+                .into(),
+            section_header_fg: colors
+                .transient_section_header_fg
+                .unwrap_or(AnsiColor::Navy.into())
+                .into(),
+            description_fg: colors
+                .transient_description_fg
+                .unwrap_or(AnsiColor::Teal.into())
                 .into(),
         }
     }
@@ -175,14 +195,14 @@ impl<'a> SelectorState<'a> {
 
             context_surface.add_changes(vec![
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
+                Change::Attribute(AttributeChange::Foreground(self.colors.context_header_fg)),
                 Change::Text(context.header.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             for entry in &context.entries {
                 context_surface.add_changes(vec![
                     Change::Text("\r\n".to_string()),
-                    Change::Attribute(AttributeChange::Foreground(AnsiColor::Olive.into())),
+                    Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)),
                     Change::Text(entry.label.clone()),
                     Change::AllAttributes(CellAttributes::default()),
                     Change::Text(format!(": {}", entry.id)),
@@ -199,7 +219,7 @@ impl<'a> SelectorState<'a> {
 
         arguments_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
+            Change::Attribute(AttributeChange::Foreground(self.colors.section_header_fg)),
             Change::Text(self.section.header.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
@@ -354,7 +374,7 @@ impl<'a> SelectorState<'a> {
 
         selector_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
+            Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
             Change::Text(truncate_right(&self.description, max_width)),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
@@ -420,7 +440,7 @@ impl<'a> SelectorState<'a> {
                 Change::CursorVisibility(CursorVisibility::Visible),
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
+                Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
                 Change::Text(truncate_right(&self.fuzzy_description, max_width)),
                 Change::AllAttributes(CellAttributes::default()),
                 Change::Text(format!(": {}", self.filter_term)),
