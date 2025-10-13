@@ -464,6 +464,10 @@ struct TransientColors {
     active_flag_fg: ColorAttribute,
     inactive_flag_fg: ColorAttribute,
     active_value_fg: ColorAttribute,
+    description_fg: ColorAttribute,
+    context_label_fg: ColorAttribute,
+    context_header_fg: ColorAttribute,
+    section_header_fg: ColorAttribute,
 }
 
 impl TransientColors {
@@ -486,6 +490,22 @@ impl TransientColors {
             active_value_fg: colors
                 .transient_entry_active_value_fg
                 .unwrap_or(AnsiColor::Green.into())
+                .into(),
+            description_fg: colors
+                .transient_description_fg
+                .unwrap_or(AnsiColor::Teal.into())
+                .into(),
+            context_label_fg: colors
+                .transient_context_label_fg
+                .unwrap_or(AnsiColor::Olive.into())
+                .into(),
+            context_header_fg: colors
+                .transient_context_header_fg
+                .unwrap_or(AnsiColor::Navy.into())
+                .into(),
+            section_header_fg: colors
+                .transient_section_header_fg
+                .unwrap_or(AnsiColor::Navy.into())
                 .into(),
         }
     }
@@ -734,13 +754,17 @@ struct TransientSection<'a> {
 }
 
 impl<'a> TransientSection<'a> {
-    fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
+    fn render(
+        &self,
+        colors: &TransientColors,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
+    ) -> termwiz::Result<()> {
         let (cols, _) = buf.dimensions();
         let mut section_surface = Surface::new(cols, 1);
 
         section_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
+            Change::Attribute(AttributeChange::Foreground(colors.section_header_fg)),
             Change::Text(self.delegate.header.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
@@ -772,9 +796,9 @@ impl RenderableEntity<'_> {
             Self::TransientSwitch(switch) => switch.render(colors, buf, false),
             Self::TransientCyclicSwitch(cyclic_switch) => cyclic_switch.render(colors, buf, false),
             Self::TransientArgument(positional_arg) => positional_arg.render(colors, buf),
-            Self::TransientSection(section) => section.render(buf),
-            Self::TransientContext(context) => context.render(buf),
-            Self::TransientContextEntry(entry) => entry.render(buf),
+            Self::TransientSection(section) => section.render(colors, buf),
+            Self::TransientContext(context) => context.render(colors, buf),
+            Self::TransientContextEntry(entry) => entry.render(colors, buf),
         }
     }
 }
@@ -786,12 +810,16 @@ struct TransientContextEntry<'a> {
 }
 
 impl<'a> TransientContextEntry<'a> {
-    fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
+    fn render(
+        &self,
+        colors: &TransientColors,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
+    ) -> termwiz::Result<()> {
         let (cols, _) = buf.dimensions();
         let mut context_entry_surface = Surface::new(cols, 1);
 
         context_entry_surface.add_changes(vec![
-            Change::Attribute(AttributeChange::Foreground(AnsiColor::Olive.into())),
+            Change::Attribute(AttributeChange::Foreground(colors.context_label_fg)),
             Change::Text(self.delegate.label.clone()),
             Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
             Change::Text(": ".to_string()),
@@ -811,13 +839,17 @@ struct TransientContext<'a> {
 }
 
 impl<'a> TransientContext<'a> {
-    fn render(&self, buf: &mut BufferedTerminal<TermWizTerminal>) -> termwiz::Result<()> {
+    fn render(
+        &self,
+        colors: &TransientColors,
+        buf: &mut BufferedTerminal<TermWizTerminal>,
+    ) -> termwiz::Result<()> {
         let (cols, _) = buf.dimensions();
         let mut context_surface = Surface::new(cols, 1);
 
         context_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(AnsiColor::Navy.into())),
+            Change::Attribute(AttributeChange::Foreground(colors.context_header_fg)),
             Change::Text(self.delegate.header.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
@@ -874,7 +906,7 @@ impl<'a> TransientState<'a> {
         let mut description_surface = Surface::new(cols, 2);
         description_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(AnsiColor::Teal.into())),
+            Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
             Change::Text(self.description.clone()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
