@@ -389,7 +389,9 @@ impl PromptState<'_> {
                         Change::Text(self.description.to_string()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text("\r\n".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
                         Change::Text("─".repeat(description_len)),
+                        Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
                     ]);
 
                     self.buf.draw_from_screen(&description_surface, 0, 0);
@@ -916,7 +918,9 @@ impl<'a> TransientState<'a> {
             Change::Text(self.description.clone()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
+            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(description_len)),
+            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
         ]);
 
         self.buf.draw_from_screen(&description_surface, 0, 0);
