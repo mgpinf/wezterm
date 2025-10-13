@@ -146,6 +146,8 @@ config.colors = {
   transient_context_label_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   transient_section_header_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
   transient_separator_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
+
+  selector_multiple_marker_bg = { AnsiColor = 'Purple' }, -- {{since('nightly', inline=True)}}
 }
 
 return config
