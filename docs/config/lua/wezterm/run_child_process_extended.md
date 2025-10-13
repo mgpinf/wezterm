@@ -24,6 +24,6 @@ local success, stdout, stderr = wezterm.run_child_process_extended {
   cwd = wezterm.config_dir,
   set_environment_variables = {
     SOMETHING = 'a value',
-  }
+  },
 }
 ```
