@@ -70,7 +70,9 @@ impl SelectorState<'_> {
         let mut line_surface = Surface::new(cols, 1);
         line_surface.add_changes(vec![
             Change::ClearToEndOfScreen(ColorAttribute::Default),
+            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(cols)),
+            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
         ]);
         self.buf
             .draw_from_screen(&line_surface, 0, rows - selector_size - 3);
@@ -87,10 +89,11 @@ impl SelectorState<'_> {
         let mut selector_surface = Surface::new(cols, input_selector_size + 2);
         selector_surface.add_changes(vec![
             Change::ClearToEndOfScreen(ColorAttribute::Default),
-            Change::Text(truncate_right(
-                &format!("{}: {}", self.option.delegate.description, self.filter_term),
-                max_width,
-            )),
+            Change::Text(truncate_right(&self.option.delegate.description, max_width)),
+            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
+            Change::Text(":".to_string()),
+            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::Text(format!(" {}", self.filter_term)),
         ]);
 
         let max_items = self.max_items;
@@ -298,18 +301,19 @@ struct PromptState<'a> {
 
 impl PromptState<'_> {
     fn render(&mut self) -> termwiz::Result<()> {
-        let mut prompt_with_value = self.option.delegate.description.clone();
-        if let Some(default) = self.option.delegate.default.clone() {
-            prompt_with_value.push_str(&format!(" (default {})", default));
-        }
-        prompt_with_value.push_str(&format!(": {}", self.line));
-
         let (cols, rows) = self.buf.dimensions();
 
         let mut prompt_line_surface = Surface::new(cols, 1);
+        prompt_line_surface.add_change(Change::Text(self.option.delegate.description.clone()));
+        if let Some(default) = self.option.delegate.default.as_ref() {
+            prompt_line_surface.add_change(Change::Text(format!(" (default {})", default)));
+        }
         prompt_line_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
-            Change::Text(prompt_with_value),
+            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
+            Change::Text(":".to_string()),
+            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::Text(format!(" {}", self.line)),
         ]);
         self.buf.draw_from_screen(&prompt_line_surface, 0, rows - 2);
 
@@ -421,7 +425,9 @@ impl PromptState<'_> {
         let mut line_surface = Surface::new(cols, 1);
         line_surface.add_changes(vec![
             Change::ClearToEndOfScreen(ColorAttribute::Default),
+            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(cols)),
+            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
         ]);
         self.buf.draw_from_screen(&line_surface, 0, rows - 3);
 
@@ -468,6 +474,7 @@ struct TransientColors {
     context_label_fg: ColorAttribute,
     context_header_fg: ColorAttribute,
     section_header_fg: ColorAttribute,
+    separator_fg: ColorAttribute,
 }
 
 impl TransientColors {
@@ -507,6 +514,9 @@ impl TransientColors {
                 .transient_section_header_fg
                 .unwrap_or(AnsiColor::Navy.into())
                 .into(),
+            separator_fg: colors
+                .transient_separator_fg
+                .map_or_else(|| ColorAttribute::Default, |fg_color| fg_color.into()),
         }
     }
 }
@@ -821,9 +831,10 @@ impl<'a> TransientContextEntry<'a> {
         context_entry_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Foreground(colors.context_label_fg)),
             Change::Text(self.delegate.label.clone()),
+            Change::Attribute(AttributeChange::Foreground(colors.separator_fg)),
+            Change::Text(":".to_string()),
             Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
-            Change::Text(": ".to_string()),
-            Change::Text(self.delegate.id.clone()),
+            Change::Text(format!(" {}", self.delegate.id)),
         ]);
 
         buf.draw_from_screen(&context_entry_surface, 0, self.row);
