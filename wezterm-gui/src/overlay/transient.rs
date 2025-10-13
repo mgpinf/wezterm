@@ -75,7 +75,7 @@ impl SelectorState<'_> {
             Change::ClearToEndOfScreen(ColorAttribute::Default),
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(cols)),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
         ]);
         self.buf
             .draw_from_screen(&line_surface, 0, rows - selector_size - 3);
@@ -223,7 +223,7 @@ impl SelectorState<'_> {
                         Change::Text("\r\n".to_string()),
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
                         Change::Text("─".repeat(description_len)),
-                        Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+                        Change::AllAttributes(CellAttributes::default()),
                     ]);
 
                     self.buf.draw_from_screen(&description_surface, 0, 0);
@@ -391,7 +391,7 @@ impl PromptState<'_> {
                         Change::Text("\r\n".to_string()),
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
                         Change::Text("─".repeat(description_len)),
-                        Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+                        Change::AllAttributes(CellAttributes::default()),
                     ]);
 
                     self.buf.draw_from_screen(&description_surface, 0, 0);
@@ -426,7 +426,7 @@ impl PromptState<'_> {
             Change::ClearToEndOfScreen(ColorAttribute::Default),
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(cols)),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
         ]);
         self.buf.draw_from_screen(&line_surface, 0, rows - 3);
 
@@ -543,7 +543,7 @@ impl<'a> TransientSwitch<'a> {
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(format!("{}", delegate.key)),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(" {} (", delegate.description)),
         ]);
 
@@ -597,7 +597,7 @@ impl<'a> TransientOption<'a> {
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(format!("{}", delegate.key)),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(" {} (", delegate.description)),
         ]);
 
@@ -655,7 +655,7 @@ impl<'a> TransientCyclicSwitch<'a> {
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(format!("{}", delegate.key)),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(" {} (", delegate.description)),
         ]);
 
@@ -690,7 +690,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                 }
                 cyclic_switch_surface.add_changes(vec![
                     Change::Text("]".to_string()),
-                    Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+                    Change::AllAttributes(CellAttributes::default()),
                 ]);
             }
         } else {
@@ -712,7 +712,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                 }
                 cyclic_switch_surface.add_changes(vec![
                     Change::Text("]".to_string()),
-                    Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+                    Change::AllAttributes(CellAttributes::default()),
                 ]);
             }
         }
@@ -747,7 +747,7 @@ impl<'a> TransientArgument<'a> {
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(self.delegate.key.clone()),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(" {}", self.delegate.description)),
         ]);
 
@@ -830,7 +830,7 @@ impl<'a> TransientContextEntry<'a> {
         context_entry_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Foreground(colors.context_label_fg)),
             Change::Text(self.delegate.label.clone()),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(": {}", self.delegate.id)),
         ]);
 
@@ -920,7 +920,7 @@ impl<'a> TransientState<'a> {
             Change::Text("\r\n".to_string()),
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(description_len)),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
+            Change::AllAttributes(CellAttributes::default()),
         ]);
 
         self.buf.draw_from_screen(&description_surface, 0, 0);
