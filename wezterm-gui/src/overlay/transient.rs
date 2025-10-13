@@ -51,10 +51,13 @@ impl SelectorState<'_> {
         self.buf
             .draw_from_screen(&line_and_selector_surface, 0, rows - selector_size - 3);
 
-        for renderable_entity in self.row_entities.iter().skip(rows - selector_size - 3) {
-            if let Some(renderable_entity) = renderable_entity {
-                renderable_entity.render(&self.colors, self.buf)?;
-            }
+        for renderable_entity in self
+            .row_entities
+            .iter()
+            .skip(rows - selector_size - 3)
+            .filter_map(|e| e.as_ref())
+        {
+            renderable_entity.render(&self.colors, self.buf)?;
         }
 
         self.buf
@@ -224,10 +227,8 @@ impl SelectorState<'_> {
 
                     self.buf.draw_from_screen(&description_surface, 0, 0);
 
-                    for entity in self.row_entities.iter().skip(3) {
-                        if let Some(entity) = entity {
-                            entity.render(&self.colors, self.buf)?;
-                        }
+                    for entity in self.row_entities.iter().skip(3).filter_map(|e| e.as_ref()) {
+                        entity.render(&self.colors, self.buf)?;
                     }
 
                     self.draw_separator_and_show_cursor();
@@ -395,10 +396,8 @@ impl PromptState<'_> {
 
                     self.buf.draw_from_screen(&description_surface, 0, 0);
 
-                    for entity in self.row_entities.iter().skip(3) {
-                        if let Some(entity) = entity {
-                            entity.render(self.colors, self.buf)?;
-                        }
+                    for entity in self.row_entities.iter().skip(3).filter_map(|e| e.as_ref()) {
+                        entity.render(self.colors, self.buf)?;
                     }
 
                     self.draw_separator_and_show_cursor();
@@ -926,10 +925,8 @@ impl<'a> TransientState<'a> {
 
         self.buf.draw_from_screen(&description_surface, 0, 0);
 
-        for entity in self.row_entities.iter().skip(3) {
-            if let Some(entity) = entity {
-                entity.render(&self.colors, self.buf)?;
-            }
+        for entity in self.row_entities.iter().skip(3).filter_map(|e| e.as_ref()) {
+            entity.render(&self.colors, self.buf)?;
         }
         self.buf.flush()?;
 
