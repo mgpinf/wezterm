@@ -451,10 +451,7 @@ impl<'a> SelectorState<'a> {
                 Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
                 Change::Text(truncate_right(&self.fuzzy_description, max_width)),
                 Change::AllAttributes(CellAttributes::default()),
-                Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-                Change::Text(":".to_string()),
-                Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
-                Change::Text(format!(" {}", self.filter_term)),
+                Change::Text(format!(": {}", self.filter_term)),
             ]);
         }
 

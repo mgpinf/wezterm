@@ -92,11 +92,10 @@ impl SelectorState<'_> {
         let mut selector_surface = Surface::new(cols, input_selector_size + 2);
         selector_surface.add_changes(vec![
             Change::ClearToEndOfScreen(ColorAttribute::Default),
-            Change::Text(truncate_right(&self.option.delegate.description, max_width)),
-            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-            Change::Text(":".to_string()),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
-            Change::Text(format!(" {}", self.filter_term)),
+            Change::Text(truncate_right(
+                &format!("{}: {}", self.option.delegate.description, self.filter_term),
+                max_width,
+            )),
         ]);
 
         let max_items = self.max_items;
@@ -313,10 +312,7 @@ impl PromptState<'_> {
         }
         prompt_line_surface.add_changes(vec![
             Change::ClearToEndOfLine(ColorAttribute::Default),
-            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-            Change::Text(":".to_string()),
-            Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
-            Change::Text(format!(" {}", self.line)),
+            Change::Text(format!(": {}", self.line)),
         ]);
         self.buf.draw_from_screen(&prompt_line_surface, 0, rows - 2);
 
@@ -832,10 +828,8 @@ impl<'a> TransientContextEntry<'a> {
         context_entry_surface.add_changes(vec![
             Change::Attribute(AttributeChange::Foreground(colors.context_label_fg)),
             Change::Text(self.delegate.label.clone()),
-            Change::Attribute(AttributeChange::Foreground(colors.separator_fg)),
-            Change::Text(":".to_string()),
             Change::Attribute(AttributeChange::Foreground(ColorAttribute::Default)),
-            Change::Text(format!(" {}", self.delegate.id)),
+            Change::Text(format!(": {}", self.delegate.id)),
         ]);
 
         buf.draw_from_screen(&context_entry_surface, 0, self.row);
