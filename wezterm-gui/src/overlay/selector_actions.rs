@@ -410,12 +410,14 @@ impl<'a> SelectorState<'a> {
         }
 
         if self.filtering {
+            self.buf
+                .add_change(Change::CursorVisibility(CursorVisibility::Visible));
+
             selector_surface.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(1),
                 },
-                Change::CursorVisibility(CursorVisibility::Visible),
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
