@@ -230,14 +230,6 @@ impl<'a> SelectorState<'a> {
         }
     }
 
-    fn set_search(&mut self, val: bool) {
-        self.filtering = val;
-    }
-
-    fn toggle_search(&mut self) {
-        self.set_search(!self.filtering);
-    }
-
     fn set_filtered_entries_multiple_marker(&mut self, mark: bool) {
         if let Some(multiple_idx) = self.multiple_idx.as_mut() {
             for entry in &self.filtered_entries {
@@ -474,7 +466,7 @@ impl<'a> SelectorState<'a> {
                     key: KeyCode::Char('/'),
                     modifiers: Modifiers::CTRL,
                 }) => {
-                    self.toggle_search();
+                    self.filtering ^= true;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Backspace,
@@ -572,7 +564,7 @@ impl<'a> SelectorState<'a> {
                     .children
                     .contains_key(&'/') =>
                 {
-                    self.set_search(true);
+                    self.filtering = true;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('y'),
@@ -682,7 +674,7 @@ impl<'a> SelectorState<'a> {
                     ..
                 }) => {
                     if self.filtering {
-                        self.set_search(false);
+                        self.filtering = false;
                     } else {
                         continue;
                     }
