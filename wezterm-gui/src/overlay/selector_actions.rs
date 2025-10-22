@@ -162,10 +162,6 @@ impl<'a> SelectorState<'a> {
             .clone()
             .unwrap_or_else(|| args.description.clone());
 
-        if !args.fuzzy {
-            buf.add_change(Change::CursorVisibility(CursorVisibility::Hidden));
-        }
-
         SelectorState {
             active_idx: 0,
             max_items,
@@ -236,13 +232,6 @@ impl<'a> SelectorState<'a> {
 
     fn set_search(&mut self, val: bool) {
         self.filtering = val;
-        let cursor_visibility = if val {
-            CursorVisibility::Visible
-        } else {
-            CursorVisibility::Hidden
-        };
-        self.buf
-            .add_change(Change::CursorVisibility(cursor_visibility));
     }
 
     fn toggle_search(&mut self) {
@@ -319,6 +308,7 @@ impl<'a> SelectorState<'a> {
                 x: Position::Absolute(0),
                 y: Position::Absolute(0),
             },
+            Change::CursorVisibility(CursorVisibility::Hidden),
         ]);
 
         if let Some(context) = self.context.as_ref() {
