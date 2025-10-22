@@ -190,7 +190,6 @@ impl<'a> TransientSwitch<'a> {
         let delegate = self.delegate;
 
         buf.add_changes(vec![
-            Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(format!("{}", delegate.key)),
@@ -233,7 +232,6 @@ impl<'a> TransientOption<'a> {
         let delegate = self.delegate;
 
         buf.add_changes(vec![
-            Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(format!("{}", delegate.key)),
@@ -280,7 +278,6 @@ impl<'a> TransientCyclicSwitch<'a> {
         let delegate = self.delegate;
 
         buf.add_changes(vec![
-            Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(format!("{}", delegate.key)),
@@ -361,7 +358,6 @@ impl<'a> TransientArgument<'a> {
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
         buf.add_changes(vec![
-            Change::ClearToEndOfLine(ColorAttribute::Default),
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(self.delegate.key.clone()),
