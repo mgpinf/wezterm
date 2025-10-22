@@ -351,7 +351,7 @@ impl<'a> SelectorState<'a> {
         ]);
         for positional_arg in &self.section.arguments {
             self.buf.add_changes(vec![
-                Change::Text("\r\n".to_string()),
+                Change::Text("\r\n  ".to_string()),
                 Change::Attribute(AttributeChange::Foreground(self.colors.action_key_fg)),
                 Change::Text(positional_arg.key.clone()),
                 Change::AllAttributes(CellAttributes::default()),
