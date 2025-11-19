@@ -128,7 +128,7 @@ pub enum InnerPattern {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
-pub struct ExtendedPattern {
+pub struct ExtendedSearch {
     pub pattern: InnerPattern,
     pub activate_match: ActivateMatchPosition,
 }
@@ -140,7 +140,7 @@ pub enum Pattern {
     CaseSmartString(String),
     Regex(String),
     CurrentSelectionOrEmptyString,
-    Extended(ExtendedPattern),
+    Extended(ExtendedSearch),
 }
 
 impl Pattern {
