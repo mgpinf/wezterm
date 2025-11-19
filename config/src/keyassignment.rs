@@ -119,12 +119,28 @@ pub enum ActivateMatchPosition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
+pub enum InnerPattern {
+    CaseSensitiveString(String),
+    CaseInSensitiveString(String),
+    CaseSmartString(String),
+    Regex(String),
+    CurrentSelectionOrEmptyString,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
+pub struct ExtendedPattern {
+    pub pattern: InnerPattern,
+    pub activate_match: ActivateMatchPosition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
 pub enum Pattern {
     CaseSensitiveString(String),
     CaseInSensitiveString(String),
     CaseSmartString(String),
     Regex(String),
     CurrentSelectionOrEmptyString,
+    Extended(ExtendedPattern),
 }
 
 impl Pattern {
@@ -134,6 +150,13 @@ impl Pattern {
             | Self::CaseInSensitiveString(s)
             | Self::CaseSmartString(s)
             | Self::Regex(s) => s.is_empty(),
+            Self::Extended(extended_pattern) => match &extended_pattern.pattern {
+                InnerPattern::CaseSensitiveString(s)
+                | InnerPattern::CaseInSensitiveString(s)
+                | InnerPattern::CaseSmartString(s)
+                | InnerPattern::Regex(s) => s.is_empty(),
+                InnerPattern::CurrentSelectionOrEmptyString => true,
+            },
             Self::CurrentSelectionOrEmptyString => true,
         }
     }
@@ -592,10 +615,6 @@ pub enum KeyAssignment {
     ShowLauncherArgs(LauncherActionArgs),
     ClearScrollback(ScrollbackEraseMode),
     Search(Pattern),
-    ExtendedSearch {
-        pattern: Pattern,
-        activate_match: ActivateMatchPosition,
-    },
     ActivateCopyMode,
 
     SelectTextAtMouseCursor(SelectionMode),
