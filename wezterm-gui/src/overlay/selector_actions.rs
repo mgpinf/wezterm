@@ -200,27 +200,22 @@ impl<'a> SelectorState<'a> {
         }
     }
 
-    fn toggle_multiple_idx_and_move(&mut self, down: bool) {
+    fn toggle_multiple_marker(&mut self, down: bool) {
         // start_idx and end_idx are guaranteed to be within bounds of filtered_entries if
         // filtered_entries is not empty
         if !self.filtered_entries.is_empty() && self.multiple_idx.as_ref().is_some() {
-            let init_active_idx = self.active_idx;
+            // self.repeat[0] is guaranteed to be at least 1, so we can subtract 1 from it
             let (start_idx, end_idx) = if down {
-                self.move_down();
-                let end_idx = if self.active_idx != init_active_idx {
-                    self.active_idx.saturating_sub(1)
-                } else {
-                    init_active_idx
-                };
-                (init_active_idx, end_idx)
+                (
+                    self.active_idx,
+                    (self.active_idx + self.repeat[0] as usize - 1)
+                        .min(self.filtered_entries.len() - 1),
+                )
             } else {
-                self.move_up();
-                let start_idx = if self.active_idx != init_active_idx {
-                    self.active_idx + 1
-                } else {
-                    init_active_idx
-                };
-                (start_idx, init_active_idx)
+                (
+                    self.active_idx.saturating_sub(self.repeat[0] as usize - 1),
+                    self.active_idx,
+                )
             };
 
             let multiple_idx = self.multiple_idx.as_mut().unwrap();
@@ -594,7 +589,9 @@ impl<'a> SelectorState<'a> {
                         .children
                         .contains_key(&c) =>
                 {
-                    self.repeat[1] = c as u8 - '0' as u8;
+                    if c >= '2' {
+                        self.repeat[1] = c as u8 - '0' as u8;
+                    }
                     continue;
                 }
                 InputEvent::Key(KeyEvent {
@@ -663,13 +660,15 @@ impl<'a> SelectorState<'a> {
                     key: KeyCode::Tab,
                     modifiers: Modifiers::NONE,
                 }) => {
-                    self.toggle_multiple_idx_and_move(true);
+                    self.toggle_multiple_marker(true);
+                    self.move_down();
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Tab,
                     modifiers: Modifiers::SHIFT,
                 }) => {
-                    self.toggle_multiple_idx_and_move(false);
+                    self.toggle_multiple_marker(false);
+                    self.move_up();
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Enter,
