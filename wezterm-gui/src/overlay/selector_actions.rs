@@ -203,24 +203,25 @@ impl<'a> SelectorState<'a> {
     fn toggle_multiple_marker(&mut self, down: bool) {
         // start_idx and end_idx are guaranteed to be within bounds of filtered_entries if
         // filtered_entries is not empty
-        if !self.filtered_entries.is_empty() && self.multiple_idx.as_ref().is_some() {
-            // self.repeat[0] is guaranteed to be at least 1, so we can subtract 1 from it
-            let (start_idx, end_idx) = if down {
-                (
-                    self.active_idx,
-                    (self.active_idx + self.repeat[0] as usize - 1)
-                        .min(self.filtered_entries.len() - 1),
-                )
-            } else {
-                (
-                    self.active_idx.saturating_sub(self.repeat[0] as usize - 1),
-                    self.active_idx,
-                )
-            };
+        if !self.filtered_entries.is_empty() {
+            if let Some(multiple_idx) = self.multiple_idx.as_mut() {
+                // self.repeat[0] is guaranteed to be at least 1, so we can subtract 1 from it
+                let (start_idx, end_idx) = if down {
+                    (
+                        self.active_idx,
+                        (self.active_idx + self.repeat[0] as usize - 1)
+                            .min(self.filtered_entries.len() - 1),
+                    )
+                } else {
+                    (
+                        self.active_idx.saturating_sub(self.repeat[0] as usize - 1),
+                        self.active_idx,
+                    )
+                };
 
-            let multiple_idx = self.multiple_idx.as_mut().unwrap();
-            for entry in &self.filtered_entries[start_idx..=end_idx] {
-                multiple_idx[entry.idx] ^= true;
+                for entry in &self.filtered_entries[start_idx..=end_idx] {
+                    multiple_idx[entry.idx] ^= true;
+                }
             }
         }
     }
