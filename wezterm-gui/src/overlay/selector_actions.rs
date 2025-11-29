@@ -528,11 +528,7 @@ impl<'a> SelectorState<'a> {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('j'),
                     modifiers: Modifiers::NONE,
-                }) if !self
-                    .traversed_nodes
-                    .last()
-                    .as_ref()
-                    .unwrap()
+                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
                     .children
                     .contains_key(&'j') =>
                 {
@@ -541,11 +537,7 @@ impl<'a> SelectorState<'a> {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('k'),
                     modifiers: Modifiers::NONE,
-                }) if !self
-                    .traversed_nodes
-                    .last()
-                    .as_ref()
-                    .unwrap()
+                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
                     .children
                     .contains_key(&'k') =>
                 {
@@ -554,11 +546,7 @@ impl<'a> SelectorState<'a> {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('/'),
                     modifiers: Modifiers::NONE,
-                }) if !self
-                    .traversed_nodes
-                    .last()
-                    .as_ref()
-                    .unwrap()
+                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
                     .children
                     .contains_key(&'/') =>
                 {
@@ -567,11 +555,7 @@ impl<'a> SelectorState<'a> {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('y'),
                     modifiers: Modifiers::NONE,
-                }) if !self
-                    .traversed_nodes
-                    .last()
-                    .as_ref()
-                    .unwrap()
+                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
                     .children
                     .contains_key(&'y') =>
                 {
@@ -582,11 +566,7 @@ impl<'a> SelectorState<'a> {
                     key: KeyCode::Char(c),
                     modifiers: Modifiers::NONE,
                 }) if c.is_ascii_digit()
-                    && !self
-                        .traversed_nodes
-                        .last()
-                        .as_ref()
-                        .unwrap()
+                    && !self.traversed_nodes[self.traversed_nodes.len() - 1]
                         .children
                         .contains_key(&c) =>
                 {
@@ -599,10 +579,7 @@ impl<'a> SelectorState<'a> {
                     key: KeyCode::Char(c),
                     ..
                 }) => {
-                    let cur_node = self
-                        .traversed_nodes
-                        .last()
-                        .expect("Root node is always traversed");
+                    let cur_node = self.traversed_nodes[self.traversed_nodes.len() - 1];
 
                     let cur_node = match cur_node.find_char(c) {
                         Some(cur_node) => cur_node,
