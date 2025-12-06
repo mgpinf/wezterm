@@ -173,6 +173,7 @@ pub struct Palette {
     pub quick_select_label_bg: Option<ColorSpec>,
     pub quick_select_match_fg: Option<ColorSpec>,
     pub quick_select_match_bg: Option<ColorSpec>,
+    pub quick_select_inactive_fg: Option<ColorSpec>,
 
     pub input_selector_label_fg: Option<ColorSpec>,
     pub input_selector_label_bg: Option<ColorSpec>,
@@ -261,6 +262,7 @@ impl Palette {
             quick_select_label_bg: overlay!(quick_select_label_bg),
             quick_select_match_fg: overlay!(quick_select_match_fg),
             quick_select_match_bg: overlay!(quick_select_match_bg),
+            quick_select_inactive_fg: overlay!(quick_select_inactive_fg),
             input_selector_label_fg: overlay!(input_selector_label_fg),
             input_selector_label_bg: overlay!(input_selector_label_bg),
             launcher_label_fg: overlay!(launcher_label_fg),
