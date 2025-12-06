@@ -137,6 +137,7 @@ config.colors = {
   quick_select_label_fg = { Color = '#ffffff' },
   quick_select_match_bg = { AnsiColor = 'Navy' },
   quick_select_match_fg = { Color = '#ffffff' },
+  quick_select_inactive_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
 
   input_selector_label_bg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   input_selector_label_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
