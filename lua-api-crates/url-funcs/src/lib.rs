@@ -1,7 +1,9 @@
 use crate::mlua::UserDataFields;
 use config::lua::get_or_create_sub_module;
 use config::lua::mlua::{self, Lua, MetaMethod, UserData, UserDataMethods};
-use percent_encoding::{percent_decode, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use percent_encoding::{
+    percent_decode, percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC,
+};
 
 /// https://url.spec.whatwg.org/#application-x-www-form-urlencoded-percent-encode-set
 const PERCENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
@@ -28,6 +30,16 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
         lua.create_function(|_, s: String| {
             let encoded = utf8_percent_encode(&s, PERCENT_ENCODE_SET).to_string();
             Ok(encoded)
+        })?,
+    )?;
+
+    url_mod.set(
+        "decode",
+        lua.create_function(|_, s: String| {
+            let decoded = percent_decode_str(&s).decode_utf8().map_err(|err| {
+                mlua::Error::external(format!("{err:#} while decoding URL encoded string {s}"))
+            })?;
+            Ok(decoded.to_string())
         })?,
     )?;
 
