@@ -721,6 +721,7 @@ impl Pane for QuickSelectOverlay {
         let (top, mut lines) = self.delegate.get_lines(lines);
         let colors = renderer.config.resolved_palette.clone();
         let disable_attr = renderer.config.quick_select_remove_styling;
+        let inactive_fg = colors.quick_select_inactive_fg;
 
         // Process the lines; for the search row we want to render instead
         // the search UI.
@@ -730,7 +731,13 @@ impl Pane for QuickSelectOverlay {
             if disable_attr {
                 line.cells_mut_for_attr_changes_only()
                     .iter_mut()
-                    .for_each(|cell| cell.attrs_mut().clear());
+                    .for_each(|cell| {
+                        let attrs = cell.attrs_mut();
+                        attrs.clear();
+                        if let Some(inactive_fg) = inactive_fg {
+                            attrs.set_foreground(inactive_fg);
+                        }
+                    });
             }
             let stable_idx = idx as StableRowIndex + top;
             renderer.dirty_results.remove(stable_idx);
