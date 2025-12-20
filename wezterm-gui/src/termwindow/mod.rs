@@ -2649,6 +2649,9 @@ impl TermWindow {
             SpawnCommandInNewWindow(spawn) => {
                 self.spawn_command(spawn, SpawnWhere::NewWindow);
             }
+            SpawnCommandInFloatingPane(spawn) => {
+                self.spawn_command(spawn, SpawnWhere::FloatingPane);
+            }
             SplitHorizontal(spawn) => {
                 log::trace!("SplitHorizontal {:?}", spawn);
                 self.spawn_command(
@@ -3543,6 +3546,7 @@ impl TermWindow {
                 index: 0,
                 is_active: true,
                 is_zoomed: false,
+                is_floating: false,
                 left: 0,
                 top: 0,
                 width: size.cols as _,
