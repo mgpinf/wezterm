@@ -44,6 +44,7 @@ struct TabInner {
     size_before_zoom: TerminalSize,
     active: usize,
     zoomed: Option<Arc<dyn Pane>>,
+    floating: Option<Arc<dyn Pane>>,
     title: String,
     recency: Recency,
 }
@@ -62,6 +63,8 @@ pub struct PositionedPane {
     pub is_active: bool,
     /// true if this pane is zoomed
     pub is_zoomed: bool,
+    /// true if this pane is floating
+    pub is_floating: bool,
     /// The offset from the top left corner of the containing tab to the top
     /// left corner of this pane, in cells.
     pub left: usize,
@@ -83,6 +86,8 @@ impl std::fmt::Debug for PositionedPane {
         fmt.debug_struct("PositionedPane")
             .field("index", &self.index)
             .field("is_active", &self.is_active)
+            .field("is_zoomed", &self.is_zoomed)
+            .field("is_floating", &self.is_floating)
             .field("left", &self.left)
             .field("top", &self.top)
             .field("width", &self.width)
@@ -713,6 +718,10 @@ impl Tab {
         self.inner.lock().assign_pane(pane)
     }
 
+    pub fn assign_floating_pane(&self, pane: &Arc<dyn Pane>) {
+        self.inner.lock().assign_floating_pane(pane)
+    }
+
     /// Swap the active pane with the specified pane_index
     pub fn swap_active_with_index(&self, pane_index: usize, keep_focus: bool) -> Option<()> {
         self.inner
@@ -762,6 +771,7 @@ impl TabInner {
             size_before_zoom: *size,
             active: 0,
             zoomed: None,
+            floating: None,
             title: String::new(),
             recency: Recency::default(),
         }
@@ -1004,12 +1014,31 @@ impl TabInner {
         let mut panes = vec![];
 
         if respect_zoom_state {
+            if let Some(floating) = self.floating.as_ref() {
+                let size = self.size;
+                panes.push(PositionedPane {
+                    index: 0,
+                    is_active: true,
+                    is_zoomed: false,
+                    is_floating: true,
+                    left: 0,
+                    top: 0,
+                    width: size.cols.into(),
+                    pixel_width: size.pixel_width.into(),
+                    height: size.rows.into(),
+                    pixel_height: size.pixel_height.into(),
+                    pane: Arc::clone(floating),
+                });
+                return panes;
+            }
+
             if let Some(zoomed) = self.zoomed.as_ref() {
                 let size = self.size;
                 panes.push(PositionedPane {
                     index: 0,
                     is_active: true,
                     is_zoomed: true,
+                    is_floating: false,
                     left: 0,
                     top: 0,
                     width: size.cols.into(),
@@ -1056,6 +1085,7 @@ impl TabInner {
                     index,
                     is_active: index == active_idx,
                     is_zoomed: zoomed_id == Some(pane.pane_id()),
+                    is_floating: false,
                     left,
                     top,
                     width: dims.cols as _,
@@ -1072,6 +1102,30 @@ impl TabInner {
                     self.pane.replace(c.tree());
                     break;
                 }
+            }
+        }
+
+        if !respect_zoom_state {
+            if let Some(floating) = self.floating.as_ref() {
+                // When we're ignoring zoom state (which usually means we're iterating panes
+                // for management purposes like resolving IDs or finding the active pane
+                // for spawning new tabs), we need to make sure the floating pane is included
+                // in the list. Otherwise, the Mux won't be able to "see" it, and operations
+                // targeting it will fail.
+                let size = self.size;
+                panes.push(PositionedPane {
+                    index: panes.len(),
+                    is_active: true,
+                    is_zoomed: false,
+                    is_floating: true,
+                    left: 0,
+                    top: 0,
+                    width: size.cols.into(),
+                    pixel_width: size.pixel_width.into(),
+                    height: size.rows.into(),
+                    pixel_height: size.pixel_height.into(),
+                    pane: Arc::clone(floating),
+                });
             }
         }
 
@@ -1140,6 +1194,10 @@ impl TabInner {
         if size.rows == 0 || size.cols == 0 {
             // Ignore "impossible" resize requests
             return;
+        }
+
+        if let Some(floating) = &self.floating {
+            floating.resize(size).ok();
         }
 
         if let Some(zoomed) = &self.zoomed {
@@ -1606,6 +1664,15 @@ impl TabInner {
         F: Fn(usize, &Arc<dyn Pane>) -> bool,
     {
         let mut dead_panes = vec![];
+        if let Some(floating) = self.floating.as_ref() {
+            // Using usize::MAX as a dummy index for the floating pane since it doesn't
+            // have a position in the tiling tree.
+            if f(usize::MAX, floating) {
+                dead_panes.push(Arc::clone(floating));
+                self.floating = None;
+            }
+        }
+
         let zoomed_pane = self.zoomed.as_ref().map(|p| p.pane_id());
 
         {
@@ -1733,6 +1800,10 @@ impl TabInner {
     }
 
     fn get_active_pane(&mut self) -> Option<Arc<dyn Pane>> {
+        if let Some(floating) = self.floating.as_ref() {
+            return Some(Arc::clone(floating));
+        }
+
         if let Some(zoomed) = self.zoomed.as_ref() {
             return Some(Arc::clone(zoomed));
         }
@@ -1806,6 +1877,12 @@ impl TabInner {
             Ok(c) => self.pane = Some(c.tree()),
             Err(_) => panic!("tried to assign root pane to non-empty tree"),
         }
+    }
+
+    fn assign_floating_pane(&mut self, pane: &Arc<dyn Pane>) {
+        pane.resize(self.size).ok();
+        self.floating.replace(Arc::clone(pane));
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
     fn cell_dimensions(&self) -> TerminalSize {
@@ -2524,5 +2601,37 @@ mod test {
     #[test]
     fn tab_is_send_and_sync() {
         assert!(is_send_and_sync::<Tab>());
+    }
+
+    #[test]
+    fn test_floating_pane() {
+        let size = TerminalSize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 800,
+            pixel_height: 600,
+            dpi: 96,
+        };
+        let tab = Tab::new(&size);
+        let pane1 = FakePane::new(1, size);
+        tab.assign_pane(&pane1);
+
+        let panes = tab.iter_panes();
+        assert_eq!(1, panes.len());
+        assert_eq!(false, panes[0].is_floating);
+
+        let floating_pane = FakePane::new(2, size);
+        tab.assign_floating_pane(&floating_pane);
+
+        let panes = tab.iter_panes();
+        assert_eq!(1, panes.len());
+        assert_eq!(true, panes[0].is_floating);
+        assert_eq!(2, panes[0].pane.pane_id());
+
+        tab.remove_pane(2);
+        let panes = tab.iter_panes();
+        assert_eq!(1, panes.len());
+        assert_eq!(false, panes[0].is_floating);
+        assert_eq!(1, panes[0].pane.pane_id());
     }
 }
