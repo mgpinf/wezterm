@@ -113,8 +113,9 @@ impl<'a> FormState<'a> {
                 } else {
                     self.colors.label_fg
                 })),
-                Change::Text(format!("{}: ", field.label)),
+                Change::Text(field.label.clone()),
                 Change::AllAttributes(CellAttributes::default()),
+                Change::Text(": ".to_string()),
             ]);
 
             let value = &self.field_values[idx];
