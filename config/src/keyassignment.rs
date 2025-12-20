@@ -666,6 +666,27 @@ pub struct DisplayText {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct FormField {
+    pub label: String,
+    pub id: String,
+    #[dynamic(default)]
+    pub placeholder: Option<String>,
+    #[dynamic(default)]
+    pub is_password: bool,
+    #[dynamic(default)]
+    pub initial_value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct InputForm {
+    pub title: String,
+    pub fields: Vec<FormField>,
+    pub action: Box<KeyAssignment>,
+    #[dynamic(default)]
+    pub submit_label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub enum KeyAssignment {
     SpawnTab(SpawnTabDomain),
     SpawnWindow,
@@ -780,6 +801,7 @@ pub enum KeyAssignment {
     ActivateWindowRelativeNoWrap(isize),
     PromptInputLine(PromptInputLine),
     InputSelector(InputSelector),
+    InputForm(InputForm),
     Confirmation(Confirmation),
     TransientMenu(TransientMenu),
     SelectorActions(SelectorActions),
