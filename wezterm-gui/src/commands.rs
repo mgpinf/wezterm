@@ -596,6 +596,7 @@ fn spawn_command_from_action(action: &KeyAssignment) -> Option<&SpawnCommand> {
         SplitHorizontal(command)
         | SplitVertical(command)
         | SpawnCommandInNewWindow(command)
+        | SpawnCommandInFloatingPane(command)
         | SpawnCommandInNewTab(command) => Some(command),
         _ => None,
     }
@@ -1013,6 +1014,18 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             )
             .into(),
             doc: format!("Spawn a new Window with {cmd:?}").into(),
+            keys: vec![],
+            args: &[],
+            menubar: &[],
+            icon: Some("md_open_in_new"),
+        },
+        SpawnCommandInFloatingPane(cmd) => CommandDef {
+            brief: label_string(
+                action,
+                format!("Spawn a new Floating Pane with {cmd:?}").to_string(),
+            )
+            .into(),
+            doc: format!("Spawn a new Floating Pane with {cmd:?}").into(),
             keys: vec![],
             args: &[],
             menubar: &[],

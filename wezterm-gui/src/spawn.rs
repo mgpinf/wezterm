@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context};
-use config::keyassignment::SpawnCommand;
+use config::keyassignment::{SpawnCommand, SpawnTabDomain};
 use config::TermConfig;
 use mux::activity::Activity;
 use mux::domain::SplitSource;
@@ -15,6 +15,7 @@ pub enum SpawnWhere {
     NewWindow,
     NewTab,
     SplitPane(SplitRequest),
+    FloatingPane,
 }
 
 pub fn spawn_command_impl(
@@ -120,6 +121,34 @@ pub async fn spawn_command_internal(
                 pane.set_config(term_config);
             } else {
                 bail!("there is no active tab while splitting pane!?");
+            }
+        }
+        SpawnWhere::FloatingPane => {
+            // Floating panes are a specific layout preference handled by the Tab itself,
+            // rather than a global window management concern like SplitPane or NewTab.
+            // By implementing this here in the Controller (GUI), we orchestrate the
+            // creation of the pane via the Domain and then hand it off to the Tab
+            // to store in its special `floating` slot. This keeps the Mux API more
+            // generic while allowing the GUI to handle the specific "floating" layout logic.
+            let src_window_id = match src_window_id {
+                Some(id) => id,
+                None => anyhow::bail!("no src window when spawning floating pane?"),
+            };
+            if let Some(tab) = mux.get_active_tab_for_window(src_window_id) {
+                let domain = match &spawn.domain {
+                    SpawnTabDomain::DefaultDomain => Some(mux.default_domain()),
+                    SpawnTabDomain::CurrentPaneDomain => {
+                        let dom_id = tab.get_active_pane().map(|p| p.domain_id()).unwrap_or(0);
+                        Some(mux.get_domain(dom_id).unwrap_or_else(|| mux.default_domain()))
+                    }
+                    SpawnTabDomain::DomainName(name) => mux.get_domain_by_name(name),
+                    SpawnTabDomain::DomainId(id) => mux.get_domain(*id),
+                }
+                .ok_or_else(|| anyhow!("domain not found"))?;
+
+                let pane = domain.spawn_pane(size, cmd_builder, cwd).await?;
+                pane.set_config(term_config);
+                tab.assign_floating_pane(&pane);
             }
         }
         _ => {
