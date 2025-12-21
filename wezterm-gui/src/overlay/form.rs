@@ -115,20 +115,18 @@ impl<'a> FormState<'a> {
 
             self.buf.add_changes(vec![
                 Change::Text("\r\n".to_string()),
+                Change::Attribute(AttributeChange::Foreground(self.colors.required_fg)),
+                Change::Text(if field.required {
+                    "* ".to_string()
+                } else {
+                    "  ".to_string()
+                }),
                 Change::Attribute(AttributeChange::Foreground(if is_active {
                     self.colors.active_label_fg
                 } else {
                     self.colors.label_fg
                 })),
                 Change::Text(field.label.clone()),
-            ]);
-            if field.required {
-                self.buf.add_changes(vec![
-                    Change::Attribute(AttributeChange::Foreground(self.colors.required_fg)),
-                    Change::Text("*".to_string()),
-                ]);
-            }
-            self.buf.add_changes(vec![
                 Change::AllAttributes(CellAttributes::default()),
                 Change::Text(": ".to_string()),
             ]);
@@ -154,7 +152,7 @@ impl<'a> FormState<'a> {
 
             if is_active {
                 cursor_y = 3 + idx;
-                cursor_x = field.label.chars().count() + 2 + self.field_cursors[idx] + if field.required { 1 } else { 0 };
+                cursor_x = field.label.chars().count() + 4 + self.field_cursors[idx];
             }
 
             self.buf.add_changes(vec![
@@ -166,7 +164,7 @@ impl<'a> FormState<'a> {
 
         let submit_label = self.args.submit_label.as_deref().unwrap_or("Submit");
         self.buf.add_changes(vec![
-            Change::Text("\r\n\r\n".to_string()),
+            Change::Text("\r\n\r\n  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(self.colors.border_fg)),
             Change::Text("[Enter] ".to_string()),
             Change::AllAttributes(CellAttributes::default()),
