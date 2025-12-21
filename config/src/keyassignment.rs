@@ -675,6 +675,8 @@ pub struct FormField {
     pub is_password: bool,
     #[dynamic(default)]
     pub initial_value: Option<String>,
+    #[dynamic(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

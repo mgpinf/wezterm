@@ -75,6 +75,7 @@ Each `FormField` in the `fields` list has:
 *   `placeholder` - (Optional) Text to display when the field is empty.
 *   `is_password` - (Optional) If true, input characters are masked with `*`.
 *   `initial_value` - (Optional) The starting value for the field.
+*   `required` - (Optional) If true, the form cannot be submitted unless this field has a value.
 
 When the user submits the form, the `action` is triggered. If it is an `action_callback`, the callback function receives `(window, pane, form_result)`.
 
