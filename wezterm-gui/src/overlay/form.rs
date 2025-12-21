@@ -192,18 +192,30 @@ impl<'a> FormState<'a> {
                         self.active_idx = 0;
                     }
                 }
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::UpArrow,
-                    ..
-                }) => {
+                InputEvent::Key(
+                    KeyEvent {
+                        key: KeyCode::Char('P'),
+                        modifiers: Modifiers::CTRL,
+                    }
+                    | KeyEvent {
+                        key: KeyCode::UpArrow,
+                        ..
+                    },
+                ) => {
                     if self.active_idx > 0 {
                         self.active_idx -= 1;
                     }
                 }
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::DownArrow,
-                    ..
-                }) => {
+                InputEvent::Key(
+                    KeyEvent {
+                        key: KeyCode::Char('N'),
+                        modifiers: Modifiers::CTRL,
+                    }
+                    | KeyEvent {
+                        key: KeyCode::DownArrow,
+                        ..
+                    },
+                ) => {
                     if self.active_idx < self.args.fields.len() - 1 {
                         self.active_idx += 1;
                     }
