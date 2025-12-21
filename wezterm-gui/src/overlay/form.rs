@@ -279,7 +279,9 @@ impl<'a> FormState<'a> {
                     key: KeyCode::Char('F'),
                     modifiers: Modifiers::CTRL,
                 }) => {
-                    if self.field_cursors[self.active_idx] < self.field_values[self.active_idx].chars().count() {
+                    if self.field_cursors[self.active_idx]
+                        < self.field_values[self.active_idx].chars().count()
+                    {
                         self.field_cursors[self.active_idx] += 1;
                     }
                 }
@@ -299,7 +301,8 @@ impl<'a> FormState<'a> {
                     key: KeyCode::Char('E'),
                     modifiers: Modifiers::CTRL,
                 }) => {
-                    self.field_cursors[self.active_idx] = self.field_values[self.active_idx].chars().count();
+                    self.field_cursors[self.active_idx] =
+                        self.field_values[self.active_idx].chars().count();
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Delete,
@@ -321,7 +324,8 @@ impl<'a> FormState<'a> {
                     modifiers,
                 }) => {
                     if modifiers.is_empty() || modifiers == Modifiers::SHIFT {
-                        let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
+                        let mut chars: Vec<char> =
+                            self.field_values[self.active_idx].chars().collect();
                         let pos = self.field_cursors[self.active_idx];
                         chars.insert(pos, c);
                         self.field_values[self.active_idx] = chars.into_iter().collect();
