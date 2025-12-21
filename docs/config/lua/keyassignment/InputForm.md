@@ -89,11 +89,35 @@ When the user submits the form, the `action` is triggered. If it is an `action_c
 The following keys are handled while the input form is active:
 
 | Key | Action |
+
 | --- | --- |
+
 | `Esc` | Cancel the form |
+
 | `Enter` | Submit the form (validates required fields) |
+
 | `Tab` | Focus next field (wraps around) |
+
 | `Shift-Tab` | Focus previous field (wraps around) |
+
 | `UpArrow` / `Ctrl-P` | Focus previous field |
+
 | `DownArrow` / `Ctrl-N` | Focus next field |
-| `Backspace` | Delete character |
+
+| `LeftArrow` / `Ctrl-B` | Move cursor left |
+
+| `RightArrow` / `Ctrl-F` | Move cursor right |
+
+| `Home` / `Ctrl-A` | Move cursor to start of field |
+
+| `End` / `Ctrl-E` | Move cursor to end of field |
+
+| `Backspace` | Delete character before cursor |
+
+| `Delete` / `Ctrl-D` | Delete character at cursor |
+
+| `Ctrl-U` | Clear field |
+
+| `Ctrl-K` | Kill to end of field |
+
+| `Ctrl-W` | Delete word before cursor |

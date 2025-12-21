@@ -51,6 +51,7 @@ struct FormState<'a> {
     pane: MuxPane,
     active_idx: usize,
     field_values: Vec<String>,
+    field_cursors: Vec<usize>,
     colors: FormColors,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
@@ -62,11 +63,12 @@ impl<'a> FormState<'a> {
         pane: MuxPane,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
-        let field_values = args
+        let field_values: Vec<String> = args
             .fields
             .iter()
             .map(|f| f.initial_value.clone().unwrap_or_default())
             .collect();
+        let field_cursors = field_values.iter().map(|v| v.chars().count()).collect();
 
         Self {
             args,
@@ -74,6 +76,7 @@ impl<'a> FormState<'a> {
             pane,
             active_idx: 0,
             field_values,
+            field_cursors,
             colors: FormColors::new(),
             buf,
         }
@@ -87,7 +90,6 @@ impl<'a> FormState<'a> {
                 x: Position::Absolute(0),
                 y: Position::Absolute(0),
             },
-            Change::CursorVisibility(CursorVisibility::Hidden),
         ]);
 
         let title = &self.args.title;
@@ -102,6 +104,9 @@ impl<'a> FormState<'a> {
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
         ]);
+
+        let mut cursor_x = 0;
+        let mut cursor_y = 0;
 
         for (idx, field) in self.args.fields.iter().enumerate() {
             let is_active = idx == self.active_idx;
@@ -138,6 +143,8 @@ impl<'a> FormState<'a> {
             };
 
             if is_active {
+                cursor_y = 3 + idx;
+                cursor_x = field.label.chars().count() + 2 + self.field_cursors[idx];
                 self.buf
                     .add_change(Change::Attribute(AttributeChange::Reverse(true)));
             }
@@ -160,6 +167,14 @@ impl<'a> FormState<'a> {
             Change::Text("[Esc] ".to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("Cancel".to_string()),
+        ]);
+
+        self.buf.add_changes(vec![
+            Change::CursorPosition {
+                x: Position::Absolute(cursor_x),
+                y: Position::Absolute(cursor_y),
+            },
+            Change::CursorVisibility(CursorVisibility::Visible),
         ]);
 
         self.buf.flush()?;
@@ -239,21 +254,114 @@ impl<'a> FormState<'a> {
                     }
                 }
                 InputEvent::Key(KeyEvent {
+                    key: KeyCode::LeftArrow,
+                    ..
+                })
+                | InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('B'),
+                    modifiers: Modifiers::CTRL,
+                }) => {
+                    if self.field_cursors[self.active_idx] > 0 {
+                        self.field_cursors[self.active_idx] -= 1;
+                    }
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::RightArrow,
+                    ..
+                })
+                | InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('F'),
+                    modifiers: Modifiers::CTRL,
+                }) => {
+                    if self.field_cursors[self.active_idx] < self.field_values[self.active_idx].chars().count() {
+                        self.field_cursors[self.active_idx] += 1;
+                    }
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Home, ..
+                })
+                | InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('A'),
+                    modifiers: Modifiers::CTRL,
+                }) => {
+                    self.field_cursors[self.active_idx] = 0;
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::End, ..
+                })
+                | InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('E'),
+                    modifiers: Modifiers::CTRL,
+                }) => {
+                    self.field_cursors[self.active_idx] = self.field_values[self.active_idx].chars().count();
+                }
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Delete,
+                    ..
+                })
+                | InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('D'),
+                    modifiers: Modifiers::CTRL,
+                }) => {
+                    let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
+                    let pos = self.field_cursors[self.active_idx];
+                    if pos < chars.len() {
+                        chars.remove(pos);
+                        self.field_values[self.active_idx] = chars.into_iter().collect();
+                    }
+                }
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::Char(c),
                     modifiers,
                 }) => {
-                    if !modifiers.contains(Modifiers::CTRL)
-                        && !modifiers.contains(Modifiers::ALT)
-                        && !modifiers.contains(Modifiers::SUPER)
-                    {
-                        self.field_values[self.active_idx].push(c);
+                    if modifiers.is_empty() || modifiers == Modifiers::SHIFT {
+                        let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
+                        let pos = self.field_cursors[self.active_idx];
+                        chars.insert(pos, c);
+                        self.field_values[self.active_idx] = chars.into_iter().collect();
+                        self.field_cursors[self.active_idx] += 1;
+                    } else if modifiers == Modifiers::CTRL {
+                        match c {
+                            'U' => {
+                                self.field_values[self.active_idx].clear();
+                                self.field_cursors[self.active_idx] = 0;
+                            }
+                            'K' => {
+                                let chars: Vec<char> =
+                                    self.field_values[self.active_idx].chars().collect();
+                                let pos = self.field_cursors[self.active_idx];
+                                self.field_values[self.active_idx] = chars[0..pos].iter().collect();
+                            }
+                            'W' => {
+                                let mut chars: Vec<char> =
+                                    self.field_values[self.active_idx].chars().collect();
+                                let mut pos = self.field_cursors[self.active_idx];
+                                let orig_pos = pos;
+                                while pos > 0 && chars[pos - 1].is_whitespace() {
+                                    pos -= 1;
+                                }
+                                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                                    pos -= 1;
+                                }
+                                chars.drain(pos..orig_pos);
+                                self.field_values[self.active_idx] = chars.into_iter().collect();
+                                self.field_cursors[self.active_idx] = pos;
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Backspace,
                     ..
                 }) => {
-                    self.field_values[self.active_idx].pop();
+                    let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
+                    let pos = self.field_cursors[self.active_idx];
+                    if pos > 0 {
+                        chars.remove(pos - 1);
+                        self.field_values[self.active_idx] = chars.into_iter().collect();
+                        self.field_cursors[self.active_idx] -= 1;
+                    }
                 }
                 InputEvent::Resized { cols, rows } => {
                     self.buf.resize(cols, rows);
