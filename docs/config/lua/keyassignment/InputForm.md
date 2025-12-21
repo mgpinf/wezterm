@@ -83,3 +83,17 @@ When the user submits the form, the `action` is triggered. If it is an `action_c
 *   `fields`: A list of tables, where each table has:
     *   `id`: The `id` of the field from the configuration.
     *   `value`: The string value entered by the user.
+
+## Key Assignments
+
+The following keys are handled while the input form is active:
+
+| Key | Action |
+| --- | --- |
+| `Esc` | Cancel the form |
+| `Enter` | Submit the form (validates required fields) |
+| `Tab` | Focus next field (wraps around) |
+| `Shift-Tab` | Focus previous field (wraps around) |
+| `UpArrow` / `Ctrl-P` | Focus previous field |
+| `DownArrow` / `Ctrl-N` | Focus next field |
+| `Backspace` | Delete character |
