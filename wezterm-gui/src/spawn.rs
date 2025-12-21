@@ -139,7 +139,10 @@ pub async fn spawn_command_internal(
                     SpawnTabDomain::DefaultDomain => Some(mux.default_domain()),
                     SpawnTabDomain::CurrentPaneDomain => {
                         let dom_id = tab.get_active_pane().map(|p| p.domain_id()).unwrap_or(0);
-                        Some(mux.get_domain(dom_id).unwrap_or_else(|| mux.default_domain()))
+                        Some(
+                            mux.get_domain(dom_id)
+                                .unwrap_or_else(|| mux.default_domain()),
+                        )
                     }
                     SpawnTabDomain::DomainName(name) => mux.get_domain_by_name(name),
                     SpawnTabDomain::DomainId(id) => mux.get_domain(*id),

@@ -83,7 +83,7 @@ impl<'a> FormState<'a> {
         let (cols, _rows) = self.buf.dimensions();
         self.buf.add_changes(vec![
             Change::ClearScreen(ColorAttribute::Default),
-            Change::CursorPosition { 
+            Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(0),
             },
@@ -105,7 +105,7 @@ impl<'a> FormState<'a> {
 
         for (idx, field) in self.args.fields.iter().enumerate() {
             let is_active = idx == self.active_idx;
-            
+
             self.buf.add_changes(vec![
                 Change::Text("\r\n".to_string()),
                 Change::Attribute(AttributeChange::Foreground(if is_active {
@@ -122,11 +122,11 @@ impl<'a> FormState<'a> {
             let display_value = if field.is_password && !value.is_empty() {
                 "*".repeat(value.len())
             } else if value.is_empty() {
-                 if let Some(placeholder) = &field.placeholder {
+                if let Some(placeholder) = &field.placeholder {
                     format!("({})", placeholder)
-                 } else {
+                } else {
                     "".to_string()
-                 }
+                }
             } else {
                 value.clone()
             };
@@ -136,18 +136,19 @@ impl<'a> FormState<'a> {
             } else {
                 self.colors.input_fg
             };
-            
+
             if is_active {
-                self.buf.add_change(Change::Attribute(AttributeChange::Reverse(true)));
+                self.buf
+                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
             }
-            
+
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(input_color)),
                 Change::Text(display_value.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
-        
+
         let submit_label = self.args.submit_label.as_deref().unwrap_or("Submit");
         self.buf.add_changes(vec![
             Change::Text("\r\n\r\n".to_string()),
@@ -168,11 +169,11 @@ impl<'a> FormState<'a> {
     fn run_loop(&mut self) -> anyhow::Result<()> {
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             match event {
-                InputEvent::Key(KeyEvent { 
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::Escape,
-                    .. 
+                    ..
                 }) => break,
-                InputEvent::Key(KeyEvent { 
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::Tab,
                     modifiers: Modifiers::SHIFT,
                 }) => {
@@ -182,9 +183,8 @@ impl<'a> FormState<'a> {
                         self.active_idx = self.args.fields.len() - 1;
                     }
                 }
-                InputEvent::Key(KeyEvent { 
-                    key: KeyCode::Tab,
-                    .. 
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Tab, ..
                 }) => {
                     if self.active_idx < self.args.fields.len() - 1 {
                         self.active_idx += 1;
@@ -192,25 +192,25 @@ impl<'a> FormState<'a> {
                         self.active_idx = 0;
                     }
                 }
-                InputEvent::Key(KeyEvent { 
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::UpArrow,
-                    .. 
+                    ..
                 }) => {
                     if self.active_idx > 0 {
                         self.active_idx -= 1;
                     }
                 }
-                InputEvent::Key(KeyEvent { 
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::DownArrow,
-                    .. 
+                    ..
                 }) => {
                     if self.active_idx < self.args.fields.len() - 1 {
                         self.active_idx += 1;
                     }
                 }
-                InputEvent::Key(KeyEvent { 
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::Enter,
-                    .. 
+                    ..
                 }) => {
                     if self.active_idx == self.args.fields.len() - 1 {
                         self.submit();
@@ -219,24 +219,27 @@ impl<'a> FormState<'a> {
                         self.active_idx += 1;
                     }
                 }
-                InputEvent::Key(KeyEvent { 
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::Char(c),
                     modifiers,
                 }) => {
-                    if !modifiers.contains(Modifiers::CTRL) && !modifiers.contains(Modifiers::ALT) && !modifiers.contains(Modifiers::SUPER) {
+                    if !modifiers.contains(Modifiers::CTRL)
+                        && !modifiers.contains(Modifiers::ALT)
+                        && !modifiers.contains(Modifiers::SUPER)
+                    {
                         self.field_values[self.active_idx].push(c);
                     }
                 }
-                InputEvent::Key(KeyEvent { 
+                InputEvent::Key(KeyEvent {
                     key: KeyCode::Backspace,
-                    .. 
+                    ..
                 }) => {
                     self.field_values[self.active_idx].pop();
                 }
                 InputEvent::Resized { cols, rows } => {
                     self.buf.resize(cols, rows);
                 }
-                _ => {} 
+                _ => {}
             }
             self.render()?;
         }
@@ -253,10 +256,16 @@ impl<'a> FormState<'a> {
         };
 
         let result = InputFormResult {
-            fields: self.args.fields.iter().zip(self.field_values.iter()).map(|(f, v)| FormFieldResult {
-                id: f.id.clone(),
-                value: v.clone(),
-            }).collect()
+            fields: self
+                .args
+                .fields
+                .iter()
+                .zip(self.field_values.iter())
+                .map(|(f, v)| FormFieldResult {
+                    id: f.id.clone(),
+                    value: v.clone(),
+                })
+                .collect(),
         };
 
         self.trigger_event(name, Some(result));
@@ -304,7 +313,7 @@ async fn do_event(
 ) -> anyhow::Result<()> {
     if let Some(lua) = lua {
         let args = if let Some(result) = result {
-            lua.pack_multi((window, pane, result))? 
+            lua.pack_multi((window, pane, result))?
         } else {
             lua.pack_multi((window, pane))?
         };
