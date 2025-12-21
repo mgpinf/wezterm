@@ -164,7 +164,7 @@ impl<'a> FormState<'a> {
 
         let submit_label = self.args.submit_label.as_deref().unwrap_or("Submit");
         self.buf.add_changes(vec![
-            Change::Text("\r\n\r\n  ".to_string()),
+            Change::Text("\r\n\r\n".to_string()),
             Change::Attribute(AttributeChange::Foreground(self.colors.border_fg)),
             Change::Text("[Enter] ".to_string()),
             Change::AllAttributes(CellAttributes::default()),
