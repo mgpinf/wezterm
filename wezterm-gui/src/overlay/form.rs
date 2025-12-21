@@ -145,8 +145,6 @@ impl<'a> FormState<'a> {
             if is_active {
                 cursor_y = 3 + idx;
                 cursor_x = field.label.chars().count() + 2 + self.field_cursors[idx];
-                self.buf
-                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
             }
 
             self.buf.add_changes(vec![
