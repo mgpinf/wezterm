@@ -16,8 +16,8 @@ use window::Modifiers;
 struct FormColors {
     label_fg: ColorAttribute,
     active_label_fg: ColorAttribute,
+    placeholder_fg: ColorAttribute,
     input_fg: ColorAttribute,
-    active_input_fg: ColorAttribute,
     border_fg: ColorAttribute,
     separator_fg: ColorAttribute,
 }
@@ -33,8 +33,8 @@ impl FormColors {
                 .unwrap_or(AnsiColor::Purple.into())
                 .into(),
             active_label_fg: AnsiColor::Yellow.into(),
-            input_fg: AnsiColor::Silver.into(),
-            active_input_fg: AnsiColor::White.into(),
+            placeholder_fg: AnsiColor::Silver.into(),
+            input_fg: AnsiColor::White.into(),
             border_fg: colors
                 .transient_separator_fg
                 .map_or_else(|| AnsiColor::Grey.into(), |fg_color| fg_color.into()),
@@ -137,9 +137,9 @@ impl<'a> FormState<'a> {
             };
 
             let input_color = if !value.is_empty() {
-                self.colors.active_input_fg
-            } else {
                 self.colors.input_fg
+            } else {
+                self.colors.placeholder_fg
             };
 
             if is_active {
