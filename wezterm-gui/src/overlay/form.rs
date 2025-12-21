@@ -136,7 +136,7 @@ impl<'a> FormState<'a> {
                 value.clone()
             };
 
-            let input_color = if is_active {
+            let input_color = if !value.is_empty() {
                 self.colors.active_input_fg
             } else {
                 self.colors.input_fg
