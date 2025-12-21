@@ -18,6 +18,7 @@ struct FormColors {
     active_label_fg: ColorAttribute,
     placeholder_fg: ColorAttribute,
     input_fg: ColorAttribute,
+    required_fg: ColorAttribute,
     border_fg: ColorAttribute,
     separator_fg: ColorAttribute,
 }
@@ -35,6 +36,7 @@ impl FormColors {
             active_label_fg: AnsiColor::Yellow.into(),
             placeholder_fg: AnsiColor::Silver.into(),
             input_fg: AnsiColor::White.into(),
+            required_fg: AnsiColor::Red.into(),
             border_fg: colors
                 .transient_separator_fg
                 .map_or_else(|| AnsiColor::Grey.into(), |fg_color| fg_color.into()),
@@ -119,6 +121,14 @@ impl<'a> FormState<'a> {
                     self.colors.label_fg
                 })),
                 Change::Text(field.label.clone()),
+            ]);
+            if field.required {
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Foreground(self.colors.required_fg)),
+                    Change::Text("*".to_string()),
+                ]);
+            }
+            self.buf.add_changes(vec![
                 Change::AllAttributes(CellAttributes::default()),
                 Change::Text(": ".to_string()),
             ]);
@@ -144,7 +154,7 @@ impl<'a> FormState<'a> {
 
             if is_active {
                 cursor_y = 3 + idx;
-                cursor_x = field.label.chars().count() + 2 + self.field_cursors[idx];
+                cursor_x = field.label.chars().count() + 2 + self.field_cursors[idx] + if field.required { 1 } else { 0 };
             }
 
             self.buf.add_changes(vec![
