@@ -224,22 +224,18 @@ impl<'a> FormState<'a> {
                     key: KeyCode::Enter,
                     ..
                 }) => {
-                    if self.active_idx == self.args.fields.len() - 1 {
-                        let mut valid = true;
-                        for (idx, field) in self.args.fields.iter().enumerate() {
-                            if field.required && self.field_values[idx].trim().is_empty() {
-                                self.active_idx = idx;
-                                valid = false;
-                                break;
-                            }
-                        }
-
-                        if valid {
-                            self.submit();
+                    let mut valid = true;
+                    for (idx, field) in self.args.fields.iter().enumerate() {
+                        if field.required && self.field_values[idx].trim().is_empty() {
+                            self.active_idx = idx;
+                            valid = false;
                             break;
                         }
-                    } else {
-                        self.active_idx += 1;
+                    }
+
+                    if valid {
+                        self.submit();
+                        break;
                     }
                 }
                 InputEvent::Key(KeyEvent {
