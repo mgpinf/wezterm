@@ -689,6 +689,14 @@ pub struct InputForm {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct InputText {
+    pub title: String,
+    #[dynamic(default)]
+    pub initial_value: Option<String>,
+    pub action: Box<KeyAssignment>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub enum KeyAssignment {
     SpawnTab(SpawnTabDomain),
     SpawnWindow,
@@ -804,6 +812,7 @@ pub enum KeyAssignment {
     PromptInputLine(PromptInputLine),
     InputSelector(InputSelector),
     InputForm(InputForm),
+    InputText(InputText),
     Confirmation(Confirmation),
     TransientMenu(TransientMenu),
     SelectorActions(SelectorActions),

@@ -831,6 +831,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: None,
         },
+        InputText(_) => CommandDef {
+            brief: "Prompt the user to input multiline text".into(),
+            doc: "Activates the editor overlay and wait for input".into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &[],
+            icon: None,
+        },
         Confirmation(_) => CommandDef {
             brief: "Prompt the user for confirmation".into(),
             doc: "Activates the confirmation overlay and wait for input".into(),
