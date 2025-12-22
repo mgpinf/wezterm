@@ -236,7 +236,7 @@ impl<'a> EditorState<'a> {
             if self.cursor.0 < self.lines.len() - 1 {
                 (self.cursor.0 + 1, 0)
             } else {
-                (self.cursor.0, chars.len().saturating_sub(1))
+                (self.cursor.0, chars.len())
             }
         } else {
             (self.cursor.0, idx)
@@ -245,6 +245,7 @@ impl<'a> EditorState<'a> {
 
     fn move_word_forward(&mut self) {
         self.cursor = self.get_word_forward_pos();
+        self.clamp_cursor();
     }
 
     fn get_word_backward_pos(&self) -> (usize, usize) {
@@ -394,7 +395,7 @@ impl<'a> EditorState<'a> {
             if self.cursor.0 < self.lines.len() - 1 {
                 (self.cursor.0 + 1, 0)
             } else {
-                (self.cursor.0, chars.len().saturating_sub(1))
+                (self.cursor.0, chars.len())
             }
         } else {
             (self.cursor.0, idx)
@@ -403,6 +404,7 @@ impl<'a> EditorState<'a> {
 
     fn move_long_word_forward(&mut self) {
         self.cursor = self.get_long_word_forward_pos();
+        self.clamp_cursor();
     }
 
     fn get_long_word_backward_pos(&self) -> (usize, usize) {
