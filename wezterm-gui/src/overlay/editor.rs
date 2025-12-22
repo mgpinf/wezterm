@@ -913,6 +913,181 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn is_matchable_bracket(c: char) -> bool {
+        matches!(c, '(' | ')' | '[' | ']' | '{' | '}')
+    }
+
+    fn jump_to_prev_unmatched(&mut self, open: char, close: char) {
+        // Jump to previous unmatched opening bracket (multi-line)
+        let mut depth = 0i32;
+        let mut row = self.cursor.0;
+        let mut start_col = self.cursor.1;
+
+        loop {
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+            let search_end = if row == self.cursor.0 {
+                start_col.min(chars.len())
+            } else {
+                chars.len()
+            };
+
+            for i in (0..search_end).rev() {
+                if chars[i] == close {
+                    depth += 1;
+                } else if chars[i] == open {
+                    if depth == 0 {
+                        self.cursor.0 = row;
+                        self.cursor.1 = i;
+                        return;
+                    }
+                    depth -= 1;
+                }
+            }
+
+            if row == 0 {
+                break;
+            }
+            row -= 1;
+            start_col = self.lines[row].len();
+        }
+    }
+
+    fn jump_to_next_unmatched(&mut self, open: char, close: char) {
+        // Jump to next unmatched closing bracket (multi-line)
+        let mut depth = 0i32;
+        let mut row = self.cursor.0;
+        let mut start_col = self.cursor.1;
+
+        loop {
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+            let search_start = if row == self.cursor.0 {
+                (start_col + 1).min(chars.len())
+            } else {
+                0
+            };
+
+            for i in search_start..chars.len() {
+                if chars[i] == open {
+                    depth += 1;
+                } else if chars[i] == close {
+                    if depth == 0 {
+                        self.cursor.0 = row;
+                        self.cursor.1 = i;
+                        return;
+                    }
+                    depth -= 1;
+                }
+            }
+
+            if row >= self.lines.len() - 1 {
+                break;
+            }
+            row += 1;
+            start_col = 0;
+        }
+    }
+
+    fn jump_to_matching_bracket(&mut self) {
+        let line = &self.lines[self.cursor.0];
+        if line.is_empty() {
+            return;
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let col = self.cursor.1.min(chars.len().saturating_sub(1));
+        let cur_char = chars[col];
+
+        // Check if cursor is on a matchable bracket (only (), [], {})
+        if !Self::is_matchable_bracket(cur_char) {
+            // Not on a bracket, search forward for one on current line
+            for i in col..chars.len() {
+                if Self::is_matchable_bracket(chars[i]) {
+                    self.cursor.1 = i;
+                    self.jump_to_matching_bracket();
+                    return;
+                }
+            }
+            return;
+        }
+
+        let matching = match Self::get_matching_pair(cur_char) {
+            Some(m) => m,
+            None => return,
+        };
+
+        // Determine if we're on an open or close bracket
+        if Self::is_open_pair(cur_char) {
+            // Search forward for matching close (multi-line)
+            let mut depth = 0i32;
+            let mut row = self.cursor.0;
+            let mut start_col = col;
+
+            loop {
+                let line = &self.lines[row];
+                let chars: Vec<char> = line.chars().collect();
+                let search_start = if row == self.cursor.0 {
+                    start_col + 1
+                } else {
+                    0
+                };
+
+                for i in search_start..chars.len() {
+                    if chars[i] == cur_char {
+                        depth += 1;
+                    } else if chars[i] == matching {
+                        if depth == 0 {
+                            self.cursor.0 = row;
+                            self.cursor.1 = i;
+                            return;
+                        }
+                        depth -= 1;
+                    }
+                }
+
+                if row >= self.lines.len() - 1 {
+                    break;
+                }
+                row += 1;
+            }
+        } else {
+            // On closing bracket - search backward for matching open (multi-line)
+            let mut depth = 0i32;
+            let mut row = self.cursor.0;
+            let mut search_end = col;
+
+            loop {
+                let line = &self.lines[row];
+                let chars: Vec<char> = line.chars().collect();
+                let end = if row == self.cursor.0 {
+                    search_end
+                } else {
+                    chars.len()
+                };
+
+                for i in (0..end).rev() {
+                    if chars[i] == cur_char {
+                        depth += 1;
+                    } else if chars[i] == matching {
+                        if depth == 0 {
+                            self.cursor.0 = row;
+                            self.cursor.1 = i;
+                            return;
+                        }
+                        depth -= 1;
+                    }
+                }
+
+                if row == 0 {
+                    break;
+                }
+                row -= 1;
+                search_end = self.lines[row].len();
+            }
+        }
+    }
+
     fn delete_to_end_of_line(&mut self) {
         let line = &mut self.lines[self.cursor.0];
         if self.cursor.1 < line.len() {
@@ -1357,6 +1532,18 @@ impl<'a> EditorState<'a> {
                                 break;
                             } else if first == KeyCode::Char('Z') && c == 'Q' {
                                 break;
+                            } else if first == KeyCode::Char('[') && c == '(' {
+                                self.jump_to_prev_unmatched('(', ')');
+                                self.pending_keys.clear();
+                            } else if first == KeyCode::Char('[') && c == '{' {
+                                self.jump_to_prev_unmatched('{', '}');
+                                self.pending_keys.clear();
+                            } else if first == KeyCode::Char(']') && c == ')' {
+                                self.jump_to_next_unmatched('(', ')');
+                                self.pending_keys.clear();
+                            } else if first == KeyCode::Char(']') && c == '}' {
+                                self.jump_to_next_unmatched('{', '}');
+                                self.pending_keys.clear();
                             } else {
                                 self.pending_keys.clear();
                             }
@@ -1364,7 +1551,7 @@ impl<'a> EditorState<'a> {
                             continue;
                         }
 
-                        if c == 'g' || c == 'Z' {
+                        if c == 'g' || c == 'Z' || c == '[' || c == ']' {
                             self.pending_keys.push(KeyCode::Char(c));
                             continue;
                         }
@@ -1434,6 +1621,7 @@ impl<'a> EditorState<'a> {
                             's' => self.substitute_char(),
                             'J' => self.join_lines(),
                             '~' => self.toggle_case(),
+                            '%' => self.jump_to_matching_bracket(),
                             _ => {}
                         }
                     }
