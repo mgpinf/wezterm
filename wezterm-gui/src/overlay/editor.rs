@@ -197,7 +197,10 @@ impl<'a> EditorState<'a> {
             line.insert(self.cursor.1, c);
         }
         self.cursor.1 += 1;
-        self.record_change();
+        // Only record change if not in insert mode (batch insert mode changes)
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
     }
 
     fn delete_char(&mut self) {
@@ -205,7 +208,10 @@ impl<'a> EditorState<'a> {
         if !line.is_empty() && self.cursor.1 < line.len() {
             line.remove(self.cursor.1);
             self.clamp_cursor();
-            self.record_change();
+            // Only record change if not in insert mode (batch insert mode changes)
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
         }
     }
 
@@ -219,7 +225,10 @@ impl<'a> EditorState<'a> {
         self.lines.insert(self.cursor.0 + 1, rest);
         self.cursor.0 += 1;
         self.cursor.1 = 0;
-        self.record_change();
+        // Only record change if not in insert mode (batch insert mode changes)
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
     }
 
     fn delete_line(&mut self) {
@@ -1704,13 +1713,6 @@ impl<'a> EditorState<'a> {
 
         self.buf.flush()?;
 
-        // Ensure the current history entry reflects our current position.
-        // This ensures that if the user undos, they land back at the navigation
-        // point where the edit was initiated, rather than a stale (0,0) position.
-        if let Some(entry) = self.history.get_mut(self.history_idx) {
-            entry.1 = self.cursor;
-        }
-
         Ok(())
     }
 
@@ -2122,12 +2124,14 @@ impl<'a> EditorState<'a> {
 
                         match c {
                             'i' => {
+                                self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_after = false;
                                 self.mode = EditorMode::Insert;
                             }
                             'I' => {
+                                self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_after = false;
@@ -2142,6 +2146,7 @@ impl<'a> EditorState<'a> {
                                 self.mode = EditorMode::Insert;
                             }
                             'a' => {
+                                self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_after = true;
@@ -2149,6 +2154,7 @@ impl<'a> EditorState<'a> {
                                 self.move_cursor(0, 1);
                             }
                             'A' => {
+                                self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_after = true;
@@ -2156,6 +2162,7 @@ impl<'a> EditorState<'a> {
                                 self.mode = EditorMode::Insert;
                             }
                             'o' => {
+                                self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_after = false;
@@ -2163,16 +2170,15 @@ impl<'a> EditorState<'a> {
                                 self.cursor.0 += 1;
                                 self.cursor.1 = 0;
                                 self.mode = EditorMode::Insert;
-                                self.record_change();
                             }
                             'O' => {
+                                self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_after = false;
                                 self.lines.insert(self.cursor.0, String::new());
                                 self.cursor.1 = 0;
                                 self.mode = EditorMode::Insert;
-                                self.record_change();
                             }
                             'h' => self.move_cursor(0, -1),
                             'j' => self.move_cursor(1, 0),
@@ -2249,6 +2255,8 @@ impl<'a> EditorState<'a> {
                         ..
                     }) => {
                         self.mode = EditorMode::Normal;
+                        // Record state after insert session for redo to work
+                        self.record_change();
                         // Save insert buffer as last change if we have text and it's not a change operation
                         if !self.insert_buffer.is_empty() {
                             match &self.last_change {
