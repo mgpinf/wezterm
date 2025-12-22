@@ -49,6 +49,38 @@ enum EditorMode {
     Insert,
 }
 
+#[derive(Clone, Debug)]
+enum LastChange {
+    None,
+    DeleteChar,                           // x
+    DeleteLine,                           // dd
+    DeleteWord,                           // dw
+    DeleteLongWord,                       // dW
+    DeleteToEndOfLine,                    // D
+    DeleteInnerWord,                      // diw
+    DeleteAWord,                          // daw
+    DeleteInnerLongWord,                  // diW
+    DeleteALongWord,                      // daW
+    DeleteInnerPair(char),                // di( di{ etc.
+    DeleteAroundPair(char),               // da( da{ etc.
+    DeleteToChar(char, bool),             // df{char}, dt{char} (inclusive flag)
+    DeleteBackToChar(char, bool),         // dF{char}, dT{char} (inclusive flag)
+    SubstituteLine,                       // S, cc
+    SubstituteChar,                       // s
+    ChangeToEndOfLine,                    // C
+    ChangeInnerWord,                      // ciw
+    ChangeAWord,                          // caw
+    ChangeInnerLongWord,                  // ciW
+    ChangeALongWord,                      // caW
+    ChangeInnerPair(char),                // ci( ci{ etc.
+    ChangeAroundPair(char),               // ca( ca{ etc.
+    ChangeToChar(char, bool),             // cf{char}, ct{char}
+    ChangeBackToChar(char, bool),         // cF{char}, cT{char}
+    InsertText(String, bool),             // Text inserted in insert mode (text, is_after)
+    ToggleCase,                           // ~
+    JoinLines,                            // J
+}
+
 struct EditorState<'a> {
     args: &'a InputText,
     window: GuiWin,
@@ -63,6 +95,9 @@ struct EditorState<'a> {
     viewport_top: usize,
     pending_keys: Vec<KeyCode>,
     pending_operator: Option<char>, // 'd', 'c', 'y'
+    last_change: LastChange,
+    insert_buffer: String, // Buffer to track text inserted in insert mode
+    insert_after: bool,    // True if insert was via 'a'/'A', false for 'i'/'I'
 }
 
 impl<'a> EditorState<'a> {
@@ -94,6 +129,9 @@ impl<'a> EditorState<'a> {
             viewport_top: 0,
             pending_keys: Vec::new(),
             pending_operator: None,
+            last_change: LastChange::None,
+            insert_buffer: String::new(),
+            insert_after: false,
         }
     }
 
@@ -1402,6 +1440,99 @@ impl<'a> EditorState<'a> {
         None
     }
 
+    fn repeat_last_change(&mut self) {
+        match self.last_change.clone() {
+            LastChange::None => {}
+            LastChange::DeleteChar => self.delete_char(),
+            LastChange::DeleteLine => self.delete_line(),
+            LastChange::DeleteWord => {
+                self.perform_delete_motion(|s| s.get_word_forward_pos(), false);
+            }
+            LastChange::DeleteLongWord => {
+                self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false);
+            }
+            LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
+            LastChange::DeleteInnerWord => self.delete_inner_word(),
+            LastChange::DeleteAWord => self.delete_a_word(),
+            LastChange::DeleteInnerLongWord => self.delete_inner_long_word(),
+            LastChange::DeleteALongWord => self.delete_a_long_word(),
+            LastChange::DeleteInnerPair(c) => self.delete_inner_pair(c),
+            LastChange::DeleteAroundPair(c) => self.delete_around_pair(c),
+            LastChange::DeleteToChar(c, inclusive) => self.delete_to_char_forward(c, inclusive),
+            LastChange::DeleteBackToChar(c, inclusive) => self.delete_to_char_backward(c, inclusive),
+            LastChange::SubstituteLine => self.substitute_line(),
+            LastChange::SubstituteChar => self.substitute_char(),
+            LastChange::ChangeToEndOfLine => self.change_to_end_of_line(),
+            LastChange::ChangeInnerWord => {
+                self.mode = EditorMode::Insert;
+                self.delete_inner_word();
+                self.insert_saved_text();
+            }
+            LastChange::ChangeAWord => {
+                self.mode = EditorMode::Insert;
+                self.delete_a_word();
+                self.insert_saved_text();
+            }
+            LastChange::ChangeInnerLongWord => {
+                self.mode = EditorMode::Insert;
+                self.delete_inner_long_word();
+                self.insert_saved_text();
+            }
+            LastChange::ChangeALongWord => {
+                self.mode = EditorMode::Insert;
+                self.delete_a_long_word();
+                self.insert_saved_text();
+            }
+            LastChange::ChangeInnerPair(c) => {
+                self.mode = EditorMode::Insert;
+                self.delete_inner_pair(c);
+                self.insert_saved_text();
+            }
+            LastChange::ChangeAroundPair(c) => {
+                self.mode = EditorMode::Insert;
+                self.delete_around_pair(c);
+                self.insert_saved_text();
+            }
+            LastChange::ChangeToChar(c, inclusive) => {
+                self.mode = EditorMode::Insert;
+                self.delete_to_char_forward(c, inclusive);
+                self.insert_saved_text();
+            }
+            LastChange::ChangeBackToChar(c, inclusive) => {
+                self.mode = EditorMode::Insert;
+                self.delete_to_char_backward(c, inclusive);
+                self.insert_saved_text();
+            }
+            LastChange::InsertText(text, is_after) => {
+                // For 'a' style insert, move cursor right first
+                if is_after && self.cursor.1 < self.lines[self.cursor.0].len() {
+                    self.cursor.1 += 1;
+                }
+                for c in text.chars() {
+                    self.insert_char(c);
+                }
+                // Move cursor back like Escape does
+                if self.cursor.1 > 0 {
+                    self.cursor.1 -= 1;
+                }
+            }
+            LastChange::ToggleCase => self.toggle_case(),
+            LastChange::JoinLines => self.join_lines(),
+        }
+    }
+
+    fn insert_saved_text(&mut self) {
+        let text = self.insert_buffer.clone();
+        for c in text.chars() {
+            self.insert_char(c);
+        }
+        self.mode = EditorMode::Normal;
+        if self.cursor.1 > 0 {
+            self.cursor.1 -= 1;
+        }
+        self.clamp_cursor();
+    }
+
     fn delete_to_end_of_line(&mut self) {
         let line = &mut self.lines[self.cursor.0];
         if self.cursor.1 < line.len() {
@@ -1661,25 +1792,41 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('i') && c == 'w' {
                                 // diw / ciw - delete/change inner word
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeInnerWord;
+                                } else {
+                                    self.last_change = LastChange::DeleteInnerWord;
                                 }
                                 self.delete_inner_word();
                             } else if first == KeyCode::Char('a') && c == 'w' {
                                 // daw / caw - delete/change a word
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeAWord;
+                                } else {
+                                    self.last_change = LastChange::DeleteAWord;
                                 }
                                 self.delete_a_word();
                             } else if first == KeyCode::Char('i') && c == 'W' {
                                 // diW / ciW - delete/change inner WORD
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeInnerLongWord;
+                                } else {
+                                    self.last_change = LastChange::DeleteInnerLongWord;
                                 }
                                 self.delete_inner_long_word();
                             } else if first == KeyCode::Char('a') && c == 'W' {
                                 // daW / caW - delete/change a WORD
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeALongWord;
+                                } else {
+                                    self.last_change = LastChange::DeleteALongWord;
                                 }
                                 self.delete_a_long_word();
                             } else if first == KeyCode::Char('i')
@@ -1690,7 +1837,11 @@ impl<'a> EditorState<'a> {
                             {
                                 // di( di) di[ di] di{ di} di< di> di" di' di` etc.
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeInnerPair(c);
+                                } else {
+                                    self.last_change = LastChange::DeleteInnerPair(c);
                                 }
                                 self.delete_inner_pair(c);
                             } else if first == KeyCode::Char('a')
@@ -1701,7 +1852,11 @@ impl<'a> EditorState<'a> {
                             {
                                 // da( da) da[ da] da{ da} da< da> da" da' da` etc.
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeAroundPair(c);
+                                } else {
+                                    self.last_change = LastChange::DeleteAroundPair(c);
                                 }
                                 self.delete_around_pair(c);
                             } else if first == KeyCode::Char('[') && (c == '(' || c == '{') {
@@ -1721,25 +1876,41 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('f') {
                                 // df{char} / cf{char} - delete/change to char (inclusive)
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeToChar(c, true);
+                                } else {
+                                    self.last_change = LastChange::DeleteToChar(c, true);
                                 }
                                 self.delete_to_char_forward(c, true);
                             } else if first == KeyCode::Char('F') {
                                 // dF{char} / cF{char} - delete/change backward to char (inclusive)
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeBackToChar(c, true);
+                                } else {
+                                    self.last_change = LastChange::DeleteBackToChar(c, true);
                                 }
                                 self.delete_to_char_backward(c, true);
                             } else if first == KeyCode::Char('t') {
                                 // dt{char} / ct{char} - delete/change till char (exclusive)
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeToChar(c, false);
+                                } else {
+                                    self.last_change = LastChange::DeleteToChar(c, false);
                                 }
                                 self.delete_to_char_forward(c, false);
                             } else if first == KeyCode::Char('T') {
                                 // dT{char} / cT{char} - delete/change backward till char (exclusive)
                                 if op == 'c' {
+                                    self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
+                                    self.last_change = LastChange::ChangeBackToChar(c, false);
+                                } else {
+                                    self.last_change = LastChange::DeleteBackToChar(c, false);
                                 }
                                 self.delete_to_char_backward(c, false);
                             }
@@ -1834,13 +2005,18 @@ impl<'a> EditorState<'a> {
                                 }
                             } else if op == 'd' {
                                 match c {
-                                    'd' => self.delete_line(),
-                                    'w' => self
-                                        .perform_delete_motion(|s| s.get_word_forward_pos(), false),
-                                    'W' => self.perform_delete_motion(
-                                        |s| s.get_long_word_forward_pos(),
-                                        false,
-                                    ),
+                                    'd' => {
+                                        self.delete_line();
+                                        self.last_change = LastChange::DeleteLine;
+                                    }
+                                    'w' => {
+                                        self.perform_delete_motion(|s| s.get_word_forward_pos(), false);
+                                        self.last_change = LastChange::DeleteWord;
+                                    }
+                                    'W' => {
+                                        self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false);
+                                        self.last_change = LastChange::DeleteLongWord;
+                                    }
                                     'e' => {
                                         self.perform_delete_motion(|s| s.get_word_end_pos(), true)
                                     }
@@ -1946,9 +2122,15 @@ impl<'a> EditorState<'a> {
 
                         match c {
                             'i' => {
+                                self.insert_buffer.clear();
+                                self.last_change = LastChange::None;
+                                self.insert_after = false;
                                 self.mode = EditorMode::Insert;
                             }
                             'I' => {
+                                self.insert_buffer.clear();
+                                self.last_change = LastChange::None;
+                                self.insert_after = false;
                                 self.cursor.1 = 0;
                                 let line = &self.lines[self.cursor.0];
                                 for (i, ch) in line.chars().enumerate() {
@@ -1960,14 +2142,23 @@ impl<'a> EditorState<'a> {
                                 self.mode = EditorMode::Insert;
                             }
                             'a' => {
+                                self.insert_buffer.clear();
+                                self.last_change = LastChange::None;
+                                self.insert_after = true;
                                 self.mode = EditorMode::Insert;
                                 self.move_cursor(0, 1);
                             }
                             'A' => {
+                                self.insert_buffer.clear();
+                                self.last_change = LastChange::None;
+                                self.insert_after = true;
                                 self.cursor.1 = self.lines[self.cursor.0].len();
                                 self.mode = EditorMode::Insert;
                             }
                             'o' => {
+                                self.insert_buffer.clear();
+                                self.last_change = LastChange::None;
+                                self.insert_after = false;
                                 self.lines.insert(self.cursor.0 + 1, String::new());
                                 self.cursor.0 += 1;
                                 self.cursor.1 = 0;
@@ -1975,6 +2166,9 @@ impl<'a> EditorState<'a> {
                                 self.record_change();
                             }
                             'O' => {
+                                self.insert_buffer.clear();
+                                self.last_change = LastChange::None;
+                                self.insert_after = false;
                                 self.lines.insert(self.cursor.0, String::new());
                                 self.cursor.1 = 0;
                                 self.mode = EditorMode::Insert;
@@ -1990,7 +2184,10 @@ impl<'a> EditorState<'a> {
                             'E' => self.move_to_long_word_end(),
                             'b' => self.move_word_backward(),
                             'B' => self.move_long_word_backward(),
-                            'x' => self.delete_char(),
+                            'x' => {
+                                self.delete_char();
+                                self.last_change = LastChange::DeleteChar;
+                            }
                             'u' => self.undo(),
                             '0' => self.cursor.1 = 0,
                             '^' => self.move_to_first_non_blank(),
@@ -1998,13 +2195,35 @@ impl<'a> EditorState<'a> {
                                 self.cursor.1 = self.lines[self.cursor.0].len().saturating_sub(1)
                             }
                             'G' => self.cursor.0 = self.lines.len() - 1,
-                            'D' => self.delete_to_end_of_line(),
-                            'C' => self.change_to_end_of_line(),
-                            'S' => self.substitute_line(),
-                            's' => self.substitute_char(),
-                            'J' => self.join_lines(),
-                            '~' => self.toggle_case(),
+                            'D' => {
+                                self.delete_to_end_of_line();
+                                self.last_change = LastChange::DeleteToEndOfLine;
+                            }
+                            'C' => {
+                                self.insert_buffer.clear();
+                                self.change_to_end_of_line();
+                                self.last_change = LastChange::ChangeToEndOfLine;
+                            }
+                            'S' => {
+                                self.insert_buffer.clear();
+                                self.substitute_line();
+                                self.last_change = LastChange::SubstituteLine;
+                            }
+                            's' => {
+                                self.insert_buffer.clear();
+                                self.substitute_char();
+                                self.last_change = LastChange::SubstituteChar;
+                            }
+                            'J' => {
+                                self.join_lines();
+                                self.last_change = LastChange::JoinLines;
+                            }
+                            '~' => {
+                                self.toggle_case();
+                                self.last_change = LastChange::ToggleCase;
+                            }
                             '%' => self.jump_to_matching_bracket(),
+                            '.' => self.repeat_last_change(),
                             _ => {}
                         }
                     }
@@ -2030,6 +2249,27 @@ impl<'a> EditorState<'a> {
                         ..
                     }) => {
                         self.mode = EditorMode::Normal;
+                        // Save insert buffer as last change if we have text and it's not a change operation
+                        if !self.insert_buffer.is_empty() {
+                            match &self.last_change {
+                                LastChange::ChangeInnerWord
+                                | LastChange::ChangeAWord
+                                | LastChange::ChangeInnerLongWord
+                                | LastChange::ChangeALongWord
+                                | LastChange::ChangeInnerPair(_)
+                                | LastChange::ChangeAroundPair(_)
+                                | LastChange::ChangeToChar(_, _)
+                                | LastChange::ChangeBackToChar(_, _)
+                                | LastChange::ChangeToEndOfLine
+                                | LastChange::SubstituteLine
+                                | LastChange::SubstituteChar => {
+                                    // Keep the change operation as last_change
+                                }
+                                _ => {
+                                    self.last_change = LastChange::InsertText(self.insert_buffer.clone(), self.insert_after);
+                                }
+                            }
+                        }
                         // Move cursor left first (Vim behavior when leaving Insert mode)
                         if self.cursor.1 > 0 {
                             self.cursor.1 -= 1;
@@ -2045,6 +2285,7 @@ impl<'a> EditorState<'a> {
                             && !modifiers.contains(Modifiers::ALT)
                         {
                             self.insert_char(c);
+                            self.insert_buffer.push(c);
                         }
                     }
                     InputEvent::Key(KeyEvent {
