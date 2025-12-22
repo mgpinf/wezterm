@@ -96,6 +96,7 @@ struct EditorState<'a> {
     window: GuiWin,
     pane: MuxPane,
     lines: Vec<String>,
+    lines_modified: bool, // Track if lines changed since last record
     cursor: (usize, usize), // row, col
     mode: EditorMode,
     colors: EditorColors,
@@ -130,6 +131,7 @@ impl<'a> EditorState<'a> {
             window,
             pane,
             lines: lines.clone(),
+            lines_modified: false,
             cursor: (0, 0),
             mode: EditorMode::Normal,
             colors: EditorColors::new(),
@@ -150,8 +152,16 @@ impl<'a> EditorState<'a> {
         if self.history_idx < self.history.len() - 1 {
             self.history.truncate(self.history_idx + 1);
         }
+        // If lines haven't changed, just update cursor in last entry (O(1) check)
+        if !self.lines_modified {
+            if let Some(entry) = self.history.last_mut() {
+                entry.1 = self.cursor;
+            }
+            return;
+        }
         self.history.push((self.lines.clone(), self.cursor));
         self.history_idx = self.history.len() - 1;
+        self.lines_modified = false; // Reset flag after recording
     }
 
     fn undo(&mut self) {
@@ -165,10 +175,15 @@ impl<'a> EditorState<'a> {
 
     fn redo(&mut self) {
         if self.history_idx < self.history.len() - 1 {
+            // Save cursor from current entry (where change started) - Vim behavior
+            let cursor_at_change_start = self.history[self.history_idx].1;
             self.history_idx += 1;
-            let (lines, cursor) = &self.history[self.history_idx];
+            let (lines, _) = &self.history[self.history_idx];
             self.lines = lines.clone();
-            self.cursor = *cursor;
+            // Use cursor from previous entry (start of change), not destination entry
+            self.cursor = cursor_at_change_start;
+            // Clamp cursor to valid position in case change start is past end of line
+            self.clamp_cursor();
         }
     }
 
@@ -207,6 +222,7 @@ impl<'a> EditorState<'a> {
             line.insert(self.cursor.1, c);
         }
         self.cursor.1 += 1;
+        self.lines_modified = true;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
             self.record_change();
@@ -218,6 +234,7 @@ impl<'a> EditorState<'a> {
         if !line.is_empty() && self.cursor.1 < line.len() {
             line.remove(self.cursor.1);
             self.clamp_cursor();
+            self.lines_modified = true;
             // Only record change if not in insert mode (batch insert mode changes)
             if self.mode != EditorMode::Insert {
                 self.record_change();
@@ -235,6 +252,7 @@ impl<'a> EditorState<'a> {
         self.lines.insert(self.cursor.0 + 1, rest);
         self.cursor.0 += 1;
         self.cursor.1 = 0;
+        self.lines_modified = true;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
             self.record_change();
@@ -242,6 +260,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_line(&mut self) {
+        self.lines_modified = true;
         if self.lines.len() > 1 {
             self.lines.remove(self.cursor.0);
             if self.cursor.0 >= self.lines.len() {
@@ -258,6 +277,7 @@ impl<'a> EditorState<'a> {
 
     fn delete_to_end_of_file(&mut self) {
         // Delete from current line to end of file (linewise)
+        self.lines_modified = true;
         self.lines.truncate(self.cursor.0 + 1);
         self.lines[self.cursor.0].clear();
         if self.cursor.0 > 0 && self.lines[self.cursor.0].is_empty() {
@@ -271,6 +291,7 @@ impl<'a> EditorState<'a> {
 
     fn delete_to_start_of_file(&mut self) {
         // Delete from start of file to current line (linewise)
+        self.lines_modified = true;
         for _ in 0..=self.cursor.0 {
             self.lines.remove(0);
         }
@@ -285,6 +306,7 @@ impl<'a> EditorState<'a> {
 
     fn change_to_start_of_file(&mut self) {
         // Delete from start of file to current line, insert blank line for typing
+        self.lines_modified = true;
         for _ in 0..=self.cursor.0 {
             self.lines.remove(0);
         }
@@ -298,6 +320,7 @@ impl<'a> EditorState<'a> {
 
     fn change_to_end_of_file(&mut self) {
         // Delete from current line to end, leave blank line for typing
+        self.lines_modified = true;
         self.lines.truncate(self.cursor.0);
         self.lines.push(String::new());
         self.cursor.0 = self.lines.len() - 1;
@@ -955,6 +978,7 @@ impl<'a> EditorState<'a> {
 
     fn delete_inner_pair(&mut self, pair_char: char) {
         if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            self.lines_modified = true;
             if open_row == close_row {
                 // Same line - simple case
                 let line = &mut self.lines[open_row];
@@ -1000,6 +1024,7 @@ impl<'a> EditorState<'a> {
 
     fn delete_around_pair(&mut self, pair_char: char) {
         if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            self.lines_modified = true;
             if open_row == close_row {
                 // Same line - simple case
                 let line = &mut self.lines[open_row];
@@ -1287,6 +1312,7 @@ impl<'a> EditorState<'a> {
 
     fn delete_range_multiline(&mut self, start: (usize, usize), end: (usize, usize), inclusive: bool) {
         // Delete from start position to end position (multi-line support)
+        self.lines_modified = true;
         let (start_row, start_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
             start
         } else {
@@ -1554,12 +1580,14 @@ impl<'a> EditorState<'a> {
                     }
                     InsertStyle::NewLineBelow => {
                         // o - open new line below current line
+                        self.lines_modified = true;
                         self.lines.insert(self.cursor.0 + 1, String::new());
                         self.cursor.0 += 1;
                         self.cursor.1 = 0;
                     }
                     InsertStyle::NewLineAbove => {
                         // O - open new line above current line
+                        self.lines_modified = true;
                         self.lines.insert(self.cursor.0, String::new());
                         self.cursor.1 = 0;
                     }
@@ -1640,6 +1668,7 @@ impl<'a> EditorState<'a> {
 
     fn join_lines(&mut self) {
         if self.cursor.0 < self.lines.len() - 1 {
+            self.lines_modified = true;
             let next_line = self.lines.remove(self.cursor.0 + 1);
             let current_line = &mut self.lines[self.cursor.0];
 
@@ -1775,6 +1804,9 @@ impl<'a> EditorState<'a> {
     where
         F: Fn(&EditorState) -> (usize, usize),
     {
+        // Record state before deletion for undo (preserves cursor position)
+        self.record_change();
+        self.lines_modified = true;
         let start = self.cursor;
         let end = motion(self);
 
@@ -2220,6 +2252,7 @@ impl<'a> EditorState<'a> {
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_style = InsertStyle::NewLineBelow;
+                                self.lines_modified = true;
                                 self.lines.insert(self.cursor.0 + 1, String::new());
                                 self.cursor.0 += 1;
                                 self.cursor.1 = 0;
@@ -2230,6 +2263,7 @@ impl<'a> EditorState<'a> {
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_style = InsertStyle::NewLineAbove;
+                                self.lines_modified = true;
                                 self.lines.insert(self.cursor.0, String::new());
                                 self.cursor.1 = 0;
                                 self.mode = EditorMode::Insert;
@@ -2359,6 +2393,7 @@ impl<'a> EditorState<'a> {
                             self.delete_char();
                         } else if self.cursor.0 > 0 {
                             // Join lines logic
+                            self.lines_modified = true;
                             let current_line = self.lines.remove(self.cursor.0);
                             self.cursor.0 -= 1;
                             self.cursor.1 = self.lines[self.cursor.0].len();
