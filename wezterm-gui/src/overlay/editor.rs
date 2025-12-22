@@ -2303,7 +2303,13 @@ impl<'a> EditorState<'a> {
                         ..
                     }) => {
                         self.mode = EditorMode::Normal;
-                        // Record state after insert session for redo to work
+                        // Move cursor left first (Vim behavior when leaving Insert mode)
+                        if self.cursor.1 > 0 {
+                            self.cursor.1 -= 1;
+                        }
+                        // Then clamp to ensure we're within line bounds
+                        self.clamp_cursor();
+                        // Record state after insert session and cursor adjustment for redo to work
                         self.record_change();
                         // Save insert buffer as last change if we have text and it's not a change operation
                         if !self.insert_buffer.is_empty() {
@@ -2326,12 +2332,6 @@ impl<'a> EditorState<'a> {
                                 }
                             }
                         }
-                        // Move cursor left first (Vim behavior when leaving Insert mode)
-                        if self.cursor.1 > 0 {
-                            self.cursor.1 -= 1;
-                        }
-                        // Then clamp to ensure we're within line bounds
-                        self.clamp_cursor();
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
