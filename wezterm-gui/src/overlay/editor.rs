@@ -89,6 +89,7 @@ enum LastChange {
     InsertText(String, InsertStyle),      // Text inserted in insert mode
     ToggleCase,                           // ~
     JoinLines,                            // J
+    ReplaceChar(char),                    // r{char}
 }
 
 struct EditorState<'a> {
@@ -1661,6 +1662,7 @@ impl<'a> EditorState<'a> {
             }
             LastChange::ToggleCase => self.toggle_case(),
             LastChange::JoinLines => self.join_lines(),
+            LastChange::ReplaceChar(c) => self.replace_char(c),
         }
     }
 
@@ -1714,6 +1716,20 @@ impl<'a> EditorState<'a> {
         if !line.is_empty() && self.cursor.1 < line.len() {
             line.remove(self.cursor.1);
             self.mode = EditorMode::Insert;
+            self.record_change();
+        }
+    }
+
+    fn replace_char(&mut self, replacement: char) {
+        // r{char} - replace character under cursor without entering insert mode
+        let line_len = self.lines[self.cursor.0].len();
+        if line_len > 0 && self.cursor.1 < line_len {
+            self.record_change();
+            self.lines_modified = true;
+            let line = &mut self.lines[self.cursor.0];
+            let mut chars: Vec<char> = line.chars().collect();
+            chars[self.cursor.1] = replacement;
+            *line = chars.into_iter().collect();
             self.record_change();
         }
     }
@@ -2245,6 +2261,10 @@ impl<'a> EditorState<'a> {
                                 self.move_till_char_backward(c);
                                 self.last_char_search = Some(('T', c));
                                 self.pending_keys.clear();
+                            } else if first == KeyCode::Char('r') {
+                                self.replace_char(c);
+                                self.last_change = LastChange::ReplaceChar(c);
+                                self.pending_keys.clear();
                             } else {
                                 self.pending_keys.clear();
                             }
@@ -2254,6 +2274,7 @@ impl<'a> EditorState<'a> {
 
                         if c == 'g' || c == 'Z' || c == '[' || c == ']'
                             || c == 'f' || c == 'F' || c == 't' || c == 'T'
+                            || c == 'r'
                         {
                             self.pending_keys.push(KeyCode::Char(c));
                             continue;
