@@ -199,6 +199,56 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn delete_to_end_of_file(&mut self) {
+        // Delete from current line to end of file (linewise)
+        self.lines.truncate(self.cursor.0 + 1);
+        self.lines[self.cursor.0].clear();
+        if self.cursor.0 > 0 && self.lines[self.cursor.0].is_empty() {
+            self.lines.remove(self.cursor.0);
+            self.cursor.0 -= 1;
+        }
+        // Preserve column position, clamp if line is shorter
+        self.clamp_cursor();
+        self.record_change();
+    }
+
+    fn delete_to_start_of_file(&mut self) {
+        // Delete from start of file to current line (linewise)
+        for _ in 0..=self.cursor.0 {
+            self.lines.remove(0);
+        }
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        self.cursor.0 = 0;
+        // Preserve column position, clamp if line is shorter
+        self.clamp_cursor();
+        self.record_change();
+    }
+
+    fn change_to_start_of_file(&mut self) {
+        // Delete from start of file to current line, insert blank line for typing
+        for _ in 0..=self.cursor.0 {
+            self.lines.remove(0);
+        }
+        // Insert blank line at the top for typing
+        self.lines.insert(0, String::new());
+        self.cursor.0 = 0;
+        self.cursor.1 = 0;
+        self.mode = EditorMode::Insert;
+        self.record_change();
+    }
+
+    fn change_to_end_of_file(&mut self) {
+        // Delete from current line to end, leave blank line for typing
+        self.lines.truncate(self.cursor.0);
+        self.lines.push(String::new());
+        self.cursor.0 = self.lines.len() - 1;
+        self.cursor.1 = 0;
+        self.mode = EditorMode::Insert;
+        self.record_change();
+    }
+
     fn get_word_forward_pos(&self) -> (usize, usize) {
         let current_line = &self.lines[self.cursor.0];
         if self.cursor.1 >= current_line.len() {
@@ -762,6 +812,25 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char(c),
                         ..
                     }) => {
+                        // Handle operator + pending keys first (e.g., dgg, cgg)
+                        if self.pending_operator.is_some() && !self.pending_keys.is_empty() {
+                            let op = self.pending_operator.unwrap();
+                            let first = self.pending_keys[0];
+                            self.pending_operator = None;
+                            self.pending_keys.clear();
+
+                            if first == KeyCode::Char('g') && c == 'g' {
+                                if op == 'd' {
+                                    self.delete_to_start_of_file();
+                                } else if op == 'c' {
+                                    self.change_to_start_of_file();
+                                }
+                            }
+
+                            self.render()?;
+                            continue;
+                        }
+
                         if self.pending_operator.is_some() {
                             let op = self.pending_operator.unwrap();
                             self.pending_operator = None;
@@ -821,6 +890,13 @@ impl<'a> EditorState<'a> {
                                         );
                                         self.mode = EditorMode::Insert;
                                     }
+                                    'G' => self.change_to_end_of_file(),
+                                    'g' => {
+                                        // Wait for second 'g' to complete 'cgg'
+                                        self.pending_keys.push(KeyCode::Char('g'));
+                                        self.pending_operator = Some('c');
+                                        continue;
+                                    }
                                     _ => { /* Ignore other motions for now */ }
                                 }
                             } else if op == 'd' {
@@ -854,6 +930,13 @@ impl<'a> EditorState<'a> {
                                         |s| s.get_line_start_pos(),
                                         false,
                                     ),
+                                    'G' => self.delete_to_end_of_file(),
+                                    'g' => {
+                                        // Wait for second 'g' to complete 'dgg'
+                                        self.pending_keys.push(KeyCode::Char('g'));
+                                        self.pending_operator = Some('d');
+                                        continue;
+                                    }
                                     _ => {}
                                 }
                             }
