@@ -1147,6 +1147,87 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn find_char_forward(&self, target: char) -> Option<usize> {
+        // Find next occurrence of target char on current line
+        let line = &self.lines[self.cursor.0];
+        let chars: Vec<char> = line.chars().collect();
+        for i in (self.cursor.1 + 1)..chars.len() {
+            if chars[i] == target {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn find_char_backward(&self, target: char) -> Option<usize> {
+        // Find previous occurrence of target char on current line
+        let line = &self.lines[self.cursor.0];
+        let chars: Vec<char> = line.chars().collect();
+        for i in (0..self.cursor.1).rev() {
+            if chars[i] == target {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn move_to_char_forward(&mut self, target: char) {
+        // f{char} - move to next occurrence
+        if let Some(pos) = self.find_char_forward(target) {
+            self.cursor.1 = pos;
+        }
+    }
+
+    fn move_to_char_backward(&mut self, target: char) {
+        // F{char} - move to previous occurrence
+        if let Some(pos) = self.find_char_backward(target) {
+            self.cursor.1 = pos;
+        }
+    }
+
+    fn move_till_char_forward(&mut self, target: char) {
+        // t{char} - move to just before next occurrence
+        if let Some(pos) = self.find_char_forward(target) {
+            if pos > 0 {
+                self.cursor.1 = pos - 1;
+            }
+        }
+    }
+
+    fn move_till_char_backward(&mut self, target: char) {
+        // T{char} - move to just after previous occurrence
+        if let Some(pos) = self.find_char_backward(target) {
+            self.cursor.1 = pos + 1;
+        }
+    }
+
+    fn delete_to_char_forward(&mut self, target: char, inclusive: bool) {
+        // df{char} or dt{char}
+        if let Some(pos) = self.find_char_forward(target) {
+            let end_pos = if inclusive { pos } else { pos - 1 };
+            if end_pos >= self.cursor.1 {
+                let line = &mut self.lines[self.cursor.0];
+                line.replace_range(self.cursor.1..=end_pos, "");
+                self.clamp_cursor();
+                self.record_change();
+            }
+        }
+    }
+
+    fn delete_to_char_backward(&mut self, target: char, inclusive: bool) {
+        // dF{char} or dT{char}
+        if let Some(pos) = self.find_char_backward(target) {
+            let start_pos = if inclusive { pos } else { pos + 1 };
+            if start_pos <= self.cursor.1 {
+                let line = &mut self.lines[self.cursor.0];
+                line.replace_range(start_pos..self.cursor.1, "");
+                self.cursor.1 = start_pos;
+                self.clamp_cursor();
+                self.record_change();
+            }
+        }
+    }
+
     fn delete_range_multiline(&mut self, start: (usize, usize), end: (usize, usize), inclusive: bool) {
         // Delete from start position to end position (multi-line support)
         let (start_row, start_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
@@ -1637,6 +1718,30 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                 }
                                 self.delete_to_next_unmatched(open, close);
+                            } else if first == KeyCode::Char('f') {
+                                // df{char} / cf{char} - delete/change to char (inclusive)
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_to_char_forward(c, true);
+                            } else if first == KeyCode::Char('F') {
+                                // dF{char} / cF{char} - delete/change backward to char (inclusive)
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_to_char_backward(c, true);
+                            } else if first == KeyCode::Char('t') {
+                                // dt{char} / ct{char} - delete/change till char (exclusive)
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_to_char_forward(c, false);
+                            } else if first == KeyCode::Char('T') {
+                                // dT{char} / cT{char} - delete/change backward till char (exclusive)
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_to_char_backward(c, false);
                             }
 
                             self.render()?;
@@ -1719,8 +1824,8 @@ impl<'a> EditorState<'a> {
                                         self.delete_to_matching_bracket();
                                         self.mode = EditorMode::Insert;
                                     }
-                                    '[' | ']' => {
-                                        // Wait for bracket (e.g., c[( c[{ c]) c]})
+                                    '[' | ']' | 'f' | 'F' | 't' | 'T' => {
+                                        // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('c');
                                         continue;
@@ -1772,8 +1877,8 @@ impl<'a> EditorState<'a> {
                                         continue;
                                     }
                                     '%' => self.delete_to_matching_bracket(),
-                                    '[' | ']' => {
-                                        // Wait for bracket (e.g., d[( d[{ d]) d]})
+                                    '[' | ']' | 'f' | 'F' | 't' | 'T' => {
+                                        // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('d');
                                         continue;
@@ -1808,6 +1913,18 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char(']') && c == '}' {
                                 self.jump_to_next_unmatched('{', '}');
                                 self.pending_keys.clear();
+                            } else if first == KeyCode::Char('f') {
+                                self.move_to_char_forward(c);
+                                self.pending_keys.clear();
+                            } else if first == KeyCode::Char('F') {
+                                self.move_to_char_backward(c);
+                                self.pending_keys.clear();
+                            } else if first == KeyCode::Char('t') {
+                                self.move_till_char_forward(c);
+                                self.pending_keys.clear();
+                            } else if first == KeyCode::Char('T') {
+                                self.move_till_char_backward(c);
+                                self.pending_keys.clear();
                             } else {
                                 self.pending_keys.clear();
                             }
@@ -1815,7 +1932,9 @@ impl<'a> EditorState<'a> {
                             continue;
                         }
 
-                        if c == 'g' || c == 'Z' || c == '[' || c == ']' {
+                        if c == 'g' || c == 'Z' || c == '[' || c == ']'
+                            || c == 'f' || c == 'F' || c == 't' || c == 'T'
+                        {
                             self.pending_keys.push(KeyCode::Char(c));
                             continue;
                         }
