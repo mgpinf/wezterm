@@ -569,6 +569,182 @@ impl<'a> EditorState<'a> {
         (self.cursor.0, self.lines[self.cursor.0].len())
     }
 
+    fn get_inner_word_bounds(&self) -> (usize, usize) {
+        // Returns (start, end) of the word under cursor (not including surrounding whitespace)
+        let line = &self.lines[self.cursor.0];
+        if line.is_empty() {
+            return (0, 0);
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let col = self.cursor.1.min(chars.len().saturating_sub(1));
+
+        // Determine the type of character under cursor
+        let is_word_char =
+            |c: char| !c.is_whitespace() && !c.is_ascii_punctuation();
+        let is_punct = |c: char| c.is_ascii_punctuation();
+
+        let cur_char = chars[col];
+        let char_type_matches: Box<dyn Fn(char) -> bool> = if cur_char.is_whitespace() {
+            Box::new(|c: char| c.is_whitespace())
+        } else if is_punct(cur_char) {
+            Box::new(is_punct)
+        } else {
+            Box::new(is_word_char)
+        };
+
+        // Find start of word
+        let mut start = col;
+        while start > 0 && char_type_matches(chars[start - 1]) {
+            start -= 1;
+        }
+
+        // Find end of word
+        let mut end = col;
+        while end < chars.len() && char_type_matches(chars[end]) {
+            end += 1;
+        }
+
+        (start, end)
+    }
+
+    fn get_a_word_bounds(&self) -> (usize, usize) {
+        // Returns (start, end) of the word under cursor including trailing whitespace
+        // (or leading whitespace if at end of line)
+        let line = &self.lines[self.cursor.0];
+        if line.is_empty() {
+            return (0, 0);
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let (word_start, word_end) = self.get_inner_word_bounds();
+
+        // Try to include trailing whitespace first
+        let mut end = word_end;
+        while end < chars.len() && chars[end].is_whitespace() {
+            end += 1;
+        }
+
+        // If no trailing whitespace was found, try leading whitespace
+        if end == word_end {
+            let mut start = word_start;
+            while start > 0 && chars[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            (start, word_end)
+        } else {
+            (word_start, end)
+        }
+    }
+
+    fn delete_inner_word(&mut self) {
+        let (start, end) = self.get_inner_word_bounds();
+        let line = &mut self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            line.replace_range(start..end, "");
+            self.cursor.1 = start;
+            self.clamp_cursor();
+            self.record_change();
+        }
+    }
+
+    fn delete_a_word(&mut self) {
+        let (start, end) = self.get_a_word_bounds();
+        let line = &mut self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            line.replace_range(start..end, "");
+            self.cursor.1 = start;
+            self.clamp_cursor();
+            self.record_change();
+        }
+    }
+
+    fn get_inner_long_word_bounds(&self) -> (usize, usize) {
+        // Returns (start, end) of the WORD under cursor (whitespace-delimited)
+        let line = &self.lines[self.cursor.0];
+        if line.is_empty() {
+            return (0, 0);
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let col = self.cursor.1.min(chars.len().saturating_sub(1));
+
+        // For WORD, only whitespace is a delimiter
+        if chars[col].is_whitespace() {
+            // Cursor is on whitespace, select the whitespace block
+            let mut start = col;
+            while start > 0 && chars[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            let mut end = col;
+            while end < chars.len() && chars[end].is_whitespace() {
+                end += 1;
+            }
+            (start, end)
+        } else {
+            // Cursor is on non-whitespace
+            let mut start = col;
+            while start > 0 && !chars[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            let mut end = col;
+            while end < chars.len() && !chars[end].is_whitespace() {
+                end += 1;
+            }
+            (start, end)
+        }
+    }
+
+    fn get_a_long_word_bounds(&self) -> (usize, usize) {
+        // Returns (start, end) of the WORD under cursor including trailing whitespace
+        let line = &self.lines[self.cursor.0];
+        if line.is_empty() {
+            return (0, 0);
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let (word_start, word_end) = self.get_inner_long_word_bounds();
+
+        // Try to include trailing whitespace first
+        let mut end = word_end;
+        while end < chars.len() && chars[end].is_whitespace() {
+            end += 1;
+        }
+
+        // If no trailing whitespace was found, try leading whitespace
+        if end == word_end {
+            let mut start = word_start;
+            while start > 0 && chars[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            (start, word_end)
+        } else {
+            (word_start, end)
+        }
+    }
+
+    fn delete_inner_long_word(&mut self) {
+        let (start, end) = self.get_inner_long_word_bounds();
+        let line = &mut self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            line.replace_range(start..end, "");
+            self.cursor.1 = start;
+            self.clamp_cursor();
+            self.record_change();
+        }
+    }
+
+    fn delete_a_long_word(&mut self) {
+        let (start, end) = self.get_a_long_word_bounds();
+        let line = &mut self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            line.replace_range(start..end, "");
+            self.cursor.1 = start;
+            self.clamp_cursor();
+            self.record_change();
+        }
+    }
+
     fn delete_to_end_of_line(&mut self) {
         let line = &mut self.lines[self.cursor.0];
         if self.cursor.1 < line.len() {
@@ -825,6 +1001,30 @@ impl<'a> EditorState<'a> {
                                 } else if op == 'c' {
                                     self.change_to_start_of_file();
                                 }
+                            } else if first == KeyCode::Char('i') && c == 'w' {
+                                // diw / ciw - delete/change inner word
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_inner_word();
+                            } else if first == KeyCode::Char('a') && c == 'w' {
+                                // daw / caw - delete/change a word
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_a_word();
+                            } else if first == KeyCode::Char('i') && c == 'W' {
+                                // diW / ciW - delete/change inner WORD
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_inner_long_word();
+                            } else if first == KeyCode::Char('a') && c == 'W' {
+                                // daW / caW - delete/change a WORD
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_a_long_word();
                             }
 
                             self.render()?;
@@ -897,6 +1097,12 @@ impl<'a> EditorState<'a> {
                                         self.pending_operator = Some('c');
                                         continue;
                                     }
+                                    'i' | 'a' => {
+                                        // Wait for text object (e.g., 'w' for ciw/caw)
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some('c');
+                                        continue;
+                                    }
                                     _ => { /* Ignore other motions for now */ }
                                 }
                             } else if op == 'd' {
@@ -934,6 +1140,12 @@ impl<'a> EditorState<'a> {
                                     'g' => {
                                         // Wait for second 'g' to complete 'dgg'
                                         self.pending_keys.push(KeyCode::Char('g'));
+                                        self.pending_operator = Some('d');
+                                        continue;
+                                    }
+                                    'i' | 'a' => {
+                                        // Wait for text object (e.g., 'w' for diw/daw)
+                                        self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('d');
                                         continue;
                                     }
@@ -1057,10 +1269,12 @@ impl<'a> EditorState<'a> {
                         ..
                     }) => {
                         self.mode = EditorMode::Normal;
-                        self.clamp_cursor();
+                        // Move cursor left first (Vim behavior when leaving Insert mode)
                         if self.cursor.1 > 0 {
                             self.cursor.1 -= 1;
                         }
+                        // Then clamp to ensure we're within line bounds
+                        self.clamp_cursor();
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
