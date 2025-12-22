@@ -49,6 +49,16 @@ enum EditorMode {
     Insert,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InsertStyle {
+    Before,       // i - insert before cursor
+    After,        // a - insert after cursor
+    LineStart,    // I - insert at first non-blank of line
+    LineEnd,      // A - insert at end of line
+    NewLineBelow, // o - open new line below
+    NewLineAbove, // O - open new line above
+}
+
 #[derive(Clone, Debug)]
 enum LastChange {
     None,
@@ -76,7 +86,7 @@ enum LastChange {
     ChangeAroundPair(char),               // ca( ca{ etc.
     ChangeToChar(char, bool),             // cf{char}, ct{char}
     ChangeBackToChar(char, bool),         // cF{char}, cT{char}
-    InsertText(String, bool),             // Text inserted in insert mode (text, is_after)
+    InsertText(String, InsertStyle),      // Text inserted in insert mode
     ToggleCase,                           // ~
     JoinLines,                            // J
 }
@@ -96,8 +106,8 @@ struct EditorState<'a> {
     pending_keys: Vec<KeyCode>,
     pending_operator: Option<char>, // 'd', 'c', 'y'
     last_change: LastChange,
-    insert_buffer: String, // Buffer to track text inserted in insert mode
-    insert_after: bool,    // True if insert was via 'a'/'A', false for 'i'/'I'
+    insert_buffer: String,   // Buffer to track text inserted in insert mode
+    insert_style: InsertStyle, // Style of insert (i, a, I, A)
 }
 
 impl<'a> EditorState<'a> {
@@ -131,7 +141,7 @@ impl<'a> EditorState<'a> {
             pending_operator: None,
             last_change: LastChange::None,
             insert_buffer: String::new(),
-            insert_after: false,
+            insert_style: InsertStyle::Before,
         }
     }
 
@@ -1512,13 +1522,51 @@ impl<'a> EditorState<'a> {
                 self.delete_to_char_backward(c, inclusive);
                 self.insert_saved_text();
             }
-            LastChange::InsertText(text, is_after) => {
-                // For 'a' style insert, move cursor right first
-                if is_after && self.cursor.1 < self.lines[self.cursor.0].len() {
-                    self.cursor.1 += 1;
+            LastChange::InsertText(text, style) => {
+                // Position cursor based on insert style
+                match style {
+                    InsertStyle::Before => {
+                        // i - insert before cursor, no movement needed
+                    }
+                    InsertStyle::After => {
+                        // a - insert after cursor
+                        if self.cursor.1 < self.lines[self.cursor.0].len() {
+                            self.cursor.1 += 1;
+                        }
+                    }
+                    InsertStyle::LineStart => {
+                        // I - insert at first non-blank of line
+                        self.cursor.1 = 0;
+                        let line = &self.lines[self.cursor.0];
+                        for (i, ch) in line.chars().enumerate() {
+                            if !ch.is_whitespace() {
+                                self.cursor.1 = i;
+                                break;
+                            }
+                        }
+                    }
+                    InsertStyle::LineEnd => {
+                        // A - insert at end of line
+                        self.cursor.1 = self.lines[self.cursor.0].len();
+                    }
+                    InsertStyle::NewLineBelow => {
+                        // o - open new line below current line
+                        self.lines.insert(self.cursor.0 + 1, String::new());
+                        self.cursor.0 += 1;
+                        self.cursor.1 = 0;
+                    }
+                    InsertStyle::NewLineAbove => {
+                        // O - open new line above current line
+                        self.lines.insert(self.cursor.0, String::new());
+                        self.cursor.1 = 0;
+                    }
                 }
                 for c in text.chars() {
-                    self.insert_char(c);
+                    if c == '\n' {
+                        self.insert_newline();
+                    } else {
+                        self.insert_char(c);
+                    }
                 }
                 // Move cursor back like Escape does
                 if self.cursor.1 > 0 {
@@ -2127,14 +2175,14 @@ impl<'a> EditorState<'a> {
                                 self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
-                                self.insert_after = false;
+                                self.insert_style = InsertStyle::Before;
                                 self.mode = EditorMode::Insert;
                             }
                             'I' => {
                                 self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
-                                self.insert_after = false;
+                                self.insert_style = InsertStyle::LineStart;
                                 self.cursor.1 = 0;
                                 let line = &self.lines[self.cursor.0];
                                 for (i, ch) in line.chars().enumerate() {
@@ -2149,7 +2197,7 @@ impl<'a> EditorState<'a> {
                                 self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
-                                self.insert_after = true;
+                                self.insert_style = InsertStyle::After;
                                 self.mode = EditorMode::Insert;
                                 self.move_cursor(0, 1);
                             }
@@ -2157,7 +2205,7 @@ impl<'a> EditorState<'a> {
                                 self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
-                                self.insert_after = true;
+                                self.insert_style = InsertStyle::LineEnd;
                                 self.cursor.1 = self.lines[self.cursor.0].len();
                                 self.mode = EditorMode::Insert;
                             }
@@ -2165,7 +2213,7 @@ impl<'a> EditorState<'a> {
                                 self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
-                                self.insert_after = false;
+                                self.insert_style = InsertStyle::NewLineBelow;
                                 self.lines.insert(self.cursor.0 + 1, String::new());
                                 self.cursor.0 += 1;
                                 self.cursor.1 = 0;
@@ -2175,7 +2223,7 @@ impl<'a> EditorState<'a> {
                                 self.record_change(); // Record state with current cursor before insert
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
-                                self.insert_after = false;
+                                self.insert_style = InsertStyle::NewLineAbove;
                                 self.lines.insert(self.cursor.0, String::new());
                                 self.cursor.1 = 0;
                                 self.mode = EditorMode::Insert;
@@ -2274,7 +2322,7 @@ impl<'a> EditorState<'a> {
                                     // Keep the change operation as last_change
                                 }
                                 _ => {
-                                    self.last_change = LastChange::InsertText(self.insert_buffer.clone(), self.insert_after);
+                                    self.last_change = LastChange::InsertText(self.insert_buffer.clone(), self.insert_style);
                                 }
                             }
                         }
@@ -2316,6 +2364,7 @@ impl<'a> EditorState<'a> {
                         ..
                     }) => {
                         self.insert_newline();
+                        self.insert_buffer.push('\n');
                     }
                     _ => {}
                 },
