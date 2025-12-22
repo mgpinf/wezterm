@@ -497,15 +497,26 @@ impl<'a> EditorState<'a> {
         self.cursor = self.get_long_word_end_pos();
     }
 
-    fn move_to_first_non_blank(&mut self) {
+    fn get_first_non_blank_pos(&self) -> (usize, usize) {
         let line = &self.lines[self.cursor.0];
-        self.cursor.1 = 0;
         for (i, ch) in line.chars().enumerate() {
             if !ch.is_whitespace() {
-                self.cursor.1 = i;
-                break;
+                return (self.cursor.0, i);
             }
         }
+        (self.cursor.0, 0)
+    }
+
+    fn move_to_first_non_blank(&mut self) {
+        self.cursor = self.get_first_non_blank_pos();
+    }
+
+    fn get_line_start_pos(&self) -> (usize, usize) {
+        (self.cursor.0, 0)
+    }
+
+    fn get_line_end_pos(&self) -> (usize, usize) {
+        (self.cursor.0, self.lines[self.cursor.0].len())
     }
 
     fn delete_to_end_of_line(&mut self) {
@@ -795,6 +806,21 @@ impl<'a> EditorState<'a> {
                                         );
                                         self.mode = EditorMode::Insert;
                                     }
+                                    '$' => self.change_to_end_of_line(),
+                                    '^' => {
+                                        self.perform_delete_motion(
+                                            |s| s.get_first_non_blank_pos(),
+                                            false,
+                                        );
+                                        self.mode = EditorMode::Insert;
+                                    }
+                                    '0' => {
+                                        self.perform_delete_motion(
+                                            |s| s.get_line_start_pos(),
+                                            false,
+                                        );
+                                        self.mode = EditorMode::Insert;
+                                    }
                                     _ => { /* Ignore other motions for now */ }
                                 }
                             } else if op == 'd' {
@@ -817,6 +843,15 @@ impl<'a> EditorState<'a> {
                                     ),
                                     'B' => self.perform_delete_motion(
                                         |s| s.get_long_word_backward_pos(),
+                                        false,
+                                    ),
+                                    '$' => self.delete_to_end_of_line(),
+                                    '^' => self.perform_delete_motion(
+                                        |s| s.get_first_non_blank_pos(),
+                                        false,
+                                    ),
+                                    '0' => self.perform_delete_motion(
+                                        |s| s.get_line_start_pos(),
                                         false,
                                     ),
                                     _ => {}
@@ -1061,3 +1096,4 @@ pub fn show_input_text_overlay(
 
     state.run_loop()
 }
+
