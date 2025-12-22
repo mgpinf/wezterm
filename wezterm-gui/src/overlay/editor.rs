@@ -766,29 +766,24 @@ impl<'a> EditorState<'a> {
         matches!(c, '(' | '[' | '{' | '<')
     }
 
-    fn find_pair_bounds(&self, pair_char: char) -> Option<(usize, usize)> {
-        // Find matching pair around cursor on current line
-        let line = &self.lines[self.cursor.0];
-        if line.is_empty() {
-            return None;
-        }
-
-        let chars: Vec<char> = line.chars().collect();
-        let col = self.cursor.1.min(chars.len().saturating_sub(1));
-
+    fn find_pair_bounds(&self, pair_char: char) -> Option<((usize, usize), (usize, usize))> {
+        // Find matching pair around cursor (multi-line support)
+        // Returns ((open_row, open_col), (close_row, close_col))
         let (open, close) = if pair_char == '"' || pair_char == '\'' || pair_char == '`' {
-            // For quotes, they're the same character
             (pair_char, pair_char)
         } else if Self::is_open_pair(pair_char) {
             (pair_char, Self::get_matching_pair(pair_char)?)
         } else {
-            // It's a close pair, swap
             (Self::get_matching_pair(pair_char)?, pair_char)
         };
 
+        let cur_row = self.cursor.0;
+        let line = &self.lines[cur_row];
+        let chars: Vec<char> = line.chars().collect();
+        let col = self.cursor.1.min(chars.len().saturating_sub(1));
+
         if open == close {
-            // Quote-style pairs: find enclosing quotes
-            // Find quote to the left (or at cursor)
+            // Quote-style pairs: only search on current line
             let mut left = None;
             for i in (0..=col).rev() {
                 if chars[i] == open {
@@ -797,7 +792,6 @@ impl<'a> EditorState<'a> {
                 }
             }
 
-            // Find quote to the right
             let mut right = None;
             let start_search = if left == Some(col) { col + 1 } else { col };
             for i in start_search..chars.len() {
@@ -808,94 +802,139 @@ impl<'a> EditorState<'a> {
             }
 
             match (left, right) {
-                (Some(l), Some(r)) => Some((l, r)),
+                (Some(l), Some(r)) => Some(((cur_row, l), (cur_row, r))),
                 _ => None,
             }
         } else {
-            // Bracket-style pairs: handle nesting
-            let cur_char = chars[col];
+            // Bracket-style pairs: multi-line search
+            let cur_char = if !chars.is_empty() { chars[col] } else { ' ' };
 
-            // Check if cursor is on a bracket
+            let open_pos: Option<(usize, usize)>;
+            let close_pos: Option<(usize, usize)>;
+
             if cur_char == close {
-                // Cursor is on closing bracket - this is our right bound
-                // Search left for matching open
-                let mut depth = 0i32;
-                for i in (0..col).rev() {
-                    if chars[i] == close {
-                        depth += 1;
-                    } else if chars[i] == open {
-                        if depth == 0 {
-                            return Some((i, col));
-                        }
-                        depth -= 1;
-                    }
-                }
-                None
+                // Cursor is on closing bracket
+                close_pos = Some((cur_row, col));
+                open_pos = self.find_matching_open(open, close, cur_row, col);
             } else if cur_char == open {
-                // Cursor is on opening bracket - this is our left bound
-                // Search right for matching close
-                let mut depth = 0i32;
-                for i in (col + 1)..chars.len() {
-                    if chars[i] == open {
-                        depth += 1;
-                    } else if chars[i] == close {
-                        if depth == 0 {
-                            return Some((col, i));
-                        }
-                        depth -= 1;
-                    }
-                }
-                None
+                // Cursor is on opening bracket
+                open_pos = Some((cur_row, col));
+                close_pos = self.find_matching_close(open, close, cur_row, col);
             } else {
                 // Cursor is inside - search both directions
-                // Find opening bracket to the left
-                let mut left = None;
-                let mut depth = 0i32;
-                for i in (0..=col).rev() {
-                    if chars[i] == close {
-                        depth += 1;
-                    } else if chars[i] == open {
-                        if depth == 0 {
-                            left = Some(i);
-                            break;
-                        }
-                        depth -= 1;
-                    }
+                open_pos = self.find_matching_open(open, close, cur_row, col + 1);
+                if let Some((open_row, open_col)) = open_pos {
+                    close_pos = self.find_matching_close(open, close, open_row, open_col);
+                } else {
+                    close_pos = None;
                 }
+            }
 
-                // Find closing bracket to the right
-                let mut right = None;
-                depth = 0;
-                for i in (col + 1)..chars.len() {
-                    if chars[i] == open {
-                        depth += 1;
-                    } else if chars[i] == close {
-                        if depth == 0 {
-                            right = Some(i);
-                            break;
-                        }
-                        depth -= 1;
-                    }
-                }
-
-                match (left, right) {
-                    (Some(l), Some(r)) => Some((l, r)),
-                    _ => None,
-                }
+            match (open_pos, close_pos) {
+                (Some(o), Some(c)) => Some((o, c)),
+                _ => None,
             }
         }
     }
 
+    fn find_matching_open(&self, open: char, close: char, start_row: usize, start_col: usize) -> Option<(usize, usize)> {
+        let mut depth = 0i32;
+        let mut row = start_row;
+        let mut search_end = start_col;
+
+        loop {
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+            let end = search_end.min(chars.len());
+
+            for i in (0..end).rev() {
+                if chars[i] == close {
+                    depth += 1;
+                } else if chars[i] == open {
+                    if depth == 0 {
+                        return Some((row, i));
+                    }
+                    depth -= 1;
+                }
+            }
+
+            if row == 0 {
+                break;
+            }
+            row -= 1;
+            search_end = self.lines[row].len();
+        }
+        None
+    }
+
+    fn find_matching_close(&self, open: char, close: char, start_row: usize, start_col: usize) -> Option<(usize, usize)> {
+        let mut depth = 0i32;
+        let mut row = start_row;
+        let mut search_start = start_col + 1;
+
+        loop {
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+
+            for i in search_start..chars.len() {
+                if chars[i] == open {
+                    depth += 1;
+                } else if chars[i] == close {
+                    if depth == 0 {
+                        return Some((row, i));
+                    }
+                    depth -= 1;
+                }
+            }
+
+            if row >= self.lines.len() - 1 {
+                break;
+            }
+            row += 1;
+            search_start = 0;
+        }
+        None
+    }
+
     fn delete_inner_pair(&mut self, pair_char: char) {
-        if let Some((open_pos, close_pos)) = self.find_pair_bounds(pair_char) {
-            let line = &mut self.lines[self.cursor.0];
-            // Delete content between pairs (not including the pairs themselves)
-            if open_pos + 1 < close_pos {
-                line.replace_range((open_pos + 1)..close_pos, "");
-                self.cursor.1 = open_pos + 1;
+        if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            if open_row == close_row {
+                // Same line - simple case
+                let line = &mut self.lines[open_row];
+                if open_col + 1 < close_col {
+                    line.replace_range((open_col + 1)..close_col, "");
+                }
+                // Cursor on closing bracket (now at open_col + 1)
+                self.cursor.0 = open_row;
+                self.cursor.1 = open_col + 1;
             } else {
-                // Empty pair, just position cursor inside
-                self.cursor.1 = open_pos + 1;
+                // Multi-line deletion - preserve line structure like Neovim
+                let is_change = self.mode == EditorMode::Insert;
+                let has_content_lines = close_row - open_row > 1;
+
+                // Truncate first line after open bracket
+                let first_line: String = self.lines[open_row].chars().take(open_col + 1).collect();
+                self.lines[open_row] = first_line;
+
+                // Truncate last line before close bracket
+                let last_line: String = self.lines[close_row].chars().skip(close_col).collect();
+                self.lines[close_row] = last_line;
+
+                // Remove lines in between (but keep open_row and close_row)
+                for _ in (open_row + 1)..close_row {
+                    self.lines.remove(open_row + 1);
+                }
+
+                if is_change && has_content_lines {
+                    // For ci( with content lines: insert empty line between brackets
+                    self.lines.insert(open_row + 1, String::new());
+                    self.cursor.0 = open_row + 1;
+                    self.cursor.1 = 0;
+                } else {
+                    // For di( or ci( without content lines: cursor on closing bracket
+                    self.cursor.0 = open_row + 1;
+                    self.cursor.1 = 0;
+                }
             }
             self.clamp_cursor();
             self.record_change();
@@ -903,11 +942,31 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_around_pair(&mut self, pair_char: char) {
-        if let Some((open_pos, close_pos)) = self.find_pair_bounds(pair_char) {
-            let line = &mut self.lines[self.cursor.0];
-            // Delete including the pairs themselves
-            line.replace_range(open_pos..=close_pos, "");
-            self.cursor.1 = open_pos;
+        if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            if open_row == close_row {
+                // Same line - simple case
+                let line = &mut self.lines[open_row];
+                line.replace_range(open_col..=close_col, "");
+                self.cursor.0 = open_row;
+                self.cursor.1 = open_col;
+            } else {
+                // Multi-line deletion
+                // Keep content before open bracket on first line
+                let first_line_prefix: String = self.lines[open_row].chars().take(open_col).collect();
+                // Keep content after close bracket on last line
+                let last_line_suffix: String = self.lines[close_row].chars().skip(close_col + 1).collect();
+
+                // Combine and replace
+                self.lines[open_row] = first_line_prefix + &last_line_suffix;
+
+                // Remove lines in between
+                for _ in (open_row + 1)..=close_row {
+                    self.lines.remove(open_row + 1);
+                }
+
+                self.cursor.0 = open_row;
+                self.cursor.1 = open_col;
+            }
             self.clamp_cursor();
             self.record_change();
         }
