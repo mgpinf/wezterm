@@ -1147,6 +1147,180 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn delete_range_multiline(&mut self, start: (usize, usize), end: (usize, usize), inclusive: bool) {
+        // Delete from start position to end position (multi-line support)
+        let (start_row, start_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            start
+        } else {
+            end
+        };
+        let (end_row, end_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            end
+        } else {
+            start
+        };
+
+        let actual_end_col = if inclusive { end_col + 1 } else { end_col };
+
+        if start_row == end_row {
+            // Same line
+            let line = &mut self.lines[start_row];
+            let end_clamped = actual_end_col.min(line.len());
+            if start_col < end_clamped {
+                line.replace_range(start_col..end_clamped, "");
+            }
+            self.cursor.0 = start_row;
+            self.cursor.1 = start_col;
+        } else {
+            // Multi-line
+            let first_part: String = self.lines[start_row].chars().take(start_col).collect();
+            let last_part: String = self.lines[end_row].chars().skip(actual_end_col).collect();
+
+            self.lines[start_row] = first_part + &last_part;
+
+            for _ in (start_row + 1)..=end_row {
+                self.lines.remove(start_row + 1);
+            }
+
+            self.cursor.0 = start_row;
+            self.cursor.1 = start_col;
+        }
+
+        self.clamp_cursor();
+        self.record_change();
+    }
+
+    fn delete_to_matching_bracket(&mut self) {
+        let start = (self.cursor.0, self.cursor.1);
+
+        // Find the target position
+        let line = &self.lines[self.cursor.0];
+        if line.is_empty() {
+            return;
+        }
+        let chars: Vec<char> = line.chars().collect();
+        let col = self.cursor.1.min(chars.len().saturating_sub(1));
+        let cur_char = chars[col];
+
+        // Find a bracket if not on one
+        let bracket_col = if Self::is_matchable_bracket(cur_char) {
+            col
+        } else {
+            let mut found = None;
+            for i in col..chars.len() {
+                if Self::is_matchable_bracket(chars[i]) {
+                    found = Some(i);
+                    break;
+                }
+            }
+            match found {
+                Some(c) => c,
+                None => return,
+            }
+        };
+
+        // Temporarily move cursor to bracket
+        let original_cursor = self.cursor;
+        self.cursor.1 = bracket_col;
+
+        // Find matching bracket position
+        let bracket_char = self.lines[self.cursor.0].chars().nth(bracket_col).unwrap();
+        let matching = match Self::get_matching_pair(bracket_char) {
+            Some(m) => m,
+            None => {
+                self.cursor = original_cursor;
+                return;
+            }
+        };
+
+        // Search for match
+        let end_pos = if Self::is_open_pair(bracket_char) {
+            self.find_matching_close(bracket_char, matching, self.cursor.0, bracket_col)
+        } else {
+            self.find_matching_open(matching, bracket_char, self.cursor.0, bracket_col)
+        };
+
+        self.cursor = original_cursor;
+
+        if let Some(end) = end_pos {
+            self.delete_range_multiline(start, end, true);
+        }
+    }
+
+    fn delete_to_prev_unmatched(&mut self, open: char, close: char) {
+        let start = (self.cursor.0, self.cursor.1);
+        if let Some(end) = self.find_unmatched_backward(open, close) {
+            self.delete_range_multiline(end, start, false);
+        }
+    }
+
+    fn delete_to_next_unmatched(&mut self, open: char, close: char) {
+        let start = (self.cursor.0, self.cursor.1);
+        if let Some(end) = self.find_unmatched_forward(open, close) {
+            // Exclusive - don't include the closing bracket
+            self.delete_range_multiline(start, end, false);
+        }
+    }
+
+    fn find_unmatched_backward(&self, open: char, close: char) -> Option<(usize, usize)> {
+        let mut depth = 0i32;
+        let mut row = self.cursor.0;
+        let mut search_end = self.cursor.1;
+
+        loop {
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+            let end = search_end.min(chars.len());
+
+            for i in (0..end).rev() {
+                if chars[i] == close {
+                    depth += 1;
+                } else if chars[i] == open {
+                    if depth == 0 {
+                        return Some((row, i));
+                    }
+                    depth -= 1;
+                }
+            }
+
+            if row == 0 {
+                break;
+            }
+            row -= 1;
+            search_end = self.lines[row].len();
+        }
+        None
+    }
+
+    fn find_unmatched_forward(&self, open: char, close: char) -> Option<(usize, usize)> {
+        let mut depth = 0i32;
+        let mut row = self.cursor.0;
+        let mut search_start = self.cursor.1 + 1;
+
+        loop {
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+
+            for i in search_start..chars.len() {
+                if chars[i] == open {
+                    depth += 1;
+                } else if chars[i] == close {
+                    if depth == 0 {
+                        return Some((row, i));
+                    }
+                    depth -= 1;
+                }
+            }
+
+            if row >= self.lines.len() - 1 {
+                break;
+            }
+            row += 1;
+            search_start = 0;
+        }
+        None
+    }
+
     fn delete_to_end_of_line(&mut self) {
         let line = &mut self.lines[self.cursor.0];
         if self.cursor.1 < line.len() {
@@ -1449,6 +1623,20 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                 }
                                 self.delete_around_pair(c);
+                            } else if first == KeyCode::Char('[') && (c == '(' || c == '{') {
+                                // d[( d[{ c[( c[{ - delete/change to previous unmatched bracket
+                                let (open, close) = if c == '(' { ('(', ')') } else { ('{', '}') };
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_to_prev_unmatched(open, close);
+                            } else if first == KeyCode::Char(']') && (c == ')' || c == '}') {
+                                // d]) d]} c]) c]} - delete/change to next unmatched bracket
+                                let (open, close) = if c == ')' { ('(', ')') } else { ('{', '}') };
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_to_next_unmatched(open, close);
                             }
 
                             self.render()?;
@@ -1527,6 +1715,16 @@ impl<'a> EditorState<'a> {
                                         self.pending_operator = Some('c');
                                         continue;
                                     }
+                                    '%' => {
+                                        self.delete_to_matching_bracket();
+                                        self.mode = EditorMode::Insert;
+                                    }
+                                    '[' | ']' => {
+                                        // Wait for bracket (e.g., c[( c[{ c]) c]})
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some('c');
+                                        continue;
+                                    }
                                     _ => { /* Ignore other motions for now */ }
                                 }
                             } else if op == 'd' {
@@ -1569,6 +1767,13 @@ impl<'a> EditorState<'a> {
                                     }
                                     'i' | 'a' => {
                                         // Wait for text object (e.g., 'w' for diw/daw)
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some('d');
+                                        continue;
+                                    }
+                                    '%' => self.delete_to_matching_bracket(),
+                                    '[' | ']' => {
+                                        // Wait for bracket (e.g., d[( d[{ d]) d]})
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('d');
                                         continue;
