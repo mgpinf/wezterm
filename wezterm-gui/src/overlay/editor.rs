@@ -109,6 +109,7 @@ struct EditorState<'a> {
     last_change: LastChange,
     insert_buffer: String,   // Buffer to track text inserted in insert mode
     insert_style: InsertStyle, // Style of insert (i, a, I, A)
+    last_char_search: Option<(char, char)>, // (search_type: f/F/t/T, character)
 }
 
 impl<'a> EditorState<'a> {
@@ -144,6 +145,7 @@ impl<'a> EditorState<'a> {
             last_change: LastChange::None,
             insert_buffer: String::new(),
             insert_style: InsertStyle::Before,
+            last_char_search: None,
         }
     }
 
@@ -1283,6 +1285,56 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn repeat_char_search(&mut self, reverse: bool) {
+        // ; repeats last f/F/t/T, , repeats in opposite direction
+        if let Some((search_type, target)) = self.last_char_search {
+            let effective_type = if reverse {
+                match search_type {
+                    'f' => 'F',
+                    'F' => 'f',
+                    't' => 'T',
+                    'T' => 't',
+                    _ => search_type,
+                }
+            } else {
+                search_type
+            };
+
+            match effective_type {
+                'f' => self.move_to_char_forward(target),
+                'F' => self.move_to_char_backward(target),
+                't' => {
+                    // For t repeat, we need to move past the character we're before
+                    // to find the next occurrence. Save position to restore if not found.
+                    let original_pos = self.cursor.1;
+                    let line_len = self.lines[self.cursor.0].len();
+                    if self.cursor.1 + 1 < line_len {
+                        self.cursor.1 += 1; // Move past current position
+                        if self.find_char_forward(target).is_some() {
+                            self.move_till_char_forward(target);
+                        } else {
+                            self.cursor.1 = original_pos; // Restore if not found
+                        }
+                    }
+                }
+                'T' => {
+                    // For T repeat, we need to move before the character we're after
+                    // Save position to restore if not found.
+                    let original_pos = self.cursor.1;
+                    if self.cursor.1 > 0 {
+                        self.cursor.1 -= 1; // Move before current position
+                        if self.find_char_backward(target).is_some() {
+                            self.move_till_char_backward(target);
+                        } else {
+                            self.cursor.1 = original_pos; // Restore if not found
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn delete_to_char_forward(&mut self, target: char, inclusive: bool) {
         // df{char} or dt{char}
         if let Some(pos) = self.find_char_forward(target) {
@@ -2179,15 +2231,19 @@ impl<'a> EditorState<'a> {
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('f') {
                                 self.move_to_char_forward(c);
+                                self.last_char_search = Some(('f', c));
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('F') {
                                 self.move_to_char_backward(c);
+                                self.last_char_search = Some(('F', c));
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('t') {
                                 self.move_till_char_forward(c);
+                                self.last_char_search = Some(('t', c));
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('T') {
                                 self.move_till_char_backward(c);
+                                self.last_char_search = Some(('T', c));
                                 self.pending_keys.clear();
                             } else {
                                 self.pending_keys.clear();
@@ -2318,6 +2374,8 @@ impl<'a> EditorState<'a> {
                             }
                             '%' => self.jump_to_matching_bracket(),
                             '.' => self.repeat_last_change(),
+                            ';' => self.repeat_char_search(false), // Same direction
+                            ',' => self.repeat_char_search(true),  // Opposite direction
                             _ => {}
                         }
                     }
