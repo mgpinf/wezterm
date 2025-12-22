@@ -745,6 +745,174 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn get_matching_pair(open: char) -> Option<char> {
+        match open {
+            '(' => Some(')'),
+            ')' => Some('('),
+            '[' => Some(']'),
+            ']' => Some('['),
+            '{' => Some('}'),
+            '}' => Some('{'),
+            '<' => Some('>'),
+            '>' => Some('<'),
+            '"' => Some('"'),
+            '\'' => Some('\''),
+            '`' => Some('`'),
+            _ => None,
+        }
+    }
+
+    fn is_open_pair(c: char) -> bool {
+        matches!(c, '(' | '[' | '{' | '<')
+    }
+
+    fn find_pair_bounds(&self, pair_char: char) -> Option<(usize, usize)> {
+        // Find matching pair around cursor on current line
+        let line = &self.lines[self.cursor.0];
+        if line.is_empty() {
+            return None;
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let col = self.cursor.1.min(chars.len().saturating_sub(1));
+
+        let (open, close) = if pair_char == '"' || pair_char == '\'' || pair_char == '`' {
+            // For quotes, they're the same character
+            (pair_char, pair_char)
+        } else if Self::is_open_pair(pair_char) {
+            (pair_char, Self::get_matching_pair(pair_char)?)
+        } else {
+            // It's a close pair, swap
+            (Self::get_matching_pair(pair_char)?, pair_char)
+        };
+
+        if open == close {
+            // Quote-style pairs: find enclosing quotes
+            // Find quote to the left (or at cursor)
+            let mut left = None;
+            for i in (0..=col).rev() {
+                if chars[i] == open {
+                    left = Some(i);
+                    break;
+                }
+            }
+
+            // Find quote to the right
+            let mut right = None;
+            let start_search = if left == Some(col) { col + 1 } else { col };
+            for i in start_search..chars.len() {
+                if chars[i] == close {
+                    right = Some(i);
+                    break;
+                }
+            }
+
+            match (left, right) {
+                (Some(l), Some(r)) => Some((l, r)),
+                _ => None,
+            }
+        } else {
+            // Bracket-style pairs: handle nesting
+            let cur_char = chars[col];
+
+            // Check if cursor is on a bracket
+            if cur_char == close {
+                // Cursor is on closing bracket - this is our right bound
+                // Search left for matching open
+                let mut depth = 0i32;
+                for i in (0..col).rev() {
+                    if chars[i] == close {
+                        depth += 1;
+                    } else if chars[i] == open {
+                        if depth == 0 {
+                            return Some((i, col));
+                        }
+                        depth -= 1;
+                    }
+                }
+                None
+            } else if cur_char == open {
+                // Cursor is on opening bracket - this is our left bound
+                // Search right for matching close
+                let mut depth = 0i32;
+                for i in (col + 1)..chars.len() {
+                    if chars[i] == open {
+                        depth += 1;
+                    } else if chars[i] == close {
+                        if depth == 0 {
+                            return Some((col, i));
+                        }
+                        depth -= 1;
+                    }
+                }
+                None
+            } else {
+                // Cursor is inside - search both directions
+                // Find opening bracket to the left
+                let mut left = None;
+                let mut depth = 0i32;
+                for i in (0..=col).rev() {
+                    if chars[i] == close {
+                        depth += 1;
+                    } else if chars[i] == open {
+                        if depth == 0 {
+                            left = Some(i);
+                            break;
+                        }
+                        depth -= 1;
+                    }
+                }
+
+                // Find closing bracket to the right
+                let mut right = None;
+                depth = 0;
+                for i in (col + 1)..chars.len() {
+                    if chars[i] == open {
+                        depth += 1;
+                    } else if chars[i] == close {
+                        if depth == 0 {
+                            right = Some(i);
+                            break;
+                        }
+                        depth -= 1;
+                    }
+                }
+
+                match (left, right) {
+                    (Some(l), Some(r)) => Some((l, r)),
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    fn delete_inner_pair(&mut self, pair_char: char) {
+        if let Some((open_pos, close_pos)) = self.find_pair_bounds(pair_char) {
+            let line = &mut self.lines[self.cursor.0];
+            // Delete content between pairs (not including the pairs themselves)
+            if open_pos + 1 < close_pos {
+                line.replace_range((open_pos + 1)..close_pos, "");
+                self.cursor.1 = open_pos + 1;
+            } else {
+                // Empty pair, just position cursor inside
+                self.cursor.1 = open_pos + 1;
+            }
+            self.clamp_cursor();
+            self.record_change();
+        }
+    }
+
+    fn delete_around_pair(&mut self, pair_char: char) {
+        if let Some((open_pos, close_pos)) = self.find_pair_bounds(pair_char) {
+            let line = &mut self.lines[self.cursor.0];
+            // Delete including the pairs themselves
+            line.replace_range(open_pos..=close_pos, "");
+            self.cursor.1 = open_pos;
+            self.clamp_cursor();
+            self.record_change();
+        }
+    }
+
     fn delete_to_end_of_line(&mut self) {
         let line = &mut self.lines[self.cursor.0];
         if self.cursor.1 < line.len() {
@@ -1025,6 +1193,28 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                 }
                                 self.delete_a_long_word();
+                            } else if first == KeyCode::Char('i')
+                                && matches!(
+                                    c,
+                                    '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '"' | '\'' | '`'
+                                )
+                            {
+                                // di( di) di[ di] di{ di} di< di> di" di' di` etc.
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_inner_pair(c);
+                            } else if first == KeyCode::Char('a')
+                                && matches!(
+                                    c,
+                                    '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '"' | '\'' | '`'
+                                )
+                            {
+                                // da( da) da[ da] da{ da} da< da> da" da' da` etc.
+                                if op == 'c' {
+                                    self.mode = EditorMode::Insert;
+                                }
+                                self.delete_around_pair(c);
                             }
 
                             self.render()?;
