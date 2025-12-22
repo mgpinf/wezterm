@@ -1523,6 +1523,9 @@ impl<'a> EditorState<'a> {
                 self.insert_saved_text();
             }
             LastChange::InsertText(text, style) => {
+                // Temporarily enter Insert mode to batch changes (no individual recording)
+                // Note: We don't record before repeat since current state is already in history
+                self.mode = EditorMode::Insert;
                 // Position cursor based on insert style
                 match style {
                     InsertStyle::Before => {
@@ -1572,6 +1575,9 @@ impl<'a> EditorState<'a> {
                 if self.cursor.1 > 0 {
                     self.cursor.1 -= 1;
                 }
+                // Return to Normal mode and record final state
+                self.mode = EditorMode::Normal;
+                self.record_change();
             }
             LastChange::ToggleCase => self.toggle_case(),
             LastChange::JoinLines => self.join_lines(),
