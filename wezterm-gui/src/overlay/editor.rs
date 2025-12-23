@@ -1592,6 +1592,221 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
     }
 
+    fn is_sentence_end(c: char) -> bool {
+        matches!(c, '.' | '!' | '?')
+    }
+
+    fn move_sentence_backward(&mut self) {
+        // Move to the beginning of the previous sentence
+        let mut row = self.cursor.0;
+        let mut col = self.cursor.1;
+
+        // Helper to move back one character position
+        let move_back = |r: &mut usize, c: &mut usize, lines: &[String]| -> bool {
+            if *c > 0 {
+                *c -= 1;
+                true
+            } else if *r > 0 {
+                *r -= 1;
+                *c = lines[*r].chars().count().saturating_sub(1);
+                true
+            } else {
+                false
+            }
+        };
+
+        // Move back one position to start
+        if !move_back(&mut row, &mut col, &self.lines) {
+            // Already at start of file
+            self.cursor = (0, 0);
+            self.update_desired_col();
+            return;
+        }
+
+        // Skip back past whitespace
+        loop {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            if col < chars.len() && !chars[col].is_whitespace() {
+                break;
+            }
+            // Check for paragraph boundary (blank line)
+            if chars.is_empty() || self.lines[row].trim().is_empty() {
+                if row > 0 {
+                    row -= 1;
+                    col = self.lines[row].chars().count().saturating_sub(1);
+                    continue;
+                } else {
+                    self.cursor = (0, 0);
+                    self.update_desired_col();
+                    return;
+                }
+            }
+            if !move_back(&mut row, &mut col, &self.lines) {
+                self.cursor = (0, 0);
+                self.update_desired_col();
+                return;
+            }
+        }
+
+        // Skip back past sentence-ending punctuation if we're on it
+        {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            if col < chars.len() && Self::is_sentence_end(chars[col]) {
+                if !move_back(&mut row, &mut col, &self.lines) {
+                    self.cursor = (0, 0);
+                    self.update_desired_col();
+                    return;
+                }
+            }
+        }
+
+        // Now search backward for the previous sentence end or paragraph start
+        loop {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+
+            // Search backward through current line
+            loop {
+                if col < chars.len() && Self::is_sentence_end(chars[col]) {
+                    // Found sentence end, move to start of next sentence (after whitespace)
+                    let mut next_row = row;
+                    let mut next_col = col + 1;
+
+                    // Skip whitespace after sentence end
+                    loop {
+                        let next_chars: Vec<char> = self.lines[next_row].chars().collect();
+                        while next_col < next_chars.len() && next_chars[next_col].is_whitespace() {
+                            next_col += 1;
+                        }
+                        if next_col < next_chars.len() {
+                            // Found start of sentence
+                            self.cursor = (next_row, next_col);
+                            self.update_desired_col();
+                            return;
+                        }
+                        // Move to next line
+                        if next_row < self.lines.len() - 1 {
+                            next_row += 1;
+                            next_col = 0;
+                            // Check if next line is blank (paragraph boundary)
+                            if self.lines[next_row].trim().is_empty() {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if col == 0 {
+                    break;
+                }
+                col -= 1;
+            }
+
+            // Check start of line - if previous line is blank, this is sentence start
+            if row > 0 {
+                if self.lines[row - 1].trim().is_empty() {
+                    // Start of paragraph = start of sentence
+                    // Find first non-whitespace character
+                    let chars: Vec<char> = self.lines[row].chars().collect();
+                    let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
+                    self.cursor = (row, start_col);
+                    self.update_desired_col();
+                    return;
+                }
+                row -= 1;
+                col = self.lines[row].chars().count().saturating_sub(1);
+            } else {
+                // Reached start of file
+                self.cursor = (0, 0);
+                self.update_desired_col();
+                return;
+            }
+        }
+    }
+
+    fn move_sentence_forward(&mut self) {
+        // Move to the beginning of the next sentence
+        let mut row = self.cursor.0;
+        let mut col = self.cursor.1;
+        let last_row = self.lines.len().saturating_sub(1);
+
+        loop {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+
+            // Search forward through current line for sentence end
+            while col < chars.len() {
+                if Self::is_sentence_end(chars[col]) {
+                    // Found sentence end, skip whitespace to find start of next sentence
+                    col += 1;
+
+                    // Skip whitespace (including across lines)
+                    loop {
+                        let cur_chars: Vec<char> = self.lines[row].chars().collect();
+                        while col < cur_chars.len() && cur_chars[col].is_whitespace() {
+                            col += 1;
+                        }
+                        if col < cur_chars.len() {
+                            // Found start of next sentence
+                            self.cursor = (row, col);
+                            self.update_desired_col();
+                            return;
+                        }
+                        // Move to next line
+                        if row < last_row {
+                            row += 1;
+                            col = 0;
+                            // Check if line is blank (paragraph boundary)
+                            if self.lines[row].trim().is_empty() {
+                                // Skip blank lines to next paragraph
+                                while row < last_row && self.lines[row].trim().is_empty() {
+                                    row += 1;
+                                }
+                                // Find first non-whitespace
+                                let new_chars: Vec<char> = self.lines[row].chars().collect();
+                                let start_col = new_chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
+                                self.cursor = (row, start_col);
+                                self.update_desired_col();
+                                return;
+                            }
+                        } else {
+                            // End of file
+                            self.cursor.0 = last_row;
+                            self.cursor.1 = self.lines[last_row].chars().count().saturating_sub(1);
+                            self.update_desired_col();
+                            return;
+                        }
+                    }
+                }
+                col += 1;
+            }
+
+            // Move to next line
+            if row < last_row {
+                row += 1;
+                col = 0;
+                // Check if line is blank (paragraph boundary = sentence boundary)
+                if self.lines[row].trim().is_empty() {
+                    // Skip blank lines
+                    while row < last_row && self.lines[row].trim().is_empty() {
+                        row += 1;
+                    }
+                    // Find first non-whitespace
+                    let chars: Vec<char> = self.lines[row].chars().collect();
+                    let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
+                    self.cursor = (row, start_col);
+                    self.update_desired_col();
+                    return;
+                }
+            } else {
+                // End of file
+                self.cursor.0 = last_row;
+                self.cursor.1 = self.lines[last_row].chars().count().saturating_sub(1);
+                self.update_desired_col();
+                return;
+            }
+        }
+    }
+
     fn find_char_forward(&self, target: char) -> Option<usize> {
         // Find next occurrence of target char on current line
         let line = &self.lines[self.cursor.0];
@@ -3762,6 +3977,12 @@ impl<'a> EditorState<'a> {
                             '}' => {
                                 self.move_paragraph_forward();
                             }
+                            '(' => {
+                                self.move_sentence_backward();
+                            }
+                            ')' => {
+                                self.move_sentence_forward();
+                            }
                             '.' => {
                                 self.repeat_last_change();
                                 self.update_desired_col();
@@ -4184,6 +4405,12 @@ impl<'a> EditorState<'a> {
                         }
                         '}' => {
                             self.move_paragraph_forward();
+                        }
+                        '(' => {
+                            self.move_sentence_backward();
+                        }
+                        ')' => {
+                            self.move_sentence_forward();
                         }
                         // Operations on selection
                         'd' | 'x' => {
