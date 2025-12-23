@@ -1547,6 +1547,51 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn move_paragraph_backward(&mut self) {
+        // Move to previous paragraph boundary (blank line or start of file)
+        let mut row = self.cursor.0;
+
+        // Skip up past any blank lines we're currently on
+        while row > 0 && self.lines[row].trim().is_empty() {
+            row -= 1;
+        }
+
+        // Skip up past non-blank lines (the paragraph content)
+        while row > 0 && !self.lines[row].trim().is_empty() {
+            row -= 1;
+        }
+
+        // Now row is either on a blank line or at 0
+        self.cursor.0 = row;
+        self.cursor.1 = 0;
+        self.update_desired_col();
+    }
+
+    fn move_paragraph_forward(&mut self) {
+        // Move to next paragraph boundary (next blank line or end of file)
+        let mut row = self.cursor.0;
+        let last_row = self.lines.len().saturating_sub(1);
+
+        // Skip current blank lines (if any)
+        while row < last_row && self.lines[row].trim().is_empty() {
+            row += 1;
+        }
+        // Skip non-blank lines to find the next blank line
+        while row < last_row && !self.lines[row].trim().is_empty() {
+            row += 1;
+        }
+
+        self.cursor.0 = row;
+
+        // If we're on the last row and it's not blank, go to the last character
+        if row == last_row && !self.lines[row].trim().is_empty() {
+            self.cursor.1 = self.lines[row].chars().count().saturating_sub(1);
+        } else {
+            self.cursor.1 = 0;
+        }
+        self.update_desired_col();
+    }
+
     fn find_char_forward(&self, target: char) -> Option<usize> {
         // Find next occurrence of target char on current line
         let line = &self.lines[self.cursor.0];
@@ -3711,6 +3756,12 @@ impl<'a> EditorState<'a> {
                                 self.jump_to_matching_bracket();
                                 self.update_desired_col();
                             }
+                            '{' => {
+                                self.move_paragraph_backward();
+                            }
+                            '}' => {
+                                self.move_paragraph_forward();
+                            }
                             '.' => {
                                 self.repeat_last_change();
                                 self.update_desired_col();
@@ -4127,6 +4178,12 @@ impl<'a> EditorState<'a> {
                         '%' => {
                             self.jump_to_matching_bracket();
                             self.update_desired_col();
+                        }
+                        '{' => {
+                            self.move_paragraph_backward();
+                        }
+                        '}' => {
+                            self.move_paragraph_forward();
                         }
                         // Operations on selection
                         'd' | 'x' => {
