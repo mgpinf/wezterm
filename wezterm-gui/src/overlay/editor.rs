@@ -3058,7 +3058,7 @@ impl<'a> EditorState<'a> {
                             ',' => self.repeat_char_search(true),  // Opposite direction
                             'p' => self.paste_after(),
                             'P' => self.paste_before(),
-                            'Y' => self.yank_line(), // Y yanks entire line (like yy)
+                            'Y' => self.yank_to_end_of_line(), // Y yanks to end of line (like y$)
                             _ => {}
                         }
                     }
