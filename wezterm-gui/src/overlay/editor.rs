@@ -111,6 +111,8 @@ struct EditorState<'a> {
     insert_buffer: String,   // Buffer to track text inserted in insert mode
     insert_style: InsertStyle, // Style of insert (i, a, I, A)
     last_char_search: Option<(char, char)>, // (search_type: f/F/t/T, character)
+    yank_buffer: String,       // Buffer to store yanked text
+    yank_is_linewise: bool,    // Whether the yank was linewise (yy, dG, etc.)
 }
 
 impl<'a> EditorState<'a> {
@@ -147,6 +149,8 @@ impl<'a> EditorState<'a> {
             insert_buffer: String::new(),
             insert_style: InsertStyle::Before,
             last_char_search: None,
+            yank_buffer: String::new(),
+            yank_is_linewise: false,
         }
     }
 
@@ -330,6 +334,37 @@ impl<'a> EditorState<'a> {
         self.cursor.1 = 0;
         self.mode = EditorMode::Insert;
         self.record_change();
+    }
+
+    fn yank_line(&mut self) {
+        // Yank current line (linewise)
+        self.yank_buffer = self.lines[self.cursor.0].clone();
+        self.yank_is_linewise = true;
+    }
+
+    fn yank_to_end_of_file(&mut self) {
+        // Yank from current line to end of file (linewise)
+        let yanked: Vec<&str> = self.lines[self.cursor.0..].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+    }
+
+    fn yank_to_start_of_file(&mut self) {
+        // Yank from start of file to current line (linewise)
+        let yanked: Vec<&str> = self.lines[..=self.cursor.0].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+    }
+
+    fn yank_to_end_of_line(&mut self) {
+        // Yank from cursor to end of line (characterwise)
+        let line = &self.lines[self.cursor.0];
+        if self.cursor.1 < line.len() {
+            self.yank_buffer = line[self.cursor.1..].to_string();
+        } else {
+            self.yank_buffer.clear();
+        }
+        self.yank_is_linewise = false;
     }
 
     fn get_word_forward_pos(&self) -> (usize, usize) {
@@ -1915,6 +1950,285 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
+    // Helper to perform yank action based on a motion
+    fn perform_yank_motion<F>(&mut self, motion: F, is_inclusive: bool)
+    where
+        F: Fn(&EditorState) -> (usize, usize),
+    {
+        let start = self.cursor;
+        let end = motion(self);
+
+        // Handle direction
+        if end.0 < start.0 || (end.0 == start.0 && end.1 < start.1) {
+            // Backward motion (yb, yB)
+            let line = &self.lines[start.0];
+            self.yank_buffer = line[end.1..start.1].to_string();
+        } else {
+            // Forward motion (yw, ye)
+            let mut range_end = end.1;
+            if is_inclusive {
+                range_end += 1;
+            }
+            let line = &self.lines[start.0];
+            if range_end > line.len() {
+                range_end = line.len();
+            }
+            self.yank_buffer = line[start.1..range_end].to_string();
+        }
+        self.yank_is_linewise = false;
+    }
+
+    fn yank_inner_word(&mut self) {
+        let (start, end) = self.get_inner_word_bounds();
+        let line = &self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
+        }
+    }
+
+    fn yank_a_word(&mut self) {
+        let (start, end) = self.get_a_word_bounds();
+        let line = &self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
+        }
+    }
+
+    fn yank_inner_long_word(&mut self) {
+        let (start, end) = self.get_inner_long_word_bounds();
+        let line = &self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
+        }
+    }
+
+    fn yank_a_long_word(&mut self) {
+        let (start, end) = self.get_a_long_word_bounds();
+        let line = &self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
+        }
+    }
+
+    fn yank_inner_pair(&mut self, pair_char: char) {
+        if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            if open_row == close_row {
+                // Same line
+                let line = &self.lines[open_row];
+                self.yank_buffer = line[open_col + 1..close_col].to_string();
+                self.yank_is_linewise = false;
+            } else {
+                // Multi-line: yank content between brackets
+                let mut yanked = String::new();
+                // First line: from after open bracket
+                let first_line = &self.lines[open_row];
+                yanked.push_str(&first_line[open_col + 1..]);
+                // Middle lines
+                for row in (open_row + 1)..close_row {
+                    yanked.push('\n');
+                    yanked.push_str(&self.lines[row]);
+                }
+                // Last line: up to close bracket
+                if close_row > open_row {
+                    yanked.push('\n');
+                    yanked.push_str(&self.lines[close_row][..close_col]);
+                }
+                self.yank_buffer = yanked;
+                self.yank_is_linewise = false;
+            }
+        }
+    }
+
+    fn yank_around_pair(&mut self, pair_char: char) {
+        if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            if open_row == close_row {
+                // Same line
+                let line = &self.lines[open_row];
+                self.yank_buffer = line[open_col..=close_col].to_string();
+                self.yank_is_linewise = false;
+            } else {
+                // Multi-line: yank including brackets
+                let mut yanked = String::new();
+                // First line: from open bracket
+                let first_line = &self.lines[open_row];
+                yanked.push_str(&first_line[open_col..]);
+                // Middle lines
+                for row in (open_row + 1)..close_row {
+                    yanked.push('\n');
+                    yanked.push_str(&self.lines[row]);
+                }
+                // Last line: up to and including close bracket
+                if close_row > open_row {
+                    yanked.push('\n');
+                    yanked.push_str(&self.lines[close_row][..=close_col]);
+                }
+                self.yank_buffer = yanked;
+                self.yank_is_linewise = false;
+            }
+        }
+    }
+
+    fn yank_to_char_forward(&mut self, target: char, inclusive: bool) {
+        let line = &self.lines[self.cursor.0];
+        if self.cursor.1 + 1 < line.len() {
+            if let Some(pos) = line[self.cursor.1 + 1..].find(target) {
+                let target_col = self.cursor.1 + 1 + pos;
+                let end_col = if inclusive { target_col + 1 } else { target_col };
+                self.yank_buffer = line[self.cursor.1..end_col].to_string();
+                self.yank_is_linewise = false;
+            }
+        }
+    }
+
+    fn yank_to_char_backward(&mut self, target: char, inclusive: bool) {
+        let line = &self.lines[self.cursor.0];
+        if self.cursor.1 > 0 {
+            if let Some(pos) = line[..self.cursor.1].rfind(target) {
+                let start_col = if inclusive { pos } else { pos + 1 };
+                self.yank_buffer = line[start_col..self.cursor.1].to_string();
+                self.yank_is_linewise = false;
+            }
+        }
+    }
+
+    fn yank_to_matching_bracket(&mut self) {
+        let saved_cursor = self.cursor;
+        self.jump_to_matching_bracket();
+        // Check if cursor moved (indicating a match was found)
+        if self.cursor != saved_cursor {
+            let end = self.cursor;
+            self.cursor = saved_cursor;
+            // Handle multi-line case
+            if saved_cursor.0 == end.0 {
+                // Same line
+                let (start, end_col) = if saved_cursor.1 <= end.1 {
+                    (saved_cursor.1, end.1 + 1)
+                } else {
+                    (end.1, saved_cursor.1 + 1)
+                };
+                let line = &self.lines[self.cursor.0];
+                if end_col <= line.len() {
+                    self.yank_buffer = line[start..end_col].to_string();
+                    self.yank_is_linewise = false;
+                }
+            } else {
+                // Multi-line: yank from start to end including brackets
+                let (start_pos, end_pos) = if saved_cursor.0 < end.0 || (saved_cursor.0 == end.0 && saved_cursor.1 < end.1) {
+                    (saved_cursor, end)
+                } else {
+                    (end, saved_cursor)
+                };
+                let mut yanked = String::new();
+                yanked.push_str(&self.lines[start_pos.0][start_pos.1..]);
+                for row in (start_pos.0 + 1)..end_pos.0 {
+                    yanked.push('\n');
+                    yanked.push_str(&self.lines[row]);
+                }
+                yanked.push('\n');
+                yanked.push_str(&self.lines[end_pos.0][..=end_pos.1]);
+                self.yank_buffer = yanked;
+                self.yank_is_linewise = false;
+            }
+        }
+    }
+
+    fn yank_to_prev_unmatched(&mut self, open: char, close: char) {
+        let saved_cursor = self.cursor;
+        self.jump_to_prev_unmatched(open, close);
+        // Check if cursor moved
+        if self.cursor != saved_cursor {
+            let target = self.cursor;
+            self.cursor = saved_cursor;
+            // Yank from target to cursor (exclusive of target position)
+            if target.0 == saved_cursor.0 {
+                // Same line
+                let line = &self.lines[self.cursor.0];
+                if target.1 < saved_cursor.1 && saved_cursor.1 <= line.len() {
+                    self.yank_buffer = line[target.1 + 1..saved_cursor.1].to_string();
+                    self.yank_is_linewise = false;
+                }
+            }
+            // Multi-line yank not supported for this motion for simplicity
+        }
+    }
+
+    fn yank_to_next_unmatched(&mut self, open: char, close: char) {
+        let saved_cursor = self.cursor;
+        self.jump_to_next_unmatched(open, close);
+        // Check if cursor moved
+        if self.cursor != saved_cursor {
+            let target = self.cursor;
+            self.cursor = saved_cursor;
+            // Yank from cursor to target (exclusive of target position)
+            if saved_cursor.0 == target.0 {
+                // Same line
+                let line = &self.lines[self.cursor.0];
+                if saved_cursor.1 < target.1 && target.1 <= line.len() {
+                    self.yank_buffer = line[saved_cursor.1..target.1].to_string();
+                    self.yank_is_linewise = false;
+                }
+            }
+            // Multi-line yank not supported for this motion for simplicity
+        }
+    }
+
+    fn paste_after(&mut self) {
+        self.record_change();
+        self.lines_modified = true;
+        if self.yank_is_linewise {
+            // Insert yanked lines below current line
+            let new_lines: Vec<String> = self.yank_buffer.lines().map(|s| s.to_string()).collect();
+            for (i, line) in new_lines.into_iter().enumerate() {
+                self.lines.insert(self.cursor.0 + 1 + i, line);
+            }
+            // Move cursor to first non-blank of first inserted line
+            self.cursor.0 += 1;
+            self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        } else {
+            // Insert after cursor
+            let line = &mut self.lines[self.cursor.0];
+            let insert_pos = if line.is_empty() { 0 } else { self.cursor.1 + 1 };
+            line.insert_str(insert_pos, &self.yank_buffer);
+            // Move cursor to end of pasted text
+            self.cursor.1 = insert_pos + self.yank_buffer.len().saturating_sub(1);
+        }
+        self.clamp_cursor();
+        self.record_change();
+    }
+
+    fn paste_before(&mut self) {
+        self.record_change();
+        self.lines_modified = true;
+        if self.yank_is_linewise {
+            // Insert yanked lines above current line
+            let new_lines: Vec<String> = self.yank_buffer.lines().map(|s| s.to_string()).collect();
+            for (i, line) in new_lines.into_iter().enumerate() {
+                self.lines.insert(self.cursor.0 + i, line);
+            }
+            // Move cursor to first non-blank of first inserted line
+            self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        } else {
+            // Insert before cursor
+            let line = &mut self.lines[self.cursor.0];
+            line.insert_str(self.cursor.1, &self.yank_buffer);
+            // Move cursor to end of pasted text
+            self.cursor.1 = self.cursor.1 + self.yank_buffer.len().saturating_sub(1);
+        }
+        self.clamp_cursor();
+        self.record_change();
+    }
+
+    fn get_first_non_blank_in_line(&self, row: usize) -> usize {
+        let line = &self.lines[row];
+        line.chars()
+            .position(|c| !c.is_whitespace())
+            .unwrap_or(0)
+    }
+
     fn run_loop(&mut self) -> anyhow::Result<()> {
         self.render()?;
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
@@ -1944,47 +2258,61 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_start_of_file();
                                 } else if op == 'c' {
                                     self.change_to_start_of_file();
+                                } else if op == 'y' {
+                                    self.yank_to_start_of_file();
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
-                                // diw / ciw - delete/change inner word
+                                // diw / ciw / yiw - delete/change/yank inner word
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeInnerWord;
+                                    self.delete_inner_word();
+                                } else if op == 'y' {
+                                    self.yank_inner_word();
                                 } else {
                                     self.last_change = LastChange::DeleteInnerWord;
+                                    self.delete_inner_word();
                                 }
-                                self.delete_inner_word();
                             } else if first == KeyCode::Char('a') && c == 'w' {
-                                // daw / caw - delete/change a word
+                                // daw / caw / yaw - delete/change/yank a word
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeAWord;
+                                    self.delete_a_word();
+                                } else if op == 'y' {
+                                    self.yank_a_word();
                                 } else {
                                     self.last_change = LastChange::DeleteAWord;
+                                    self.delete_a_word();
                                 }
-                                self.delete_a_word();
                             } else if first == KeyCode::Char('i') && c == 'W' {
-                                // diW / ciW - delete/change inner WORD
+                                // diW / ciW / yiW - delete/change/yank inner WORD
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeInnerLongWord;
+                                    self.delete_inner_long_word();
+                                } else if op == 'y' {
+                                    self.yank_inner_long_word();
                                 } else {
                                     self.last_change = LastChange::DeleteInnerLongWord;
+                                    self.delete_inner_long_word();
                                 }
-                                self.delete_inner_long_word();
                             } else if first == KeyCode::Char('a') && c == 'W' {
-                                // daW / caW - delete/change a WORD
+                                // daW / caW / yaW - delete/change/yank a WORD
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeALongWord;
+                                    self.delete_a_long_word();
+                                } else if op == 'y' {
+                                    self.yank_a_long_word();
                                 } else {
                                     self.last_change = LastChange::DeleteALongWord;
+                                    self.delete_a_long_word();
                                 }
-                                self.delete_a_long_word();
                             } else if first == KeyCode::Char('i')
                                 && matches!(
                                     c,
@@ -1996,10 +2324,13 @@ impl<'a> EditorState<'a> {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeInnerPair(c);
+                                    self.delete_inner_pair(c);
+                                } else if op == 'y' {
+                                    self.yank_inner_pair(c);
                                 } else {
                                     self.last_change = LastChange::DeleteInnerPair(c);
+                                    self.delete_inner_pair(c);
                                 }
-                                self.delete_inner_pair(c);
                             } else if first == KeyCode::Char('a')
                                 && matches!(
                                     c,
@@ -2011,64 +2342,87 @@ impl<'a> EditorState<'a> {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeAroundPair(c);
+                                    self.delete_around_pair(c);
+                                } else if op == 'y' {
+                                    self.yank_around_pair(c);
                                 } else {
                                     self.last_change = LastChange::DeleteAroundPair(c);
+                                    self.delete_around_pair(c);
                                 }
-                                self.delete_around_pair(c);
                             } else if first == KeyCode::Char('[') && (c == '(' || c == '{') {
-                                // d[( d[{ c[( c[{ - delete/change to previous unmatched bracket
+                                // d[( d[{ c[( c[{ y[( y[{ - delete/change/yank to previous unmatched bracket
                                 let (open, close) = if c == '(' { ('(', ')') } else { ('{', '}') };
                                 if op == 'c' {
                                     self.mode = EditorMode::Insert;
+                                    self.delete_to_prev_unmatched(open, close);
+                                } else if op == 'y' {
+                                    self.yank_to_prev_unmatched(open, close);
+                                } else {
+                                    self.delete_to_prev_unmatched(open, close);
                                 }
-                                self.delete_to_prev_unmatched(open, close);
                             } else if first == KeyCode::Char(']') && (c == ')' || c == '}') {
-                                // d]) d]} c]) c]} - delete/change to next unmatched bracket
+                                // d]) d]} c]) c]} y]) y]} - delete/change/yank to next unmatched bracket
                                 let (open, close) = if c == ')' { ('(', ')') } else { ('{', '}') };
                                 if op == 'c' {
                                     self.mode = EditorMode::Insert;
+                                    self.delete_to_next_unmatched(open, close);
+                                } else if op == 'y' {
+                                    self.yank_to_next_unmatched(open, close);
+                                } else {
+                                    self.delete_to_next_unmatched(open, close);
                                 }
-                                self.delete_to_next_unmatched(open, close);
                             } else if first == KeyCode::Char('f') {
-                                // df{char} / cf{char} - delete/change to char (inclusive)
+                                // df{char} / cf{char} / yf{char} - delete/change/yank to char (inclusive)
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeToChar(c, true);
+                                    self.delete_to_char_forward(c, true);
+                                } else if op == 'y' {
+                                    self.yank_to_char_forward(c, true);
                                 } else {
                                     self.last_change = LastChange::DeleteToChar(c, true);
+                                    self.delete_to_char_forward(c, true);
                                 }
-                                self.delete_to_char_forward(c, true);
                             } else if first == KeyCode::Char('F') {
-                                // dF{char} / cF{char} - delete/change backward to char (inclusive)
+                                // dF{char} / cF{char} / yF{char} - delete/change/yank backward to char (inclusive)
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeBackToChar(c, true);
+                                    self.delete_to_char_backward(c, true);
+                                } else if op == 'y' {
+                                    self.yank_to_char_backward(c, true);
                                 } else {
                                     self.last_change = LastChange::DeleteBackToChar(c, true);
+                                    self.delete_to_char_backward(c, true);
                                 }
-                                self.delete_to_char_backward(c, true);
                             } else if first == KeyCode::Char('t') {
-                                // dt{char} / ct{char} - delete/change till char (exclusive)
+                                // dt{char} / ct{char} / yt{char} - delete/change/yank till char (exclusive)
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeToChar(c, false);
+                                    self.delete_to_char_forward(c, false);
+                                } else if op == 'y' {
+                                    self.yank_to_char_forward(c, false);
                                 } else {
                                     self.last_change = LastChange::DeleteToChar(c, false);
+                                    self.delete_to_char_forward(c, false);
                                 }
-                                self.delete_to_char_forward(c, false);
                             } else if first == KeyCode::Char('T') {
-                                // dT{char} / cT{char} - delete/change backward till char (exclusive)
+                                // dT{char} / cT{char} / yT{char} - delete/change/yank backward till char (exclusive)
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeBackToChar(c, false);
+                                    self.delete_to_char_backward(c, false);
+                                } else if op == 'y' {
+                                    self.yank_to_char_backward(c, false);
                                 } else {
                                     self.last_change = LastChange::DeleteBackToChar(c, false);
+                                    self.delete_to_char_backward(c, false);
                                 }
-                                self.delete_to_char_backward(c, false);
                             }
 
                             self.render()?;
@@ -2217,6 +2571,40 @@ impl<'a> EditorState<'a> {
                                     }
                                     _ => {}
                                 }
+                            } else if op == 'y' {
+                                match c {
+                                    'y' => self.yank_line(),
+                                    'w' => self.perform_yank_motion(|s| s.get_word_forward_pos(), false),
+                                    'W' => self.perform_yank_motion(|s| s.get_long_word_forward_pos(), false),
+                                    'e' => self.perform_yank_motion(|s| s.get_word_end_pos(), true),
+                                    'E' => self.perform_yank_motion(|s| s.get_long_word_end_pos(), true),
+                                    'b' => self.perform_yank_motion(|s| s.get_word_backward_pos(), false),
+                                    'B' => self.perform_yank_motion(|s| s.get_long_word_backward_pos(), false),
+                                    '$' => self.yank_to_end_of_line(),
+                                    '^' => self.perform_yank_motion(|s| s.get_first_non_blank_pos(), false),
+                                    '0' => self.perform_yank_motion(|s| s.get_line_start_pos(), false),
+                                    'G' => self.yank_to_end_of_file(),
+                                    'g' => {
+                                        // Wait for second 'g' to complete 'ygg'
+                                        self.pending_keys.push(KeyCode::Char('g'));
+                                        self.pending_operator = Some('y');
+                                        continue;
+                                    }
+                                    'i' | 'a' => {
+                                        // Wait for text object (e.g., 'w' for yiw/yaw)
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some('y');
+                                        continue;
+                                    }
+                                    '%' => self.yank_to_matching_bracket(),
+                                    '[' | ']' | 'f' | 'F' | 't' | 'T' => {
+                                        // Wait for target char/bracket
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some('y');
+                                        continue;
+                                    }
+                                    _ => {}
+                                }
                             }
 
                             self.render()?;
@@ -2280,7 +2668,7 @@ impl<'a> EditorState<'a> {
                             continue;
                         }
 
-                        if c == 'c' || c == 'd' {
+                        if c == 'c' || c == 'd' || c == 'y' {
                             self.pending_operator = Some(c);
                             continue;
                         }
@@ -2397,6 +2785,9 @@ impl<'a> EditorState<'a> {
                             '.' => self.repeat_last_change(),
                             ';' => self.repeat_char_search(false), // Same direction
                             ',' => self.repeat_char_search(true),  // Opposite direction
+                            'p' => self.paste_after(),
+                            'P' => self.paste_before(),
+                            'Y' => self.yank_line(), // Y yanks entire line (like yy)
                             _ => {}
                         }
                     }
