@@ -1330,9 +1330,17 @@ impl<'a> EditorState<'a> {
         let mut start_row = self.cursor.0;
         let mut end_row = self.cursor.0;
 
-        // If we're on a blank line, treat it as its own "paragraph"
+        // If we're on a blank line, find all consecutive blank lines
         if self.lines[self.cursor.0].trim().is_empty() {
-            return (start_row, start_row);
+            // Find start of blank line group
+            while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
+                start_row -= 1;
+            }
+            // Find end of blank line group
+            while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
+                end_row += 1;
+            }
+            return (start_row, end_row);
         }
 
         // Find start of paragraph (first non-blank line after a blank line or start of file)
@@ -1348,10 +1356,39 @@ impl<'a> EditorState<'a> {
         (start_row, end_row)
     }
 
-    fn get_a_paragraph_bounds(&self) -> (usize, usize) {
+    fn get_a_paragraph_bounds(&self) -> Option<(usize, usize)> {
         // Like inner paragraph, but includes blank lines
         // Vim behavior: include trailing blank lines if they exist,
         // otherwise include leading blank lines (for last paragraph)
+        
+        // Special case: if on a blank line, include blank lines + following paragraph
+        if self.lines[self.cursor.0].trim().is_empty() {
+            // Find start of blank line group
+            let mut start_row = self.cursor.0;
+            while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
+                start_row -= 1;
+            }
+            // Find end of blank line group
+            let mut end_row = self.cursor.0;
+            while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
+                end_row += 1;
+            }
+            
+            // Check if there's a paragraph after the blank lines
+            if end_row >= self.lines.len() - 1 {
+                // No paragraph after, return None to indicate "do nothing"
+                return None;
+            }
+            
+            // Include the following paragraph
+            end_row += 1; // Move to first line of next paragraph
+            while end_row < self.lines.len() - 1 && !self.lines[end_row + 1].trim().is_empty() {
+                end_row += 1;
+            }
+            
+            return Some((start_row, end_row));
+        }
+        
         let (mut start_row, mut end_row) = self.get_inner_paragraph_bounds();
 
         // First, try to include trailing blank lines
@@ -1367,7 +1404,7 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        (start_row, end_row)
+        Some((start_row, end_row))
     }
 
     fn delete_inner_paragraph(&mut self) {
@@ -1399,9 +1436,13 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_a_paragraph(&mut self) {
+        // Get bounds - returns None if on blank line with no following paragraph
+        let Some((start_row, end_row)) = self.get_a_paragraph_bounds() else {
+            return; // Do nothing
+        };
+
         self.record_change();
         self.lines_modified = true;
-        let (start_row, end_row) = self.get_a_paragraph_bounds();
 
         // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
@@ -1439,7 +1480,11 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_a_paragraph(&mut self) {
-        let (start_row, end_row) = self.get_a_paragraph_bounds();
+        // Get bounds - returns None if on blank line with no following paragraph
+        let Some((start_row, end_row)) = self.get_a_paragraph_bounds() else {
+            return; // Do nothing
+        };
+
         let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
@@ -1477,9 +1522,13 @@ impl<'a> EditorState<'a> {
     }
 
     fn change_a_paragraph(&mut self) {
+        // Get bounds - returns None if on blank line with no following paragraph
+        let Some((start_row, end_row)) = self.get_a_paragraph_bounds() else {
+            return; // Do nothing
+        };
+
         self.record_change();
         self.lines_modified = true;
-        let (start_row, end_row) = self.get_a_paragraph_bounds();
 
         // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
