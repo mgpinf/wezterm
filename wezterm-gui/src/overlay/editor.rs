@@ -3262,3 +3262,841 @@ pub fn show_input_text_overlay(
     state.run_loop()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A simplified editor state for testing core logic
+    struct TestEditor {
+        lines: Vec<String>,
+        cursor: (usize, usize),
+        mode: EditorMode,
+        yank_buffer: String,
+        yank_is_linewise: bool,
+        history: Vec<(Vec<String>, (usize, usize))>,
+        history_idx: usize,
+        lines_modified: bool,
+    }
+
+    impl TestEditor {
+        fn new(text: &str) -> Self {
+            let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
+            let lines = if lines.is_empty() {
+                vec![String::new()]
+            } else {
+                lines
+            };
+            Self {
+                lines: lines.clone(),
+                cursor: (0, 0),
+                mode: EditorMode::Normal,
+                yank_buffer: String::new(),
+                yank_is_linewise: false,
+                history: vec![(lines, (0, 0))],
+                history_idx: 0,
+                lines_modified: false,
+            }
+        }
+
+        fn with_cursor(mut self, row: usize, col: usize) -> Self {
+            self.cursor = (row, col);
+            self
+        }
+
+        fn text(&self) -> String {
+            self.lines.join("\n")
+        }
+
+        fn clamp_cursor(&mut self) {
+            // Clamp row first
+            if self.cursor.0 >= self.lines.len() {
+                self.cursor.0 = self.lines.len().saturating_sub(1);
+            }
+            // Then clamp column
+            let line_len = self.lines[self.cursor.0].chars().count();
+            let max_col = if self.mode == EditorMode::Insert {
+                line_len
+            } else {
+                line_len.saturating_sub(1)
+            };
+            if self.cursor.1 > max_col {
+                self.cursor.1 = max_col;
+            }
+        }
+
+        fn record_change(&mut self) {
+            if self.lines_modified {
+                // Trim future history if we made new changes after undo
+                if self.history_idx < self.history.len() - 1 {
+                    self.history.truncate(self.history_idx + 1);
+                }
+                self.history.push((self.lines.clone(), self.cursor));
+                self.history_idx = self.history.len() - 1;
+                self.lines_modified = false;
+            } else if let Some(last) = self.history.last_mut() {
+                // Update cursor position in the last history entry
+                last.1 = self.cursor;
+            }
+        }
+
+        fn undo(&mut self) {
+            if self.history_idx > 0 {
+                self.history_idx -= 1;
+                let (lines, cursor) = &self.history[self.history_idx];
+                self.lines = lines.clone();
+                self.cursor = *cursor;
+            }
+        }
+
+        fn redo(&mut self) {
+            if self.history_idx < self.history.len() - 1 {
+                let cursor_at_change_start = self.history[self.history_idx].1;
+                self.history_idx += 1;
+                let (lines, _) = &self.history[self.history_idx];
+                self.lines = lines.clone();
+                self.cursor = cursor_at_change_start;
+                self.clamp_cursor();
+            }
+        }
+
+        fn insert_char(&mut self, c: char) {
+            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            if self.cursor.1 >= chars.len() {
+                chars.push(c);
+            } else {
+                chars.insert(self.cursor.1, c);
+            }
+            self.lines[self.cursor.0] = chars.into_iter().collect();
+            self.cursor.1 += 1;
+            self.lines_modified = true;
+        }
+
+        fn delete_char(&mut self) {
+            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            if self.cursor.1 < chars.len() {
+                chars.remove(self.cursor.1);
+                self.lines[self.cursor.0] = chars.into_iter().collect();
+                self.lines_modified = true;
+                self.clamp_cursor();
+            }
+        }
+
+        fn delete_line(&mut self, row: usize) {
+            if self.lines.len() > 1 && row < self.lines.len() {
+                self.lines.remove(row);
+                self.lines_modified = true;
+                self.clamp_cursor();
+            } else if self.lines.len() == 1 {
+                self.lines[0].clear();
+                self.cursor = (0, 0);
+                self.lines_modified = true;
+            }
+        }
+
+        fn find_pair_bounds(&self, pair_char: char) -> Option<((usize, usize), (usize, usize))> {
+            let (open, close) = match pair_char {
+                '(' | ')' => ('(', ')'),
+                '[' | ']' => ('[', ']'),
+                '{' | '}' => ('{', '}'),
+                '<' | '>' => ('<', '>'),
+                '"' => ('"', '"'),
+                '\'' => ('\'', '\''),
+                '`' => ('`', '`'),
+                _ => return None,
+            };
+
+            let line = &self.lines[self.cursor.0];
+            let chars: Vec<char> = line.chars().collect();
+            let current_char = chars.get(self.cursor.1).copied();
+
+            // Check if cursor is on an opening or closing bracket
+            if current_char == Some(open) {
+                // Cursor on opening bracket - search forward for closing
+                if let Some((close_row, close_col)) =
+                    self.find_matching_close(open, close, self.cursor.0, self.cursor.1)
+                {
+                    return Some(((self.cursor.0, self.cursor.1), (close_row, close_col)));
+                }
+            } else if current_char == Some(close) && open != close {
+                // Cursor on closing bracket - search backward for opening
+                if let Some((open_row, open_col)) =
+                    self.find_matching_open(open, close, self.cursor.0, self.cursor.1)
+                {
+                    return Some(((open_row, open_col), (self.cursor.0, self.cursor.1)));
+                }
+            }
+
+            // Not on a bracket, search outward
+            if let Some((open_row, open_col)) =
+                self.find_matching_open(open, close, self.cursor.0, self.cursor.1)
+            {
+                if let Some((close_row, close_col)) =
+                    self.find_matching_close(open, close, open_row, open_col)
+                {
+                    return Some(((open_row, open_col), (close_row, close_col)));
+                }
+            }
+
+            None
+        }
+
+        fn find_matching_open(
+            &self,
+            open: char,
+            close: char,
+            start_row: usize,
+            start_col: usize,
+        ) -> Option<(usize, usize)> {
+            let mut depth = 0;
+            let mut row = start_row;
+            let mut col = start_col;
+
+            loop {
+                let line_chars: Vec<char> = self.lines[row].chars().collect();
+                let search_end = if row == start_row {
+                    col
+                } else {
+                    line_chars.len()
+                };
+
+                for i in (0..search_end).rev() {
+                    let c = line_chars[i];
+                    if c == close && open != close {
+                        depth += 1;
+                    } else if c == open {
+                        if depth == 0 {
+                            return Some((row, i));
+                        }
+                        depth -= 1;
+                    }
+                }
+
+                if row == 0 {
+                    break;
+                }
+                row -= 1;
+                col = self.lines[row].chars().count();
+            }
+            None
+        }
+
+        fn find_matching_close(
+            &self,
+            open: char,
+            close: char,
+            start_row: usize,
+            start_col: usize,
+        ) -> Option<(usize, usize)> {
+            let mut depth = 0;
+            let mut row = start_row;
+            let mut col = start_col;
+
+            loop {
+                let line_chars: Vec<char> = self.lines[row].chars().collect();
+                let start_idx = if row == start_row { col + 1 } else { 0 };
+
+                for i in start_idx..line_chars.len() {
+                    let c = line_chars[i];
+                    if c == open && open != close {
+                        depth += 1;
+                    } else if c == close {
+                        if depth == 0 {
+                            return Some((row, i));
+                        }
+                        depth -= 1;
+                    }
+                }
+
+                row += 1;
+                if row >= self.lines.len() {
+                    break;
+                }
+                col = 0;
+            }
+            None
+        }
+
+        fn yank_inner_pair(&mut self, pair_char: char) {
+            if let Some(((open_row, open_col), (close_row, close_col))) =
+                self.find_pair_bounds(pair_char)
+            {
+                if open_row == close_row {
+                    let chars: Vec<char> = self.lines[open_row].chars().collect();
+                    if open_col + 1 < close_col {
+                        self.yank_buffer = chars[open_col + 1..close_col].iter().collect();
+                    } else {
+                        self.yank_buffer.clear();
+                    }
+                    self.yank_is_linewise = false;
+                } else {
+                    let mut yanked = String::new();
+                    let first_chars: Vec<char> = self.lines[open_row].chars().collect();
+                    let after_open: String = first_chars[open_col + 1..].iter().collect();
+                    let has_first_line_content = !after_open.trim().is_empty();
+                    if has_first_line_content {
+                        yanked.push_str(&after_open);
+                    }
+
+                    for row in (open_row + 1)..close_row {
+                        if !yanked.is_empty() || !has_first_line_content {
+                            yanked.push('\n');
+                        }
+                        yanked.push_str(&self.lines[row]);
+                    }
+
+                    if close_row > open_row {
+                        let last_chars: Vec<char> = self.lines[close_row].chars().collect();
+                        let before_close: String = last_chars[..close_col].iter().collect();
+                        let has_last_line_content = !before_close.trim().is_empty();
+                        if has_last_line_content {
+                            if !yanked.is_empty() {
+                                yanked.push('\n');
+                            }
+                            yanked.push_str(&before_close);
+                        }
+                    }
+
+                    self.yank_buffer = yanked;
+                    self.yank_is_linewise = false;
+                }
+            }
+        }
+
+        fn delete_inner_pair(&mut self, pair_char: char) {
+            if let Some(((open_row, open_col), (close_row, close_col))) =
+                self.find_pair_bounds(pair_char)
+            {
+                self.record_change();
+                self.lines_modified = true;
+
+                if open_row == close_row {
+                    let mut chars: Vec<char> = self.lines[open_row].chars().collect();
+                    if open_col + 1 < close_col {
+                        chars.drain((open_col + 1)..close_col);
+                        self.lines[open_row] = chars.into_iter().collect();
+                    }
+                    self.cursor = (open_row, open_col + 1);
+                } else {
+                    // Multi-line deletion
+                    let first_chars: Vec<char> = self.lines[open_row].chars().collect();
+                    self.lines[open_row] = first_chars[..=open_col].iter().collect();
+
+                    let last_chars: Vec<char> = self.lines[close_row].chars().collect();
+                    self.lines[close_row] = last_chars[close_col..].iter().collect();
+
+                    // Remove middle lines
+                    if close_row > open_row + 1 {
+                        self.lines.drain((open_row + 1)..close_row);
+                    }
+
+                    // After drain, the close line is now at open_row + 1
+                    let new_close_row = open_row + 1;
+
+                    // For change operations, insert an empty line between brackets
+                    if self.mode == EditorMode::Insert && close_row > open_row + 1 {
+                        self.lines.insert(new_close_row, String::new());
+                        self.cursor = (new_close_row, 0);
+                    } else {
+                        self.cursor = (new_close_row, 0);
+                    }
+                }
+
+                self.clamp_cursor();
+                self.record_change();
+            }
+        }
+    }
+
+    // ============ Basic Cursor Tests ============
+
+    #[test]
+    fn test_clamp_cursor_row() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (5, 0); // Row out of bounds
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.0, 2); // Should clamp to last line
+    }
+
+    #[test]
+    fn test_clamp_cursor_col_normal_mode() {
+        let mut editor = TestEditor::new("hello");
+        editor.cursor = (0, 10); // Column out of bounds
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.1, 4); // Should clamp to last char (len-1 in normal mode)
+    }
+
+    #[test]
+    fn test_clamp_cursor_col_insert_mode() {
+        let mut editor = TestEditor::new("hello");
+        editor.mode = EditorMode::Insert;
+        editor.cursor = (0, 10);
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.1, 5); // Should clamp to end (len in insert mode)
+    }
+
+    #[test]
+    fn test_clamp_cursor_empty_line() {
+        let mut editor = TestEditor::new("");
+        editor.cursor = (0, 5);
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.1, 0);
+    }
+
+    // ============ Insert/Delete Tests ============
+
+    #[test]
+    fn test_insert_char_at_beginning() {
+        let mut editor = TestEditor::new("hello");
+        editor.insert_char('X');
+        assert_eq!(editor.text(), "Xhello");
+        assert_eq!(editor.cursor, (0, 1));
+    }
+
+    #[test]
+    fn test_insert_char_in_middle() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 2);
+        editor.insert_char('X');
+        assert_eq!(editor.text(), "heXllo");
+        assert_eq!(editor.cursor, (0, 3));
+    }
+
+    #[test]
+    fn test_insert_char_at_end() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 5);
+        editor.insert_char('X');
+        assert_eq!(editor.text(), "helloX");
+        assert_eq!(editor.cursor, (0, 6));
+    }
+
+    #[test]
+    fn test_delete_char() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 2);
+        editor.delete_char();
+        assert_eq!(editor.text(), "helo");
+    }
+
+    #[test]
+    fn test_delete_char_at_end_no_op() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 5);
+        editor.delete_char();
+        assert_eq!(editor.text(), "hello"); // No change
+    }
+
+    // ============ Undo/Redo Tests ============
+
+    #[test]
+    fn test_undo_single_change() {
+        let mut editor = TestEditor::new("hello");
+        editor.insert_char('X');
+        editor.lines_modified = true;
+        editor.record_change();
+        assert_eq!(editor.text(), "Xhello");
+
+        editor.undo();
+        assert_eq!(editor.text(), "hello");
+    }
+
+    #[test]
+    fn test_redo_after_undo() {
+        let mut editor = TestEditor::new("hello");
+        editor.insert_char('X');
+        editor.lines_modified = true;
+        editor.record_change();
+
+        editor.undo();
+        assert_eq!(editor.text(), "hello");
+
+        editor.redo();
+        assert_eq!(editor.text(), "Xhello");
+    }
+
+    #[test]
+    fn test_undo_at_beginning_no_op() {
+        let mut editor = TestEditor::new("hello");
+        editor.undo();
+        assert_eq!(editor.text(), "hello");
+        assert_eq!(editor.history_idx, 0);
+    }
+
+    #[test]
+    fn test_redo_at_end_no_op() {
+        let mut editor = TestEditor::new("hello");
+        editor.redo();
+        assert_eq!(editor.text(), "hello");
+    }
+
+    #[test]
+    fn test_redo_clamps_cursor() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (1, 0);
+        editor.delete_line(1);
+        editor.record_change();
+        assert_eq!(editor.text(), "line1\nline3");
+
+        editor.undo();
+        assert_eq!(editor.text(), "line1\nline2\nline3");
+
+        // Simulate cursor being on a line that will be deleted
+        editor.cursor = (2, 3);
+        editor.redo();
+        // Cursor should be clamped since line 2 no longer has 4 chars
+        assert!(editor.cursor.0 <= 1);
+    }
+
+    // ============ Pair Finding Tests ============
+
+    #[test]
+    fn test_find_pair_bounds_same_line() {
+        let editor = TestEditor::new("(hello)").with_cursor(0, 1);
+        let bounds = editor.find_pair_bounds('(');
+        assert_eq!(bounds, Some(((0, 0), (0, 6))));
+    }
+
+    #[test]
+    fn test_find_pair_bounds_cursor_on_open() {
+        let editor = TestEditor::new("(hello)").with_cursor(0, 0);
+        let bounds = editor.find_pair_bounds('(');
+        assert_eq!(bounds, Some(((0, 0), (0, 6))));
+    }
+
+    #[test]
+    fn test_find_pair_bounds_cursor_on_close() {
+        let editor = TestEditor::new("(hello)").with_cursor(0, 6);
+        let bounds = editor.find_pair_bounds(')');
+        assert_eq!(bounds, Some(((0, 0), (0, 6))));
+    }
+
+    #[test]
+    fn test_find_pair_bounds_nested() {
+        let editor = TestEditor::new("((inner))").with_cursor(0, 2);
+        let bounds = editor.find_pair_bounds('(');
+        assert_eq!(bounds, Some(((0, 1), (0, 7))));
+    }
+
+    #[test]
+    fn test_find_pair_bounds_multi_line() {
+        let editor = TestEditor::new("(\nhello\n)").with_cursor(1, 2);
+        let bounds = editor.find_pair_bounds('(');
+        assert_eq!(bounds, Some(((0, 0), (2, 0))));
+    }
+
+    #[test]
+    fn test_find_pair_bounds_no_match() {
+        let editor = TestEditor::new("hello").with_cursor(0, 2);
+        let bounds = editor.find_pair_bounds('(');
+        assert_eq!(bounds, None);
+    }
+
+    #[test]
+    fn test_find_pair_bounds_square_brackets() {
+        let editor = TestEditor::new("[a, b, c]").with_cursor(0, 3);
+        let bounds = editor.find_pair_bounds('[');
+        assert_eq!(bounds, Some(((0, 0), (0, 8))));
+    }
+
+    #[test]
+    fn test_find_pair_bounds_curly_braces() {
+        let editor = TestEditor::new("{ key: value }").with_cursor(0, 5);
+        let bounds = editor.find_pair_bounds('{');
+        assert_eq!(bounds, Some(((0, 0), (0, 13))));
+    }
+
+    // ============ Yank Inner Pair Tests ============
+
+    #[test]
+    fn test_yank_inner_pair_same_line() {
+        let mut editor = TestEditor::new("(hello)").with_cursor(0, 3);
+        editor.yank_inner_pair('(');
+        assert_eq!(editor.yank_buffer, "hello");
+        assert!(!editor.yank_is_linewise);
+    }
+
+    #[test]
+    fn test_yank_inner_pair_empty() {
+        let mut editor = TestEditor::new("()").with_cursor(0, 0);
+        editor.yank_inner_pair('(');
+        assert_eq!(editor.yank_buffer, "");
+    }
+
+    #[test]
+    fn test_yank_inner_pair_multi_line_brackets_alone() {
+        let mut editor = TestEditor::new("(\nhello\n)").with_cursor(1, 2);
+        editor.yank_inner_pair('(');
+        assert_eq!(editor.yank_buffer, "\nhello");
+    }
+
+    #[test]
+    fn test_yank_inner_pair_multi_line_with_whitespace() {
+        let mut editor = TestEditor::new("(  \nhello\n  )").with_cursor(1, 2);
+        editor.yank_inner_pair('(');
+        // Whitespace-only content after open and before close should be skipped
+        assert_eq!(editor.yank_buffer, "\nhello");
+    }
+
+    #[test]
+    fn test_yank_inner_pair_multi_line_with_content() {
+        let mut editor = TestEditor::new("(start\nmiddle\nend)").with_cursor(1, 2);
+        editor.yank_inner_pair('(');
+        assert_eq!(editor.yank_buffer, "start\nmiddle\nend");
+    }
+
+    // ============ Delete Inner Pair Tests ============
+
+    #[test]
+    fn test_delete_inner_pair_same_line() {
+        let mut editor = TestEditor::new("(hello)").with_cursor(0, 3);
+        editor.delete_inner_pair('(');
+        assert_eq!(editor.text(), "()");
+        assert_eq!(editor.cursor, (0, 1));
+    }
+
+    #[test]
+    fn test_delete_inner_pair_multi_line() {
+        let mut editor = TestEditor::new("(\nhello\n)").with_cursor(1, 2);
+        editor.delete_inner_pair('(');
+        // Should keep brackets on separate lines
+        assert_eq!(editor.lines.len(), 2);
+        assert_eq!(editor.lines[0], "(");
+        assert_eq!(editor.lines[1], ")");
+    }
+
+    #[test]
+    fn test_delete_inner_pair_nested() {
+        let mut editor = TestEditor::new("((inner))").with_cursor(0, 3);
+        editor.delete_inner_pair('(');
+        assert_eq!(editor.text(), "(())");
+    }
+
+    // ============ Unicode Tests ============
+
+    #[test]
+    fn test_insert_unicode() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 2);
+        editor.insert_char('日');
+        assert_eq!(editor.text(), "he日llo");
+    }
+
+    #[test]
+    fn test_cursor_with_unicode() {
+        let mut editor = TestEditor::new("日本語");
+        editor.cursor = (0, 10);
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.1, 2); // 3 chars, max is 2 in normal mode
+    }
+
+    #[test]
+    fn test_delete_unicode() {
+        let mut editor = TestEditor::new("日本語").with_cursor(0, 1);
+        editor.delete_char();
+        assert_eq!(editor.text(), "日語");
+    }
+
+    // ============ Undo/Redo with Multi-line Operations ============
+
+    #[test]
+    fn test_undo_redo_multiline_delete_clamps_cursor() {
+        // This tests the fix for the panic when doing di( on multi-line, undo, redo
+        let mut editor = TestEditor::new("(\ntesting1\n)");
+        editor.cursor = (1, 3); // On "testing1"
+        
+        // Simulate di( - delete inner content
+        editor.delete_inner_pair('(');
+        // After delete, we should have 2 lines: "(" and ")"
+        assert_eq!(editor.lines.len(), 2);
+        
+        // Undo
+        editor.undo();
+        assert_eq!(editor.lines.len(), 3);
+        assert_eq!(editor.text(), "(\ntesting1\n)");
+        
+        // Redo - this should not panic even if cursor was on line 1
+        editor.cursor = (1, 5); // Position that might be invalid after redo
+        editor.redo();
+        // Cursor should be clamped to valid position
+        assert!(editor.cursor.0 < editor.lines.len());
+        assert!(editor.cursor.1 <= editor.lines[editor.cursor.0].chars().count());
+    }
+
+    #[test]
+    fn test_redo_clamps_row_when_lines_deleted() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5");
+        editor.cursor = (2, 0);
+        
+        // Delete multiple lines
+        editor.delete_line(2);
+        editor.delete_line(2);
+        editor.delete_line(2);
+        editor.record_change();
+        
+        assert_eq!(editor.text(), "line1\nline2");
+        
+        editor.undo();
+        assert_eq!(editor.text(), "line1\nline2\nline3\nline4\nline5");
+        
+        // Set cursor to a line that won't exist after redo
+        editor.cursor = (4, 0);
+        editor.redo();
+        
+        // Should not panic, cursor should be clamped
+        assert!(editor.cursor.0 < editor.lines.len());
+    }
+
+    // ============ Delete Line Tests ============
+
+    #[test]
+    fn test_delete_line_single() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (1, 0);
+        editor.delete_line(1);
+        assert_eq!(editor.text(), "line1\nline3");
+    }
+
+    #[test]
+    fn test_delete_line_last_line() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (2, 0);
+        editor.delete_line(2);
+        assert_eq!(editor.text(), "line1\nline2");
+    }
+
+    #[test]
+    fn test_delete_only_line_clears() {
+        let mut editor = TestEditor::new("only line");
+        editor.delete_line(0);
+        assert_eq!(editor.text(), "");
+        assert_eq!(editor.cursor, (0, 0));
+    }
+
+    // ============ Multi-line Yank Tests ============
+
+    #[test]
+    fn test_yank_inner_pair_bracket_with_leading_whitespace() {
+        // Bracket is first non-whitespace but not first char
+        let mut editor = TestEditor::new("  (\n  testing\n  )").with_cursor(1, 3);
+        editor.yank_inner_pair('(');
+        assert_eq!(editor.yank_buffer, "\n  testing");
+    }
+
+    #[test]
+    fn test_yank_inner_pair_content_after_open_bracket() {
+        let mut editor = TestEditor::new("(start\nmiddle\nend)").with_cursor(1, 0);
+        editor.yank_inner_pair('(');
+        // Should include "start" as-is since there's content after (
+        assert_eq!(editor.yank_buffer, "start\nmiddle\nend");
+    }
+
+    #[test]
+    fn test_yank_inner_pair_content_before_close_bracket() {
+        let mut editor = TestEditor::new("(\nmiddle\nend)").with_cursor(1, 0);
+        editor.yank_inner_pair('(');
+        // Should include "end" as-is since there's content before )
+        assert_eq!(editor.yank_buffer, "\nmiddle\nend");
+    }
+
+    // ============ Cursor Clamping Edge Cases ============
+
+    #[test]
+    fn test_clamp_cursor_on_empty_lines() {
+        let mut editor = TestEditor::new("\n\n");
+        editor.cursor = (1, 5);
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.1, 0);
+    }
+
+    #[test]
+    fn test_clamp_cursor_row_beyond_last() {
+        let mut editor = TestEditor::new("a\nb");
+        editor.cursor = (10, 0);
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.0, 1); // Clamped to last line
+    }
+
+    // ============ History Edge Cases ============
+
+    #[test]
+    fn test_multiple_undo_redo_cycles() {
+        let mut editor = TestEditor::new("start");
+        
+        // Make several changes
+        editor.insert_char('1');
+        editor.record_change();
+        editor.insert_char('2');
+        editor.record_change();
+        editor.insert_char('3');
+        editor.record_change();
+        
+        assert_eq!(editor.text(), "123start");
+        
+        // Undo all
+        editor.undo();
+        assert_eq!(editor.text(), "12start");
+        editor.undo();
+        assert_eq!(editor.text(), "1start");
+        editor.undo();
+        assert_eq!(editor.text(), "start");
+        
+        // Redo all
+        editor.redo();
+        assert_eq!(editor.text(), "1start");
+        editor.redo();
+        assert_eq!(editor.text(), "12start");
+        editor.redo();
+        assert_eq!(editor.text(), "123start");
+    }
+
+    #[test]
+    fn test_new_change_after_undo_truncates_history() {
+        let mut editor = TestEditor::new("start");
+        
+        editor.insert_char('A');
+        editor.record_change();
+        editor.insert_char('B');
+        editor.record_change();
+        
+        // Undo one change
+        editor.undo();
+        assert_eq!(editor.text(), "Astart");
+        
+        // Make a new change - should truncate redo history
+        editor.insert_char('X');
+        editor.record_change();
+        assert_eq!(editor.text(), "AXstart");
+        
+        // Redo should do nothing (history truncated)
+        editor.redo();
+        assert_eq!(editor.text(), "AXstart");
+    }
+
+    // ============ Pair Matching Edge Cases ============
+
+    #[test]
+    fn test_find_pair_deeply_nested() {
+        let editor = TestEditor::new("(((deep)))").with_cursor(0, 3);
+        let bounds = editor.find_pair_bounds('(');
+        // Cursor is on 'd', should find innermost pair
+        assert_eq!(bounds, Some(((0, 2), (0, 7))));
+    }
+
+    #[test]
+    fn test_find_pair_multiple_pairs_on_line() {
+        let editor = TestEditor::new("(a) (b) (c)").with_cursor(0, 5);
+        let bounds = editor.find_pair_bounds('(');
+        // Cursor is on 'b', should find middle pair
+        assert_eq!(bounds, Some(((0, 4), (0, 6))));
+    }
+
+    #[test]
+    fn test_find_pair_quotes() {
+        let editor = TestEditor::new("\"hello\"").with_cursor(0, 3);
+        let bounds = editor.find_pair_bounds('"');
+        assert_eq!(bounds, Some(((0, 0), (0, 6))));
+    }
+
+    #[test]
+    fn test_delete_inner_pair_empty() {
+        let mut editor = TestEditor::new("()").with_cursor(0, 0);
+        editor.delete_inner_pair('(');
+        assert_eq!(editor.text(), "()");
+    }
+}
+
