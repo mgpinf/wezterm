@@ -980,7 +980,7 @@ impl<'a> EditorState<'a> {
                 break;
             }
             row -= 1;
-            search_end = self.lines[row].len();
+            search_end = self.lines[row].chars().count();
         }
         None
     }
@@ -2017,25 +2017,34 @@ impl<'a> EditorState<'a> {
     fn yank_inner_pair(&mut self, pair_char: char) {
         if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
             if open_row == close_row {
-                // Same line
-                let line = &self.lines[open_row];
-                self.yank_buffer = line[open_col + 1..close_col].to_string();
+                // Same line - use character indices
+                let chars: Vec<char> = self.lines[open_row].chars().collect();
+                if open_col + 1 < close_col {
+                    self.yank_buffer = chars[open_col + 1..close_col].iter().collect();
+                } else {
+                    self.yank_buffer.clear();
+                }
                 self.yank_is_linewise = false;
             } else {
                 // Multi-line: yank content between brackets
                 let mut yanked = String::new();
-                // First line: from after open bracket
-                let first_line = &self.lines[open_row];
-                yanked.push_str(&first_line[open_col + 1..]);
+                // First line: from after open bracket (character-based)
+                let first_chars: Vec<char> = self.lines[open_row].chars().collect();
+                if open_col + 1 < first_chars.len() {
+                    yanked.extend(&first_chars[open_col + 1..]);
+                }
                 // Middle lines
                 for row in (open_row + 1)..close_row {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
-                // Last line: up to close bracket
+                // Last line: up to close bracket (character-based)
                 if close_row > open_row {
                     yanked.push('\n');
-                    yanked.push_str(&self.lines[close_row][..close_col]);
+                    let last_chars: Vec<char> = self.lines[close_row].chars().collect();
+                    if close_col > 0 {
+                        yanked.extend(&last_chars[..close_col]);
+                    }
                 }
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
@@ -2046,25 +2055,26 @@ impl<'a> EditorState<'a> {
     fn yank_around_pair(&mut self, pair_char: char) {
         if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
             if open_row == close_row {
-                // Same line
-                let line = &self.lines[open_row];
-                self.yank_buffer = line[open_col..=close_col].to_string();
+                // Same line - use character indices
+                let chars: Vec<char> = self.lines[open_row].chars().collect();
+                self.yank_buffer = chars[open_col..=close_col].iter().collect();
                 self.yank_is_linewise = false;
             } else {
                 // Multi-line: yank including brackets
                 let mut yanked = String::new();
-                // First line: from open bracket
-                let first_line = &self.lines[open_row];
-                yanked.push_str(&first_line[open_col..]);
+                // First line: from open bracket (character-based)
+                let first_chars: Vec<char> = self.lines[open_row].chars().collect();
+                yanked.extend(&first_chars[open_col..]);
                 // Middle lines
                 for row in (open_row + 1)..close_row {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
-                // Last line: up to and including close bracket
+                // Last line: up to and including close bracket (character-based)
                 if close_row > open_row {
                     yanked.push('\n');
-                    yanked.push_str(&self.lines[close_row][..=close_col]);
+                    let last_chars: Vec<char> = self.lines[close_row].chars().collect();
+                    yanked.extend(&last_chars[..=close_col]);
                 }
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
@@ -2073,23 +2083,25 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_to_char_forward(&mut self, target: char, inclusive: bool) {
-        let line = &self.lines[self.cursor.0];
-        if self.cursor.1 + 1 < line.len() {
-            if let Some(pos) = line[self.cursor.1 + 1..].find(target) {
-                let target_col = self.cursor.1 + 1 + pos;
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 + 1 < chars.len() {
+            // Search for target character starting after cursor
+            if let Some(rel_pos) = chars[self.cursor.1 + 1..].iter().position(|&c| c == target) {
+                let target_col = self.cursor.1 + 1 + rel_pos;
                 let end_col = if inclusive { target_col + 1 } else { target_col };
-                self.yank_buffer = line[self.cursor.1..end_col].to_string();
+                self.yank_buffer = chars[self.cursor.1..end_col].iter().collect();
                 self.yank_is_linewise = false;
             }
         }
     }
 
     fn yank_to_char_backward(&mut self, target: char, inclusive: bool) {
-        let line = &self.lines[self.cursor.0];
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 > 0 {
-            if let Some(pos) = line[..self.cursor.1].rfind(target) {
-                let start_col = if inclusive { pos } else { pos + 1 };
-                self.yank_buffer = line[start_col..self.cursor.1].to_string();
+            // Search for target character backwards before cursor
+            if let Some(rel_pos) = chars[..self.cursor.1].iter().rposition(|&c| c == target) {
+                let start_col = if inclusive { rel_pos } else { rel_pos + 1 };
+                self.yank_buffer = chars[start_col..self.cursor.1].iter().collect();
                 self.yank_is_linewise = false;
             }
         }
@@ -2104,15 +2116,15 @@ impl<'a> EditorState<'a> {
             self.cursor = saved_cursor;
             // Handle multi-line case
             if saved_cursor.0 == end.0 {
-                // Same line
+                // Same line - use character indices
                 let (start, end_col) = if saved_cursor.1 <= end.1 {
                     (saved_cursor.1, end.1 + 1)
                 } else {
                     (end.1, saved_cursor.1 + 1)
                 };
-                let line = &self.lines[self.cursor.0];
-                if end_col <= line.len() {
-                    self.yank_buffer = line[start..end_col].to_string();
+                let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                if end_col <= chars.len() {
+                    self.yank_buffer = chars[start..end_col].iter().collect();
                     self.yank_is_linewise = false;
                 }
             } else {
@@ -2123,13 +2135,18 @@ impl<'a> EditorState<'a> {
                     (end, saved_cursor)
                 };
                 let mut yanked = String::new();
-                yanked.push_str(&self.lines[start_pos.0][start_pos.1..]);
+                // First line: from start position (character-based)
+                let first_chars: Vec<char> = self.lines[start_pos.0].chars().collect();
+                yanked.extend(&first_chars[start_pos.1..]);
+                // Middle lines
                 for row in (start_pos.0 + 1)..end_pos.0 {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
+                // Last line: up to and including end position (character-based)
                 yanked.push('\n');
-                yanked.push_str(&self.lines[end_pos.0][..=end_pos.1]);
+                let last_chars: Vec<char> = self.lines[end_pos.0].chars().collect();
+                yanked.extend(&last_chars[..=end_pos.1]);
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
             }
@@ -2145,10 +2162,10 @@ impl<'a> EditorState<'a> {
             self.cursor = saved_cursor;
             // Yank from target to cursor (exclusive of target position)
             if target.0 == saved_cursor.0 {
-                // Same line
-                let line = &self.lines[self.cursor.0];
-                if target.1 < saved_cursor.1 && saved_cursor.1 <= line.len() {
-                    self.yank_buffer = line[target.1 + 1..saved_cursor.1].to_string();
+                // Same line - use character indices
+                let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                if target.1 < saved_cursor.1 && saved_cursor.1 <= chars.len() {
+                    self.yank_buffer = chars[target.1 + 1..saved_cursor.1].iter().collect();
                     self.yank_is_linewise = false;
                 }
             }
@@ -2165,10 +2182,10 @@ impl<'a> EditorState<'a> {
             self.cursor = saved_cursor;
             // Yank from cursor to target (exclusive of target position)
             if saved_cursor.0 == target.0 {
-                // Same line
-                let line = &self.lines[self.cursor.0];
-                if saved_cursor.1 < target.1 && target.1 <= line.len() {
-                    self.yank_buffer = line[saved_cursor.1..target.1].to_string();
+                // Same line - use character indices
+                let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                if saved_cursor.1 < target.1 && target.1 <= chars.len() {
+                    self.yank_buffer = chars[saved_cursor.1..target.1].iter().collect();
                     self.yank_is_linewise = false;
                 }
             }
