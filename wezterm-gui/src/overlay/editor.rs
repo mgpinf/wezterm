@@ -17,6 +17,8 @@ struct EditorColors {
     line_number_fg: ColorAttribute,
     status_fg: ColorAttribute,
     status_bg: ColorAttribute,
+    selection_bg: ColorAttribute,
+    selection_fg: ColorAttribute,
 }
 
 impl EditorColors {
@@ -39,6 +41,14 @@ impl EditorColors {
                 .transient_entry_active_flag_fg
                 .unwrap_or(AnsiColor::Purple.into())
                 .into(),
+            selection_bg: colors.selection_bg.map_or(
+                ColorAttribute::PaletteIndex(AnsiColor::Navy.into()),
+                |c| ColorAttribute::TrueColorWithDefaultFallback(c.into()),
+            ),
+            selection_fg: colors.selection_fg.map_or(
+                ColorAttribute::PaletteIndex(AnsiColor::White.into()),
+                |c| ColorAttribute::TrueColorWithDefaultFallback(c.into()),
+            ),
         }
     }
 }
@@ -48,6 +58,8 @@ enum EditorMode {
     Normal,
     Insert,
     Search,
+    Visual,     // Character-wise visual selection (v)
+    VisualLine, // Line-wise visual selection (V)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,6 +135,7 @@ struct EditorState<'a> {
     search_pattern: String,    // Current search pattern
     search_direction: SearchDirection, // Current search direction
     search_input: String,      // Input buffer for search mode
+    visual_start: (usize, usize), // Anchor point for visual selection (row, col)
 }
 
 impl<'a> EditorState<'a> {
@@ -164,6 +177,7 @@ impl<'a> EditorState<'a> {
             search_pattern: String::new(),
             search_direction: SearchDirection::Forward,
             search_input: String::new(),
+            visual_start: (0, 0),
         }
     }
 
@@ -842,6 +856,64 @@ impl<'a> EditorState<'a> {
 
     fn get_line_end_pos(&self) -> (usize, usize) {
         (self.cursor.0, self.lines[self.cursor.0].chars().count())
+    }
+
+    /// Compute proper inner pair selection bounds for Visual mode
+    /// Returns (visual_start, cursor) positions for selecting content inside brackets
+    fn get_inner_pair_visual_bounds(
+        &self,
+        open_pos: (usize, usize),
+        close_pos: (usize, usize),
+    ) -> ((usize, usize), (usize, usize)) {
+        let (open_row, open_col) = open_pos;
+        let (close_row, close_col) = close_pos;
+        
+        // For multi-line pairs where brackets are on their own lines,
+        // we need to keep start/end spanning the lines so delete_visual_selection
+        // properly handles it as a multi-line deletion.
+        
+        if open_row == close_row {
+            // Same line: select content between brackets
+            if close_col > open_col + 1 {
+                // There's content between brackets
+                ((open_row, open_col + 1), (close_row, close_col - 1))
+            } else {
+                // Empty or adjacent brackets - return same position
+                ((open_row, open_col + 1), (open_row, open_col + 1))
+            }
+        } else {
+            // Multi-line: start after opening bracket, end before closing bracket
+            // Keep positions on the bracket lines to ensure proper multi-line deletion
+            let open_line_len = self.lines[open_row].chars().count();
+            
+            // Start position: right after opening bracket
+            // If bracket is at end of line, use that position (past end) to indicate
+            // the selection starts from the next line's beginning
+            let start = (open_row, (open_col + 1).min(open_line_len));
+            
+            // End position: right before closing bracket  
+            // If bracket is at start of line (col 0), we need to end at previous line's end
+            let end = if close_col > 0 {
+                (close_row, close_col - 1)
+            } else {
+                // Closing bracket at column 0 - end at last char of previous line
+                let prev_line_len = self.lines[close_row - 1].chars().count();
+                if prev_line_len > 0 {
+                    (close_row - 1, prev_line_len - 1)
+                } else {
+                    (close_row - 1, 0)
+                }
+            };
+            
+            // Ensure start <= end
+            if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+                (start, end)
+            } else {
+                // Content is empty (e.g., just newlines between brackets)
+                // Return positions that will result in deleting the empty lines
+                (start, start)
+            }
+        }
     }
 
     fn get_inner_word_bounds(&self) -> (usize, usize) {
@@ -2042,6 +2114,20 @@ impl<'a> EditorState<'a> {
                 };
                 format!("{}{}", prompt, self.search_input)
             }
+            EditorMode::Visual => {
+                format!(
+                    " -- VISUAL --  {}:{}",
+                    self.cursor.0 + 1,
+                    self.cursor.1 + 1
+                )
+            }
+            EditorMode::VisualLine => {
+                format!(
+                    " -- VISUAL LINE --  {}:{}",
+                    self.cursor.0 + 1,
+                    self.cursor.1 + 1
+                )
+            }
         };
         self.buf.add_changes(vec![
             Change::CursorPosition {
@@ -2074,12 +2160,27 @@ impl<'a> EditorState<'a> {
         ]);
 
         // Content
+        // Calculate selection range if in visual mode
+        let selection = if self.mode == EditorMode::Visual || self.mode == EditorMode::VisualLine {
+            let (start, end) = if self.visual_start.0 < self.cursor.0
+                || (self.visual_start.0 == self.cursor.0 && self.visual_start.1 <= self.cursor.1)
+            {
+                (self.visual_start, self.cursor)
+            } else {
+                (self.cursor, self.visual_start)
+            };
+            Some((start, end))
+        } else {
+            None
+        };
+
         for i in 0..content_rows {
             let line_idx = self.viewport_top + i;
             if line_idx >= self.lines.len() {
                 break;
             }
 
+            // Line number
             self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
@@ -2087,9 +2188,77 @@ impl<'a> EditorState<'a> {
                 },
                 Change::Attribute(AttributeChange::Foreground(self.colors.line_number_fg)),
                 Change::Text(format!("{:>3} ", line_idx + 1)),
-                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                Change::Text(self.lines[line_idx].clone()),
+                Change::AllAttributes(CellAttributes::default()),
             ]);
+
+            // Line content with selection highlighting
+            let line = &self.lines[line_idx];
+            if let Some((sel_start, sel_end)) = selection {
+                // Check if this line is part of the selection
+                let line_in_selection = line_idx >= sel_start.0 && line_idx <= sel_end.0;
+                
+                if line_in_selection && self.mode == EditorMode::VisualLine {
+                    // Entire line is selected in VisualLine mode
+                    self.buf.add_changes(vec![
+                        Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                        Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
+                        Change::Text(if line.is_empty() { " ".to_string() } else { line.clone() }),
+                        Change::AllAttributes(CellAttributes::default()),
+                    ]);
+                } else if line_in_selection && self.mode == EditorMode::Visual {
+                    // Character-wise selection
+                    let chars: Vec<char> = line.chars().collect();
+                    let line_len = chars.len();
+                    
+                    let sel_col_start = if line_idx == sel_start.0 { sel_start.1 } else { 0 };
+                    let sel_col_end = if line_idx == sel_end.0 { sel_end.1 + 1 } else { line_len };
+                    
+                    // Text before selection
+                    if sel_col_start > 0 {
+                        let before: String = chars[..sel_col_start.min(line_len)].iter().collect();
+                        self.buf.add_changes(vec![
+                            Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                            Change::Text(before),
+                        ]);
+                    }
+                    
+                    // Selected text
+                    if sel_col_start < line_len {
+                        let selected: String = chars[sel_col_start.min(line_len)..sel_col_end.min(line_len)].iter().collect();
+                        if !selected.is_empty() {
+                            self.buf.add_changes(vec![
+                                Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                                Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
+                                Change::Text(selected),
+                                Change::AllAttributes(CellAttributes::default()),
+                            ]);
+                        }
+                    }
+                    
+                    // Text after selection
+                    if sel_col_end < line_len {
+                        let after: String = chars[sel_col_end..].iter().collect();
+                        self.buf.add_changes(vec![
+                            Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                            Change::Text(after),
+                        ]);
+                    }
+                    
+                    self.buf.add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
+                } else {
+                    // Not in selection range
+                    self.buf.add_changes(vec![
+                        Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                        Change::Text(line.clone()),
+                    ]);
+                }
+            } else {
+                // Not in visual mode
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                    Change::Text(line.clone()),
+                ]);
+            }
         }
 
         // Cursor
@@ -2106,6 +2275,7 @@ impl<'a> EditorState<'a> {
                 EditorMode::Normal => CursorShape::SteadyBlock,
                 EditorMode::Insert => CursorShape::SteadyBar,
                 EditorMode::Search => CursorShape::SteadyUnderline,
+                EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
             }),
         ]);
 
@@ -2763,6 +2933,133 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    // Visual mode helpers
+    fn get_visual_selection(&self) -> ((usize, usize), (usize, usize)) {
+        // Returns (start, end) where start <= end
+        if self.visual_start.0 < self.cursor.0
+            || (self.visual_start.0 == self.cursor.0 && self.visual_start.1 <= self.cursor.1)
+        {
+            (self.visual_start, self.cursor)
+        } else {
+            (self.cursor, self.visual_start)
+        }
+    }
+
+    fn delete_visual_selection(&mut self) {
+        let (start, end) = self.get_visual_selection();
+        
+        if self.mode == EditorMode::VisualLine {
+            // Delete entire lines
+            let yanked: Vec<&str> = self.lines[start.0..=end.0].iter().map(|s| s.as_str()).collect();
+            self.yank_buffer = yanked.join("\n");
+            self.yank_is_linewise = true;
+            
+            self.lines_modified = true;
+            for _ in start.0..=end.0 {
+                if self.lines.len() > 1 {
+                    self.lines.remove(start.0);
+                } else {
+                    self.lines[0].clear();
+                }
+            }
+            if self.lines.is_empty() {
+                self.lines.push(String::new());
+            }
+            self.cursor.0 = start.0.min(self.lines.len().saturating_sub(1));
+            self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        } else {
+            // Character-wise deletion
+            if start.0 == end.0 {
+                // Same line
+                let line = &self.lines[start.0];
+                let chars: Vec<char> = line.chars().collect();
+                let sel_end = (end.1 + 1).min(chars.len());
+                self.yank_buffer = chars[start.1..sel_end].iter().collect();
+                self.yank_is_linewise = false;
+                
+                self.lines_modified = true;
+                let new_line: String = chars[..start.1].iter().chain(&chars[sel_end..]).collect();
+                self.lines[start.0] = new_line;
+                self.cursor = start;
+            } else {
+                // Multi-line
+                let mut yanked = String::new();
+                let first_chars: Vec<char> = self.lines[start.0].chars().collect();
+                yanked.extend(&first_chars[start.1..]);
+                for row in (start.0 + 1)..end.0 {
+                    yanked.push('\n');
+                    yanked.push_str(&self.lines[row]);
+                }
+                yanked.push('\n');
+                let last_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let sel_end = (end.1 + 1).min(last_chars.len());
+                yanked.extend(&last_chars[..sel_end]);
+                self.yank_buffer = yanked;
+                self.yank_is_linewise = false;
+                
+                self.lines_modified = true;
+                let first_part: String = first_chars[..start.1].iter().collect();
+                let first_part_len = first_part.chars().count();
+                let last_part: String = last_chars[sel_end..].iter().collect();
+                self.lines[start.0] = first_part + &last_part;
+                for _ in (start.0 + 1)..=end.0 {
+                    self.lines.remove(start.0 + 1);
+                }
+                // Position cursor at start of remaining content after deletion
+                let merged_line_len = self.lines[start.0].chars().count();
+                if first_part_len < merged_line_len {
+                    // There's content after first_part on the merged line
+                    self.cursor = (start.0, first_part_len);
+                } else if start.0 + 1 < self.lines.len() {
+                    // No content left on merged line after first_part, go to next line
+                    self.cursor = (start.0 + 1, 0);
+                } else {
+                    // Stay on current line at valid position
+                    self.cursor = (start.0, first_part_len.saturating_sub(1));
+                }
+            }
+        }
+        self.clamp_cursor();
+        self.record_change();
+    }
+
+    fn yank_visual_selection(&mut self) {
+        let (start, end) = self.get_visual_selection();
+        
+        if self.mode == EditorMode::VisualLine {
+            // Yank entire lines
+            let yanked: Vec<&str> = self.lines[start.0..=end.0].iter().map(|s| s.as_str()).collect();
+            self.yank_buffer = yanked.join("\n");
+            self.yank_is_linewise = true;
+        } else {
+            // Character-wise yank
+            if start.0 == end.0 {
+                // Same line
+                let chars: Vec<char> = self.lines[start.0].chars().collect();
+                let sel_end = (end.1 + 1).min(chars.len());
+                self.yank_buffer = chars[start.1..sel_end].iter().collect();
+                self.yank_is_linewise = false;
+            } else {
+                // Multi-line
+                let mut yanked = String::new();
+                let first_chars: Vec<char> = self.lines[start.0].chars().collect();
+                yanked.extend(&first_chars[start.1..]);
+                for row in (start.0 + 1)..end.0 {
+                    yanked.push('\n');
+                    yanked.push_str(&self.lines[row]);
+                }
+                yanked.push('\n');
+                let last_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let sel_end = (end.1 + 1).min(last_chars.len());
+                yanked.extend(&last_chars[..sel_end]);
+                self.yank_buffer = yanked;
+                self.yank_is_linewise = false;
+            }
+        }
+        // Move cursor to start of selection (Vim behavior)
+        self.cursor = start;
+    }
+
     fn run_loop(&mut self) -> anyhow::Result<()> {
         self.render()?;
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
@@ -3348,6 +3645,16 @@ impl<'a> EditorState<'a> {
                             'N' => self.search_prev(),
                             '*' => self.search_word_under_cursor(true),  // Forward
                             '#' => self.search_word_under_cursor(false), // Backward
+                            'v' => {
+                                // Enter character-wise visual mode
+                                self.mode = EditorMode::Visual;
+                                self.visual_start = self.cursor;
+                            }
+                            'V' => {
+                                // Enter line-wise visual mode
+                                self.mode = EditorMode::VisualLine;
+                                self.visual_start = self.cursor;
+                            }
                             _ => {}
                         }
                     }
@@ -3478,6 +3785,305 @@ impl<'a> EditorState<'a> {
                             self.search_input.push(c);
                         }
                     }
+                    _ => {}
+                },
+                EditorMode::Visual | EditorMode::VisualLine => match event {
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Escape,
+                        ..
+                    }) => {
+                        self.mode = EditorMode::Normal;
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char(c),
+                        ..
+                    }) => {
+                        // Check for pending text object keys FIRST
+                        if let Some(KeyCode::Char(pending)) = self.pending_keys.first().copied() {
+                            let handled = match (pending, c) {
+                                ('i', '(' | ')') => {
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('(') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', '(' | ')') => {
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('(') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', '[' | ']') => {
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('[') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', '[' | ']') => {
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('[') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', '{' | '}') => {
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('{') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', '{' | '}') => {
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('{') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', '<' | '>') => {
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('<') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', '<' | '>') => {
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('<') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', '"') => {
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('"') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', '"') => {
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('"') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', '\'') => {
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('\'') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', '\'') => {
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('\'') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', '`') => {
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('`') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', '`') => {
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('`') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', 'w') => {
+                                    let (start, end) = self.get_inner_word_bounds();
+                                    self.visual_start = (self.cursor.0, start);
+                                    self.cursor.1 = end.saturating_sub(1);
+                                    true
+                                }
+                                ('a', 'w') => {
+                                    let (start, end) = self.get_a_word_bounds();
+                                    self.visual_start = (self.cursor.0, start);
+                                    self.cursor.1 = end.saturating_sub(1);
+                                    true
+                                }
+                                ('i', 'W') => {
+                                    let (start, end) = self.get_inner_long_word_bounds();
+                                    self.visual_start = (self.cursor.0, start);
+                                    self.cursor.1 = end.saturating_sub(1);
+                                    true
+                                }
+                                ('a', 'W') => {
+                                    let (start, end) = self.get_a_long_word_bounds();
+                                    self.visual_start = (self.cursor.0, start);
+                                    self.cursor.1 = end.saturating_sub(1);
+                                    true
+                                }
+                                ('i', 'b') => {
+                                    // ib is same as i(
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('(') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', 'b') => {
+                                    // ab is same as a(
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('(') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                ('i', 'B') => {
+                                    // iB is same as i{
+                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('{') {
+                                        let (start, end) = self.get_inner_pair_visual_bounds(open_pos, close_pos);
+                                        self.visual_start = start;
+                                        self.cursor = end;
+                                    }
+                                    true
+                                }
+                                ('a', 'B') => {
+                                    // aB is same as a{
+                                    if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds('{') {
+                                        self.visual_start = (open_row, open_col);
+                                        self.cursor = (close_row, close_col);
+                                    }
+                                    true
+                                }
+                                _ => false,
+                            };
+                            self.pending_keys.clear();
+                            if handled {
+                                // Text object was handled, skip normal key processing
+                            } else {
+                                // Unknown text object, ignore
+                            }
+                        } else {
+                            // No pending key - handle as normal keys
+                            match c {
+                        // Movement keys extend selection
+                        'h' => self.move_cursor(0, -1),
+                        'j' => self.move_cursor(1, 0),
+                        'k' => self.move_cursor(-1, 0),
+                        'l' => self.move_cursor(0, 1),
+                        'w' => self.move_word_forward(),
+                        'W' => self.move_long_word_forward(),
+                        'b' => self.move_word_backward(),
+                        'B' => self.move_long_word_backward(),
+                        'e' => self.move_to_word_end(),
+                        'E' => self.move_to_long_word_end(),
+                        '0' => self.cursor.1 = 0,
+                        '^' => self.move_to_first_non_blank(),
+                        '$' => {
+                            self.cursor.1 = self.lines[self.cursor.0].chars().count().saturating_sub(1);
+                        }
+                        'G' => self.cursor.0 = self.lines.len() - 1,
+                        '%' => self.jump_to_matching_bracket(),
+                        // Operations on selection
+                        'd' | 'x' => {
+                            self.delete_visual_selection();
+                            self.mode = EditorMode::Normal;
+                        }
+                        'y' => {
+                            self.yank_visual_selection();
+                            self.mode = EditorMode::Normal;
+                        }
+                        'c' => {
+                            self.delete_visual_selection();
+                            self.mode = EditorMode::Insert;
+                            self.insert_buffer.clear();
+                        }
+                        // Toggle case
+                        '~' => {
+                            let (start, end) = self.get_visual_selection();
+                            self.lines_modified = true;
+                            if self.mode == EditorMode::VisualLine {
+                                for row in start.0..=end.0 {
+                                    let toggled: String = self.lines[row].chars().map(|c| {
+                                        if c.is_uppercase() { c.to_lowercase().next().unwrap_or(c) }
+                                        else { c.to_uppercase().next().unwrap_or(c) }
+                                    }).collect();
+                                    self.lines[row] = toggled;
+                                }
+                            } else {
+                                // Character-wise toggle
+                                for row in start.0..=end.0 {
+                                    let chars: Vec<char> = self.lines[row].chars().collect();
+                                    let col_start = if row == start.0 { start.1 } else { 0 };
+                                    let col_end = if row == end.0 { (end.1 + 1).min(chars.len()) } else { chars.len() };
+                                    let toggled: String = chars.iter().enumerate().map(|(i, &c)| {
+                                        if i >= col_start && i < col_end {
+                                            if c.is_uppercase() { c.to_lowercase().next().unwrap_or(c) }
+                                            else { c.to_uppercase().next().unwrap_or(c) }
+                                        } else { c }
+                                    }).collect();
+                                    self.lines[row] = toggled;
+                                }
+                            }
+                            self.cursor = start;
+                            self.record_change();
+                            self.mode = EditorMode::Normal;
+                        }
+                        // Switch visual modes
+                        'v' => {
+                            if self.mode == EditorMode::Visual {
+                                self.mode = EditorMode::Normal;
+                            } else {
+                                self.mode = EditorMode::Visual;
+                            }
+                        }
+                        'V' => {
+                            if self.mode == EditorMode::VisualLine {
+                                self.mode = EditorMode::Normal;
+                            } else {
+                                self.mode = EditorMode::VisualLine;
+                            }
+                        }
+                        // Swap anchor and cursor
+                        'o' => {
+                            std::mem::swap(&mut self.cursor, &mut self.visual_start);
+                        }
+                        // Text object selection - 'i' for inner, 'a' for around
+                        'i' | 'a' => {
+                            self.pending_keys.push(KeyCode::Char(c));
+                        }
+                        _ => {
+                            // Clear pending keys on unrecognized input
+                            self.pending_keys.clear();
+                        }
+                            } // close match c
+                        } // close else
+                    } // close => for Char(c)
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::UpArrow,
+                        ..
+                    }) => self.move_cursor(-1, 0),
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::DownArrow,
+                        ..
+                    }) => self.move_cursor(1, 0),
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::LeftArrow,
+                        ..
+                    }) => self.move_cursor(0, -1),
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::RightArrow,
+                        ..
+                    }) => self.move_cursor(0, 1),
                     _ => {}
                 },
             }
