@@ -47,6 +47,13 @@ impl EditorColors {
 enum EditorMode {
     Normal,
     Insert,
+    Search,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SearchDirection {
+    Forward,
+    Backward,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +120,9 @@ struct EditorState<'a> {
     last_char_search: Option<(char, char)>, // (search_type: f/F/t/T, character)
     yank_buffer: String,       // Buffer to store yanked text
     yank_is_linewise: bool,    // Whether the yank was linewise (yy, dG, etc.)
+    search_pattern: String,    // Current search pattern
+    search_direction: SearchDirection, // Current search direction
+    search_input: String,      // Input buffer for search mode
 }
 
 impl<'a> EditorState<'a> {
@@ -151,6 +161,9 @@ impl<'a> EditorState<'a> {
             last_char_search: None,
             yank_buffer: String::new(),
             yank_is_linewise: false,
+            search_pattern: String::new(),
+            search_direction: SearchDirection::Forward,
+            search_input: String::new(),
         }
     }
 
@@ -2007,16 +2020,29 @@ impl<'a> EditorState<'a> {
         ]);
 
         // Status bar
-        let mode_str = match self.mode {
-            EditorMode::Normal => "NORMAL",
-            EditorMode::Insert => "INSERT",
+        let status_text = match self.mode {
+            EditorMode::Normal => {
+                format!(
+                    " -- NORMAL --  {}:{}",
+                    self.cursor.0 + 1,
+                    self.cursor.1 + 1
+                )
+            }
+            EditorMode::Insert => {
+                format!(
+                    " -- INSERT --  {}:{}",
+                    self.cursor.0 + 1,
+                    self.cursor.1 + 1
+                )
+            }
+            EditorMode::Search => {
+                let prompt = match self.search_direction {
+                    SearchDirection::Forward => "/",
+                    SearchDirection::Backward => "?",
+                };
+                format!("{}{}", prompt, self.search_input)
+            }
         };
-        let status_text = format!(
-            " -- {} --  {}:{}",
-            mode_str,
-            self.cursor.0 + 1,
-            self.cursor.1 + 1
-        );
         self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
@@ -2079,6 +2105,7 @@ impl<'a> EditorState<'a> {
             Change::CursorShape(match self.mode {
                 EditorMode::Normal => CursorShape::SteadyBlock,
                 EditorMode::Insert => CursorShape::SteadyBar,
+                EditorMode::Search => CursorShape::SteadyUnderline,
             }),
         ]);
 
@@ -2585,6 +2612,155 @@ impl<'a> EditorState<'a> {
         line.chars()
             .position(|c| !c.is_whitespace())
             .unwrap_or(0)
+    }
+
+    // Search functionality
+    fn search_next(&mut self) {
+        if self.search_pattern.is_empty() {
+            return;
+        }
+        match self.search_direction {
+            SearchDirection::Forward => self.search_forward_from_cursor(),
+            SearchDirection::Backward => self.search_backward_from_cursor(),
+        }
+    }
+
+    fn search_prev(&mut self) {
+        if self.search_pattern.is_empty() {
+            return;
+        }
+        // Search in opposite direction
+        match self.search_direction {
+            SearchDirection::Forward => self.search_backward_from_cursor(),
+            SearchDirection::Backward => self.search_forward_from_cursor(),
+        }
+    }
+
+    fn search_forward_from_cursor(&mut self) {
+        let pattern = &self.search_pattern;
+        if pattern.is_empty() {
+            return;
+        }
+
+        // Start searching from current position + 1
+        let start_row = self.cursor.0;
+        let start_col = self.cursor.1 + 1;
+
+        // Search in current line from cursor position
+        let current_line = &self.lines[start_row];
+        let chars: Vec<char> = current_line.chars().collect();
+        if start_col < chars.len() {
+            let search_str: String = chars[start_col..].iter().collect();
+            if let Some(pos) = search_str.find(pattern) {
+                // Convert byte position to char position
+                let char_pos = search_str[..pos].chars().count();
+                self.cursor.1 = start_col + char_pos;
+                return;
+            }
+        }
+
+        // Search in subsequent lines
+        for row in (start_row + 1)..self.lines.len() {
+            if let Some(pos) = self.lines[row].find(pattern) {
+                // Convert byte position to char position
+                let char_pos = self.lines[row][..pos].chars().count();
+                self.cursor.0 = row;
+                self.cursor.1 = char_pos;
+                return;
+            }
+        }
+
+        // Wrap around to beginning
+        for row in 0..=start_row {
+            let search_end = if row == start_row { self.cursor.1 } else { self.lines[row].len() };
+            let search_str = &self.lines[row][..search_end.min(self.lines[row].len())];
+            if let Some(pos) = search_str.find(pattern) {
+                let char_pos = search_str[..pos].chars().count();
+                self.cursor.0 = row;
+                self.cursor.1 = char_pos;
+                return;
+            }
+        }
+    }
+
+    fn search_backward_from_cursor(&mut self) {
+        let pattern = &self.search_pattern;
+        if pattern.is_empty() {
+            return;
+        }
+
+        let start_row = self.cursor.0;
+        let start_col = self.cursor.1;
+
+        // Search in current line before cursor
+        let current_line = &self.lines[start_row];
+        let chars: Vec<char> = current_line.chars().collect();
+        if start_col > 0 {
+            let search_str: String = chars[..start_col].iter().collect();
+            if let Some(pos) = search_str.rfind(pattern) {
+                let char_pos = search_str[..pos].chars().count();
+                self.cursor.1 = char_pos;
+                return;
+            }
+        }
+
+        // Search in previous lines (from end)
+        for row in (0..start_row).rev() {
+            if let Some(pos) = self.lines[row].rfind(pattern) {
+                let char_pos = self.lines[row][..pos].chars().count();
+                self.cursor.0 = row;
+                self.cursor.1 = char_pos;
+                return;
+            }
+        }
+
+        // Wrap around to end
+        for row in (start_row..self.lines.len()).rev() {
+            let search_start = if row == start_row { 
+                // Search from cursor to end on the starting row
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                if start_col < chars.len() {
+                    let after_cursor: String = chars[start_col..].iter().collect();
+                    // Get byte offset for start_col
+                    let byte_offset: usize = chars[..start_col].iter().map(|c| c.len_utf8()).sum();
+                    byte_offset
+                } else {
+                    0
+                }
+            } else { 
+                0 
+            };
+            let search_str = &self.lines[row][search_start..];
+            if let Some(pos) = search_str.rfind(pattern) {
+                let full_str = &self.lines[row][..search_start + pos];
+                let char_pos = full_str.chars().count();
+                self.cursor.0 = row;
+                self.cursor.1 = char_pos;
+                return;
+            }
+        }
+    }
+
+    fn search_word_under_cursor(&mut self, forward: bool) {
+        // Get the word under cursor
+        let (start, end) = self.get_inner_word_bounds();
+        let line = &self.lines[self.cursor.0];
+        if start < end && end <= line.len() {
+            let word = &line[start..end];
+            // Use word boundaries for exact word match
+            self.search_pattern = word.to_string();
+            self.search_direction = if forward {
+                SearchDirection::Forward
+            } else {
+                SearchDirection::Backward
+            };
+            // Move to next/previous occurrence
+            if forward {
+                self.search_forward_from_cursor();
+            } else {
+                self.search_backward_from_cursor();
+            }
+        }
     }
 
     fn run_loop(&mut self) -> anyhow::Result<()> {
@@ -3156,6 +3332,22 @@ impl<'a> EditorState<'a> {
                             'p' => self.paste_after(),
                             'P' => self.paste_before(),
                             'Y' => self.yank_to_end_of_line(), // Y yanks to end of line (like y$)
+                            '/' => {
+                                // Enter forward search mode
+                                self.mode = EditorMode::Search;
+                                self.search_direction = SearchDirection::Forward;
+                                self.search_input.clear();
+                            }
+                            '?' => {
+                                // Enter backward search mode
+                                self.mode = EditorMode::Search;
+                                self.search_direction = SearchDirection::Backward;
+                                self.search_input.clear();
+                            }
+                            'n' => self.search_next(),
+                            'N' => self.search_prev(),
+                            '*' => self.search_word_under_cursor(true),  // Forward
+                            '#' => self.search_word_under_cursor(false), // Backward
                             _ => {}
                         }
                     }
@@ -3244,6 +3436,47 @@ impl<'a> EditorState<'a> {
                     }) => {
                         self.insert_newline();
                         self.insert_buffer.push('\n');
+                    }
+                    _ => {}
+                },
+                EditorMode::Search => match event {
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Escape,
+                        ..
+                    }) => {
+                        // Cancel search, go back to normal mode
+                        self.mode = EditorMode::Normal;
+                        self.search_input.clear();
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Enter,
+                        ..
+                    }) => {
+                        // Confirm search and find first match
+                        self.search_pattern = self.search_input.clone();
+                        self.mode = EditorMode::Normal;
+                        self.search_input.clear();
+                        // Perform the search
+                        match self.search_direction {
+                            SearchDirection::Forward => self.search_forward_from_cursor(),
+                            SearchDirection::Backward => self.search_backward_from_cursor(),
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Backspace,
+                        ..
+                    }) => {
+                        self.search_input.pop();
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char(c),
+                        modifiers,
+                    }) => {
+                        if !modifiers.contains(Modifiers::CTRL)
+                            && !modifiers.contains(Modifiers::ALT)
+                        {
+                            self.search_input.push(c);
+                        }
                     }
                     _ => {}
                 },
