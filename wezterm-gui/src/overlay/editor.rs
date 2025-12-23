@@ -245,13 +245,16 @@ impl<'a> EditorState<'a> {
     fn delete_char(&mut self) {
         let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if !chars.is_empty() && self.cursor.1 < chars.len() {
+            // Store deleted char in yank buffer
+            self.yank_buffer = chars[self.cursor.1].to_string();
+            self.yank_is_linewise = false;
             chars.remove(self.cursor.1);
             self.lines[self.cursor.0] = chars.into_iter().collect();
             self.clamp_cursor();
             self.lines_modified = true;
             // Only record change if not in insert mode (batch insert mode changes)
             if self.mode != EditorMode::Insert {
-            self.record_change();
+                self.record_change();
             }
         }
     }
@@ -276,6 +279,9 @@ impl<'a> EditorState<'a> {
 
     fn delete_line(&mut self) {
         self.lines_modified = true;
+        // Store deleted line in yank buffer
+        self.yank_buffer = self.lines[self.cursor.0].clone();
+        self.yank_is_linewise = true;
         if self.lines.len() > 1 {
             self.lines.remove(self.cursor.0);
             if self.cursor.0 >= self.lines.len() {
@@ -292,6 +298,11 @@ impl<'a> EditorState<'a> {
 
     fn delete_to_end_of_file(&mut self) {
         // Delete from current line to end of file (linewise)
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[self.cursor.0..].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        
         self.lines_modified = true;
         self.lines.truncate(self.cursor.0 + 1);
         self.lines[self.cursor.0].clear();
@@ -306,6 +317,11 @@ impl<'a> EditorState<'a> {
 
     fn delete_to_start_of_file(&mut self) {
         // Delete from start of file to current line (linewise)
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[..=self.cursor.0].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        
         self.lines_modified = true;
         for _ in 0..=self.cursor.0 {
             self.lines.remove(0);
@@ -887,6 +903,9 @@ impl<'a> EditorState<'a> {
         let (start, end) = self.get_inner_word_bounds();
         let line = &mut self.lines[self.cursor.0];
         if start < end && end <= line.len() {
+            // Store deleted text in yank buffer
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
@@ -898,6 +917,9 @@ impl<'a> EditorState<'a> {
         let (start, end) = self.get_a_word_bounds();
         let line = &mut self.lines[self.cursor.0];
         if start < end && end <= line.len() {
+            // Store deleted text in yank buffer
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
@@ -973,6 +995,9 @@ impl<'a> EditorState<'a> {
         let (start, end) = self.get_inner_long_word_bounds();
         let line = &mut self.lines[self.cursor.0];
         if start < end && end <= line.len() {
+            // Store deleted text in yank buffer
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
@@ -984,6 +1009,9 @@ impl<'a> EditorState<'a> {
         let (start, end) = self.get_a_long_word_bounds();
         let line = &mut self.lines[self.cursor.0];
         if start < end && end <= line.len() {
+            // Store deleted text in yank buffer
+            self.yank_buffer = line[start..end].to_string();
+            self.yank_is_linewise = false;
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
@@ -1144,6 +1172,9 @@ impl<'a> EditorState<'a> {
 
     fn delete_inner_pair(&mut self, pair_char: char) {
         if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            // Store content to be deleted in yank buffer (reuse yank logic)
+            self.yank_inner_pair(pair_char);
+            
             self.lines_modified = true;
             if open_row == close_row {
                 // Same line - simple case
@@ -1176,7 +1207,7 @@ impl<'a> EditorState<'a> {
                     // For ci( with content lines: insert empty line between brackets
                     self.lines.insert(open_row + 1, String::new());
                     self.cursor.0 = open_row + 1;
-        self.cursor.1 = 0;
+                    self.cursor.1 = 0;
                 } else {
                     // For di( or ci( without content lines: cursor on closing bracket
                     self.cursor.0 = open_row + 1;
@@ -1190,6 +1221,9 @@ impl<'a> EditorState<'a> {
 
     fn delete_around_pair(&mut self, pair_char: char) {
         if let Some(((open_row, open_col), (close_row, close_col))) = self.find_pair_bounds(pair_char) {
+            // Store content to be deleted in yank buffer (reuse yank logic)
+            self.yank_around_pair(pair_char);
+            
             self.lines_modified = true;
             if open_row == close_row {
                 // Same line - simple case
@@ -1543,16 +1577,34 @@ impl<'a> EditorState<'a> {
         let actual_end_col = if inclusive { end_col + 1 } else { end_col };
 
         if start_row == end_row {
-            // Same line
-            let line = &mut self.lines[start_row];
-            let end_clamped = actual_end_col.min(line.len());
+            // Same line - store deleted text in yank buffer
+            let chars: Vec<char> = self.lines[start_row].chars().collect();
+            let end_clamped = actual_end_col.min(chars.len());
             if start_col < end_clamped {
-                line.replace_range(start_col..end_clamped, "");
+                self.yank_buffer = chars[start_col..end_clamped].iter().collect();
+                self.yank_is_linewise = false;
+                self.lines[start_row] = chars[..start_col].iter().chain(&chars[end_clamped..]).collect();
             }
             self.cursor.0 = start_row;
             self.cursor.1 = start_col;
         } else {
-            // Multi-line
+            // Multi-line - store deleted text in yank buffer
+            let mut yanked = String::new();
+            let first_chars: Vec<char> = self.lines[start_row].chars().collect();
+            yanked.extend(&first_chars[start_col..]);
+            for row in (start_row + 1)..end_row {
+                yanked.push('\n');
+                yanked.push_str(&self.lines[row]);
+            }
+            if end_row > start_row {
+                yanked.push('\n');
+                let last_chars: Vec<char> = self.lines[end_row].chars().collect();
+                let end_clamped = actual_end_col.min(last_chars.len());
+                yanked.extend(&last_chars[..end_clamped]);
+            }
+            self.yank_buffer = yanked;
+            self.yank_is_linewise = false;
+            
             let first_part: String = self.lines[start_row].chars().take(start_col).collect();
             let last_part: String = self.lines[end_row].chars().skip(actual_end_col).collect();
 
@@ -1846,6 +1898,9 @@ impl<'a> EditorState<'a> {
         self.lines_modified = true;
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 < chars.len() {
+            // Store deleted text in yank buffer
+            self.yank_buffer = chars[self.cursor.1..].iter().collect();
+            self.yank_is_linewise = false;
             self.lines[self.cursor.0] = chars[..self.cursor.1].iter().collect();
         }
         self.clamp_cursor();
@@ -2049,6 +2104,9 @@ impl<'a> EditorState<'a> {
             // Backward motion crossing to previous line
             if end.1 == 0 && delete_empty_lines {
                 // Deleting from start of line = delete entire previous line (for delete ops)
+                // Store deleted line in yank buffer
+                self.yank_buffer = self.lines[end.0].clone();
+                self.yank_is_linewise = true;
                 self.lines.remove(end.0);
                 // Cursor stays on same line index (which is now different content)
                 // but we need to update row since we removed a line above
@@ -2058,6 +2116,9 @@ impl<'a> EditorState<'a> {
                 // Delete from end.1 to end of previous line (or clear line for change ops)
                 let mut chars: Vec<char> = self.lines[end.0].chars().collect();
                 if end.1 < chars.len() {
+                    // Store deleted text in yank buffer
+                    self.yank_buffer = chars[end.1..].iter().collect();
+                    self.yank_is_linewise = false;
                     chars.drain(end.1..);
                     self.lines[end.0] = chars.into_iter().collect();
                 }
@@ -2072,6 +2133,9 @@ impl<'a> EditorState<'a> {
             let range_end = start.1;
             let mut chars: Vec<char> = self.lines[start.0].chars().collect();
             if range_start < range_end && range_end <= chars.len() {
+                // Store deleted text in yank buffer
+                self.yank_buffer = chars[range_start..range_end].iter().collect();
+                self.yank_is_linewise = false;
                 chars.drain(range_start..range_end);
                 self.lines[start.0] = chars.into_iter().collect();
             }
@@ -2080,6 +2144,9 @@ impl<'a> EditorState<'a> {
             // Forward motion crossing to next line - delete to end of current line
             let mut chars: Vec<char> = self.lines[start.0].chars().collect();
             if start.1 < chars.len() {
+                // Store deleted text in yank buffer
+                self.yank_buffer = chars[start.1..].iter().collect();
+                self.yank_is_linewise = false;
                 chars.drain(start.1..);
                 self.lines[start.0] = chars.into_iter().collect();
             }
@@ -2098,6 +2165,9 @@ impl<'a> EditorState<'a> {
             }
 
             if start.1 < range_end {
+                // Store deleted text in yank buffer
+                self.yank_buffer = chars[start.1..range_end].iter().collect();
+                self.yank_is_linewise = false;
                 chars.drain(start.1..range_end);
                 self.lines[start.0] = chars.into_iter().collect();
             }
