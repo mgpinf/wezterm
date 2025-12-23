@@ -210,6 +210,11 @@ impl<'a> EditorState<'a> {
     }
 
     fn clamp_cursor(&mut self) {
+        // Clamp row first
+        if self.cursor.0 >= self.lines.len() {
+            self.cursor.0 = self.lines.len().saturating_sub(1);
+        }
+        // Then clamp column
         let line_len = self.lines[self.cursor.0].chars().count();
         let max_col = if self.mode == EditorMode::Insert {
             line_len
