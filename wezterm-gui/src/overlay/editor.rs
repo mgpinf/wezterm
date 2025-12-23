@@ -1592,8 +1592,28 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
     }
 
-    fn is_sentence_end(c: char) -> bool {
+    fn is_sentence_end_punct(c: char) -> bool {
         matches!(c, '.' | '!' | '?')
+    }
+
+    fn is_sentence_closing_char(c: char) -> bool {
+        matches!(c, ')' | ']' | '"' | '\'')
+    }
+
+    /// Check if a sentence ends at position col in the given chars.
+    /// A sentence ends with '.', '!', or '?' optionally followed by closing chars,
+    /// then whitespace or end of line.
+    fn is_valid_sentence_end(chars: &[char], col: usize) -> bool {
+        if col >= chars.len() || !Self::is_sentence_end_punct(chars[col]) {
+            return false;
+        }
+        // Skip past any closing chars after the punctuation
+        let mut after_col = col + 1;
+        while after_col < chars.len() && Self::is_sentence_closing_char(chars[after_col]) {
+            after_col += 1;
+        }
+        // Must be followed by whitespace or end of line
+        after_col >= chars.len() || chars[after_col].is_whitespace()
     }
 
     fn move_sentence_backward(&mut self) {
@@ -1604,11 +1624,17 @@ impl<'a> EditorState<'a> {
         let started_on_blank = self.lines[start_row].trim().is_empty();
 
         // Helper: find sentence start after a given position (after sentence end punctuation)
+        // Skips closing chars (')', ']', '"', '\'') and whitespace
         let find_sentence_start_after = |lines: &[String], from_row: usize, from_col: usize| -> Option<(usize, usize)> {
             let mut r = from_row;
             let mut c = from_col;
             loop {
                 let chars: Vec<char> = lines[r].chars().collect();
+                // Skip closing characters first
+                while c < chars.len() && Self::is_sentence_closing_char(chars[c]) {
+                    c += 1;
+                }
+                // Then skip whitespace
                 while c < chars.len() && chars[c].is_whitespace() {
                     c += 1;
                 }
@@ -1647,7 +1673,7 @@ impl<'a> EditorState<'a> {
             loop {
                 let chars: Vec<char> = lines[r].chars().collect();
                 loop {
-                    if c < chars.len() && Self::is_sentence_end(chars[c]) {
+                    if Self::is_valid_sentence_end(&chars, c) {
                         // Found previous sentence end, the sentence we want starts after this
                         if let Some(pos) = find_sentence_start_after(lines, r, c + 1) {
                             return pos;
@@ -1708,7 +1734,7 @@ impl<'a> EditorState<'a> {
 
             // Search backward through current line
             loop {
-                if col < chars.len() && Self::is_sentence_end(chars[col]) {
+                if Self::is_valid_sentence_end(&chars, col) {
                     // Found sentence end - find where this sentence starts
                     if let Some((sent_row, sent_col)) = find_sentence_start_after(&self.lines, row, col + 1) {
                         // Check if this sentence start is before our starting position
@@ -1798,13 +1824,21 @@ impl<'a> EditorState<'a> {
 
             // Search forward through current line for sentence end
             while col < chars.len() {
-                if Self::is_sentence_end(chars[col]) {
-                    // Found sentence end, skip whitespace to find start of next sentence
+                if Self::is_valid_sentence_end(&chars, col) {
+                    // Found sentence end, skip closing chars and whitespace to find start of next sentence
                     col += 1;
+                    // Skip closing characters
+                    while col < chars.len() && Self::is_sentence_closing_char(chars[col]) {
+                        col += 1;
+                    }
 
                     // Skip whitespace (including across lines)
                     loop {
                         let cur_chars: Vec<char> = self.lines[row].chars().collect();
+                        // Skip closing characters first (in case we moved to a new line)
+                        while col < cur_chars.len() && Self::is_sentence_closing_char(cur_chars[col]) {
+                            col += 1;
+                        }
                         while col < cur_chars.len() && cur_chars[col].is_whitespace() {
                             col += 1;
                         }
