@@ -2195,24 +2195,43 @@ impl<'a> EditorState<'a> {
             } else {
                 // Multi-line: yank content between brackets
                 let mut yanked = String::new();
+                
                 // First line: from after open bracket (character-based)
+                // Only skip whitespace if there's NO content after open bracket on same line
                 let first_chars: Vec<char> = self.lines[open_row].chars().collect();
-                if open_col + 1 < first_chars.len() {
-                    yanked.extend(&first_chars[open_col + 1..]);
+                let after_open: String = first_chars[open_col + 1..].iter().collect();
+                let has_first_line_content = !after_open.trim().is_empty();
+                if has_first_line_content {
+                    // Has content - include everything after open bracket as-is
+                    yanked.push_str(&after_open);
                 }
+                // If no content (only whitespace), skip it entirely
+                
                 // Middle lines
                 for row in (open_row + 1)..close_row {
-                    yanked.push('\n');
+                    // Add leading newline if there's content before, or if open bracket is alone
+                    if !yanked.is_empty() || !has_first_line_content {
+                        yanked.push('\n');
+                    }
                     yanked.push_str(&self.lines[row]);
                 }
+                
                 // Last line: up to close bracket (character-based)
+                // Only skip whitespace if there's NO content before close bracket on same line
                 if close_row > open_row {
-                    yanked.push('\n');
                     let last_chars: Vec<char> = self.lines[close_row].chars().collect();
-                    if close_col > 0 {
-                        yanked.extend(&last_chars[..close_col]);
+                    let before_close: String = last_chars[..close_col].iter().collect();
+                    let has_last_line_content = !before_close.trim().is_empty();
+                    if has_last_line_content {
+                        // Has content - include everything before close bracket as-is
+                        if !yanked.is_empty() {
+                            yanked.push('\n');
+                        }
+                        yanked.push_str(&before_close);
                     }
+                    // If no content (only whitespace), skip it entirely
                 }
+                
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
             }
