@@ -1597,40 +1597,102 @@ impl<'a> EditorState<'a> {
     }
 
     fn move_sentence_backward(&mut self) {
-        // Move to the beginning of the previous sentence
-        let mut row = self.cursor.0;
-        let mut col = self.cursor.1;
+        // Move to the beginning of the current sentence, or if already at the beginning,
+        // move to the beginning of the previous sentence (or paragraph boundary)
+        let start_row = self.cursor.0;
+        let start_col = self.cursor.1;
+        let started_on_blank = self.lines[start_row].trim().is_empty();
 
-        // Helper to move back one character position
-        let move_back = |r: &mut usize, c: &mut usize, lines: &[String]| -> bool {
-            if *c > 0 {
-                *c -= 1;
-                true
-            } else if *r > 0 {
-                *r -= 1;
-                *c = lines[*r].chars().count().saturating_sub(1);
-                true
-            } else {
-                false
+        // Helper: find sentence start after a given position (after sentence end punctuation)
+        let find_sentence_start_after = |lines: &[String], from_row: usize, from_col: usize| -> Option<(usize, usize)> {
+            let mut r = from_row;
+            let mut c = from_col;
+            loop {
+                let chars: Vec<char> = lines[r].chars().collect();
+                while c < chars.len() && chars[c].is_whitespace() {
+                    c += 1;
+                }
+                if c < chars.len() {
+                    return Some((r, c));
+                }
+                if r < lines.len() - 1 {
+                    r += 1;
+                    c = 0;
+                    if lines[r].trim().is_empty() {
+                        return None; // Hit paragraph boundary
+                    }
+                } else {
+                    return None;
+                }
             }
         };
 
-        // Move back one position to start
-        if !move_back(&mut row, &mut col, &self.lines) {
-            // Already at start of file
+        // Helper: find first non-whitespace of a line (paragraph/sentence start)
+        let find_line_start = |lines: &[String], r: usize| -> usize {
+            let chars: Vec<char> = lines[r].chars().collect();
+            chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0)
+        };
+
+        // Helper: find the start of a sentence that ends at (end_row, end_col)
+        // by searching backward for the previous sentence end or paragraph start
+        let find_sentence_start = |lines: &[String], end_row: usize, end_col: usize| -> (usize, usize) {
+            let mut r = end_row;
+            let mut c = if end_col > 0 { end_col - 1 } else if end_row > 0 {
+                r = end_row - 1;
+                lines[r].chars().count().saturating_sub(1)
+            } else {
+                return (0, 0);
+            };
+
+            loop {
+                let chars: Vec<char> = lines[r].chars().collect();
+                loop {
+                    if c < chars.len() && Self::is_sentence_end(chars[c]) {
+                        // Found previous sentence end, the sentence we want starts after this
+                        if let Some(pos) = find_sentence_start_after(lines, r, c + 1) {
+                            return pos;
+                        }
+                    }
+                    if c == 0 {
+                        break;
+                    }
+                    c -= 1;
+                }
+
+                if r > 0 {
+                    if lines[r - 1].trim().is_empty() {
+                        // Hit paragraph boundary, sentence starts at beginning of this paragraph
+                        return (r, find_line_start(lines, r));
+                    }
+                    r -= 1;
+                    c = lines[r].chars().count().saturating_sub(1);
+                } else {
+                    return (0, 0);
+                }
+            }
+        };
+
+        // Search backward from cursor position for sentence end or paragraph start
+        let mut row = start_row;
+        let mut col = if start_col > 0 { start_col - 1 } else if start_row > 0 {
+            row = start_row - 1;
+            self.lines[row].chars().count().saturating_sub(1)
+        } else {
+            // At start of file
             self.cursor = (0, 0);
             self.update_desired_col();
             return;
-        }
+        };
 
-        // Skip back past whitespace
         loop {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            if col < chars.len() && !chars[col].is_whitespace() {
-                break;
-            }
-            // Check for paragraph boundary (blank line)
-            if chars.is_empty() || self.lines[row].trim().is_empty() {
+            // If we're on a blank line and we didn't start on a blank line, stop here
+            if self.lines[row].trim().is_empty() {
+                if !started_on_blank {
+                    self.cursor = (row, 0);
+                    self.update_desired_col();
+                    return;
+                }
+                // Started on blank line, continue searching in previous paragraph
                 if row > 0 {
                     row -= 1;
                     col = self.lines[row].chars().count().saturating_sub(1);
@@ -1641,59 +1703,29 @@ impl<'a> EditorState<'a> {
                     return;
                 }
             }
-            if !move_back(&mut row, &mut col, &self.lines) {
-                self.cursor = (0, 0);
-                self.update_desired_col();
-                return;
-            }
-        }
 
-        // Skip back past sentence-ending punctuation if we're on it
-        {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            if col < chars.len() && Self::is_sentence_end(chars[col]) {
-                if !move_back(&mut row, &mut col, &self.lines) {
-                    self.cursor = (0, 0);
-                    self.update_desired_col();
-                    return;
-                }
-            }
-        }
-
-        // Now search backward for the previous sentence end or paragraph start
-        loop {
             let chars: Vec<char> = self.lines[row].chars().collect();
 
             // Search backward through current line
             loop {
                 if col < chars.len() && Self::is_sentence_end(chars[col]) {
-                    // Found sentence end, move to start of next sentence (after whitespace)
-                    let mut next_row = row;
-                    let mut next_col = col + 1;
-
-                    // Skip whitespace after sentence end
-                    loop {
-                        let next_chars: Vec<char> = self.lines[next_row].chars().collect();
-                        while next_col < next_chars.len() && next_chars[next_col].is_whitespace() {
-                            next_col += 1;
-                        }
-                        if next_col < next_chars.len() {
-                            // Found start of sentence
-                            self.cursor = (next_row, next_col);
+                    // Found sentence end - find where this sentence starts
+                    if let Some((sent_row, sent_col)) = find_sentence_start_after(&self.lines, row, col + 1) {
+                        // Check if this sentence start is before our starting position
+                        if sent_row < start_row || (sent_row == start_row && sent_col < start_col) {
+                            // We were in the middle of this sentence - go to its start
+                            self.cursor = (sent_row, sent_col);
                             self.update_desired_col();
                             return;
                         }
-                        // Move to next line
-                        if next_row < self.lines.len() - 1 {
-                            next_row += 1;
-                            next_col = 0;
-                            // Check if next line is blank (paragraph boundary)
-                            if self.lines[next_row].trim().is_empty() {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
+                        // We were at or after this sentence start, continue searching backward
+                    } else {
+                        // This sentence ends at paragraph boundary (last sentence of paragraph)
+                        // Find the start of this sentence
+                        let (sent_start_row, sent_start_col) = find_sentence_start(&self.lines, row, col);
+                        self.cursor = (sent_start_row, sent_start_col);
+                        self.update_desired_col();
+                        return;
                     }
                 }
                 if col == 0 {
@@ -1702,14 +1734,22 @@ impl<'a> EditorState<'a> {
                 col -= 1;
             }
 
-            // Check start of line - if previous line is blank, this is sentence start
+            // Check if previous line is blank (paragraph boundary)
             if row > 0 {
                 if self.lines[row - 1].trim().is_empty() {
-                    // Start of paragraph = start of sentence
-                    // Find first non-whitespace character
-                    let chars: Vec<char> = self.lines[row].chars().collect();
-                    let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
-                    self.cursor = (row, start_col);
+                    // At paragraph boundary
+                    let para_start_col = find_line_start(&self.lines, row);
+                    // Check if we were at the paragraph start (first sentence start)
+                    if row == start_row && para_start_col == start_col {
+                        // We were at the start of first sentence, go to blank line (like {)
+                        self.cursor = (row - 1, 0);
+                    } else if row < start_row || (row == start_row && para_start_col < start_col) {
+                        // We were in the middle of first sentence, go to paragraph start
+                        self.cursor = (row, para_start_col);
+                    } else {
+                        // Go to blank line
+                        self.cursor = (row - 1, 0);
+                    }
                     self.update_desired_col();
                     return;
                 }
@@ -1726,9 +1766,32 @@ impl<'a> EditorState<'a> {
 
     fn move_sentence_forward(&mut self) {
         // Move to the beginning of the next sentence
+        // When on the last sentence of a paragraph, behave like } (go to blank line)
+        // When on a blank line, go to first sentence of next paragraph
         let mut row = self.cursor.0;
         let mut col = self.cursor.1;
         let last_row = self.lines.len().saturating_sub(1);
+        let started_on_blank = self.lines[row].trim().is_empty();
+
+        // If starting on a blank line, skip to next paragraph's first sentence
+        if started_on_blank {
+            while row < last_row && self.lines[row].trim().is_empty() {
+                row += 1;
+            }
+            if self.lines[row].trim().is_empty() {
+                // All remaining lines are blank, go to last position
+                self.cursor.0 = last_row;
+                self.cursor.1 = 0;
+                self.update_desired_col();
+                return;
+            }
+            // Find first non-whitespace of this line
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
+            self.cursor = (row, start_col);
+            self.update_desired_col();
+            return;
+        }
 
         loop {
             let chars: Vec<char> = self.lines[row].chars().collect();
@@ -1756,15 +1819,9 @@ impl<'a> EditorState<'a> {
                             row += 1;
                             col = 0;
                             // Check if line is blank (paragraph boundary)
+                            // Stop at the blank line like } does
                             if self.lines[row].trim().is_empty() {
-                                // Skip blank lines to next paragraph
-                                while row < last_row && self.lines[row].trim().is_empty() {
-                                    row += 1;
-                                }
-                                // Find first non-whitespace
-                                let new_chars: Vec<char> = self.lines[row].chars().collect();
-                                let start_col = new_chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
-                                self.cursor = (row, start_col);
+                                self.cursor = (row, 0);
                                 self.update_desired_col();
                                 return;
                             }
@@ -1785,15 +1842,9 @@ impl<'a> EditorState<'a> {
                 row += 1;
                 col = 0;
                 // Check if line is blank (paragraph boundary = sentence boundary)
+                // Stop at the blank line like } does
                 if self.lines[row].trim().is_empty() {
-                    // Skip blank lines
-                    while row < last_row && self.lines[row].trim().is_empty() {
-                        row += 1;
-                    }
-                    // Find first non-whitespace
-                    let chars: Vec<char> = self.lines[row].chars().collect();
-                    let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
-                    self.cursor = (row, start_col);
+                    self.cursor = (row, 0);
                     self.update_desired_col();
                     return;
                 }
