@@ -3222,12 +3222,17 @@ impl<'a> EditorState<'a> {
             yanked_text.push_str(&start_chars[..start.1].iter().collect::<String>());
 
             self.yank_buffer = yanked_text;
+            
+            // If yank ends at column 0 and starts at column 0, treat as linewise
+            // (complete lines were yanked, like y{ from start of paragraph)
+            self.yank_is_linewise = end.1 == 0 && start.1 == 0;
         } else if end.0 == start.0 && end.1 < start.1 {
             // Backward motion on same line (yb, yB)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
             if end.1 < start.1 && start.1 <= chars.len() {
                 self.yank_buffer = chars[end.1..start.1].iter().collect();
             }
+            self.yank_is_linewise = false;
         } else if end.0 > start.0 {
             // Forward motion crossing to next line - yank multi-line
             let mut yanked_text = String::new();
@@ -3249,6 +3254,10 @@ impl<'a> EditorState<'a> {
             yanked_text.push_str(&end_chars[..end_col].iter().collect::<String>());
 
             self.yank_buffer = yanked_text;
+            
+            // If yank starts at column 0 and ends at column 0, treat as linewise
+            // (complete lines were yanked, like y} from start of paragraph)
+            self.yank_is_linewise = start.1 == 0 && end_col == 0;
         } else {
             // Forward motion on same line (yw, ye)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
@@ -3262,8 +3271,8 @@ impl<'a> EditorState<'a> {
             if start.1 < range_end {
                 self.yank_buffer = chars[start.1..range_end].iter().collect();
             }
+            self.yank_is_linewise = false;
         }
-        self.yank_is_linewise = false;
     }
 
     fn yank_inner_word(&mut self) {
