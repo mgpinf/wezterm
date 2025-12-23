@@ -382,6 +382,133 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
+    fn delete_line_and_below(&mut self) {
+        // Delete current line and line below (dj) - linewise
+        if self.cursor.0 >= self.lines.len() - 1 {
+            // No line below, just delete current line
+            self.delete_line();
+            return;
+        }
+        self.record_change();
+        self.lines_modified = true;
+        
+        // Store deleted lines in yank buffer
+        let end_row = (self.cursor.0 + 1).min(self.lines.len() - 1);
+        let yanked: Vec<&str> = self.lines[self.cursor.0..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        
+        // Remove the two lines
+        self.lines.remove(self.cursor.0);
+        if self.cursor.0 < self.lines.len() {
+            self.lines.remove(self.cursor.0);
+        }
+        
+        // Ensure at least one line exists
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        
+        // Clamp cursor
+        if self.cursor.0 >= self.lines.len() {
+            self.cursor.0 = self.lines.len() - 1;
+        }
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    fn delete_line_and_above(&mut self) {
+        // Delete current line and line above (dk) - linewise
+        if self.cursor.0 == 0 {
+            // No line above, just delete current line
+            self.delete_line();
+            return;
+        }
+        self.record_change();
+        self.lines_modified = true;
+        
+        // Store deleted lines in yank buffer
+        let start_row = self.cursor.0 - 1;
+        let yanked: Vec<&str> = self.lines[start_row..=self.cursor.0].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        
+        // Remove the two lines (remove upper first, then current which is now at start_row)
+        self.lines.remove(start_row);
+        self.lines.remove(start_row);
+        
+        // Ensure at least one line exists
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        
+        // Move cursor up
+        self.cursor.0 = start_row.min(self.lines.len() - 1);
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    fn change_line_and_below(&mut self) {
+        // Change current line and line below (cj) - linewise, enter insert mode
+        if self.cursor.0 >= self.lines.len() - 1 {
+            // No line below, just substitute current line
+            self.substitute_line();
+            return;
+        }
+        self.record_change();
+        self.lines_modified = true;
+        
+        // Store deleted lines in yank buffer
+        let end_row = (self.cursor.0 + 1).min(self.lines.len() - 1);
+        let yanked: Vec<&str> = self.lines[self.cursor.0..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        
+        // Remove the two lines
+        self.lines.remove(self.cursor.0);
+        if self.cursor.0 < self.lines.len() {
+            self.lines.remove(self.cursor.0);
+        }
+        
+        // Insert blank line for typing
+        self.lines.insert(self.cursor.0, String::new());
+        self.cursor.1 = 0;
+        self.update_desired_col();
+        self.mode = EditorMode::Insert;
+        self.record_change();
+    }
+
+    fn change_line_and_above(&mut self) {
+        // Change current line and line above (ck) - linewise, enter insert mode
+        if self.cursor.0 == 0 {
+            // No line above, just substitute current line
+            self.substitute_line();
+            return;
+        }
+        self.record_change();
+        self.lines_modified = true;
+        
+        // Store deleted lines in yank buffer
+        let start_row = self.cursor.0 - 1;
+        let yanked: Vec<&str> = self.lines[start_row..=self.cursor.0].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        
+        // Remove the two lines
+        self.lines.remove(start_row);
+        self.lines.remove(start_row);
+        
+        // Insert blank line for typing at start_row
+        self.lines.insert(start_row, String::new());
+        self.cursor.0 = start_row;
+        self.cursor.1 = 0;
+        self.update_desired_col();
+        self.mode = EditorMode::Insert;
+        self.record_change();
+    }
+
     fn change_to_start_of_file(&mut self) {
         // Delete from start of file to current line, insert blank line for typing
         self.lines_modified = true;
@@ -440,6 +567,61 @@ impl<'a> EditorState<'a> {
             self.yank_buffer.clear();
         }
         self.yank_is_linewise = false;
+    }
+
+    fn yank_line_and_below(&mut self) {
+        // Yank current line and line below (yj) - linewise
+        let end_row = (self.cursor.0 + 1).min(self.lines.len() - 1);
+        let yanked: Vec<&str> = self.lines[self.cursor.0..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+    }
+
+    fn yank_line_and_above(&mut self) {
+        // Yank current line and line above (yk) - linewise
+        let start_row = if self.cursor.0 > 0 { self.cursor.0 - 1 } else { 0 };
+        let yanked: Vec<&str> = self.lines[start_row..=self.cursor.0].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        // Move cursor to upper line (like Neovim)
+        if self.cursor.0 > 0 {
+            self.cursor.0 -= 1;
+            self.clamp_cursor();
+            self.update_desired_col();
+        }
+    }
+
+    fn get_char_left_pos(&self) -> (usize, usize) {
+        if self.cursor.1 > 0 {
+            (self.cursor.0, self.cursor.1 - 1)
+        } else {
+            self.cursor
+        }
+    }
+
+    fn get_char_right_pos(&self) -> (usize, usize) {
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 < chars.len() {
+            (self.cursor.0, self.cursor.1 + 1)
+        } else {
+            self.cursor
+        }
+    }
+
+    fn get_line_below_pos(&self) -> (usize, usize) {
+        if self.cursor.0 < self.lines.len() - 1 {
+            (self.cursor.0 + 1, 0)
+        } else {
+            self.cursor
+        }
+    }
+
+    fn get_line_above_pos(&self) -> (usize, usize) {
+        if self.cursor.0 > 0 {
+            (self.cursor.0 - 1, 0)
+        } else {
+            self.cursor
+        }
     }
 
     fn get_word_forward_pos(&self) -> (usize, usize) {
@@ -4205,6 +4387,28 @@ impl<'a> EditorState<'a> {
                                             false,
                                         );
                                     }
+                                    'h' => {
+                                        self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(
+                                            |s| s.get_char_left_pos(),
+                                            false,
+                                            false,
+                                        );
+                                    }
+                                    'l' => {
+                                        self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(
+                                            |s| s.get_char_right_pos(),
+                                            false,
+                                            false,
+                                        );
+                                    }
+                                    'j' => {
+                                        self.change_line_and_below();
+                                    }
+                                    'k' => {
+                                        self.change_line_and_above();
+                                    }
                                     'G' => self.change_to_end_of_file(),
                                     'g' => {
                                         // Wait for second 'g' to complete 'cgg'
@@ -4302,6 +4506,18 @@ impl<'a> EditorState<'a> {
                                         false,
                                         true,
                                     ),
+                                    'h' => self.perform_delete_motion(
+                                        |s| s.get_char_left_pos(),
+                                        false,
+                                        true,
+                                    ),
+                                    'l' => self.perform_delete_motion(
+                                        |s| s.get_char_right_pos(),
+                                        false,
+                                        true,
+                                    ),
+                                    'j' => self.delete_line_and_below(),
+                                    'k' => self.delete_line_and_above(),
                                     'G' => self.delete_to_end_of_file(),
                                     'g' => {
                                         // Wait for second 'g' to complete 'dgg'
@@ -4356,6 +4572,10 @@ impl<'a> EditorState<'a> {
                                     '$' => self.yank_to_end_of_line(),
                                     '^' => self.perform_yank_motion(|s| s.get_first_non_blank_pos(), false),
                                     '0' => self.perform_yank_motion(|s| s.get_line_start_pos(), false),
+                                    'h' => self.perform_yank_motion(|s| s.get_char_left_pos(), false),
+                                    'l' => self.perform_yank_motion(|s| s.get_char_right_pos(), false),
+                                    'j' => self.yank_line_and_below(),
+                                    'k' => self.yank_line_and_above(),
                                     'G' => self.yank_to_end_of_file(),
                                     'g' => {
                                         // Wait for second 'g' to complete 'ygg'
