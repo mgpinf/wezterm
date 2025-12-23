@@ -118,6 +118,7 @@ struct EditorState<'a> {
     lines: Vec<String>,
     lines_modified: bool, // Track if lines changed since last record
     cursor: (usize, usize), // row, col
+    desired_col: usize,     // Desired column for vertical movement (Vim behavior)
     mode: EditorMode,
     colors: EditorColors,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
@@ -160,6 +161,7 @@ impl<'a> EditorState<'a> {
             lines: lines.clone(),
             lines_modified: false,
             cursor: (0, 0),
+            desired_col: 0,
             mode: EditorMode::Normal,
             colors: EditorColors::new(),
             buf,
@@ -232,8 +234,21 @@ impl<'a> EditorState<'a> {
             line_len.saturating_sub(1)
         };
 
-        let new_col = (self.cursor.1 as isize + col).max(0).min(max_col as isize) as usize;
-        self.cursor = (new_row, new_col);
+        if col != 0 {
+            // Horizontal movement - update desired_col to actual position
+            let new_col = (self.cursor.1 as isize + col).max(0).min(max_col as isize) as usize;
+            self.cursor = (new_row, new_col);
+            self.desired_col = new_col;
+        } else {
+            // Vertical movement - try to reach desired_col
+            let new_col = self.desired_col.min(max_col);
+            self.cursor = (new_row, new_col);
+        }
+    }
+    
+    /// Update desired_col to current cursor position (call after explicit column changes)
+    fn update_desired_col(&mut self) {
+        self.desired_col = self.cursor.1;
     }
 
     fn clamp_cursor(&mut self) {
@@ -278,6 +293,7 @@ impl<'a> EditorState<'a> {
             chars.remove(self.cursor.1);
             self.lines[self.cursor.0] = chars.into_iter().collect();
             self.clamp_cursor();
+            self.update_desired_col();
             self.lines_modified = true;
             // Only record change if not in insert mode (batch insert mode changes)
             if self.mode != EditorMode::Insert {
@@ -315,10 +331,12 @@ impl<'a> EditorState<'a> {
                 self.cursor.0 = self.lines.len() - 1;
             }
             self.clamp_cursor();
+            self.update_desired_col();
             self.record_change();
         } else {
             self.lines[0].clear();
             self.cursor.1 = 0;
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -339,6 +357,7 @@ impl<'a> EditorState<'a> {
         }
         // Preserve column position, clamp if line is shorter
         self.clamp_cursor();
+        self.update_desired_col();
         self.record_change();
     }
 
@@ -359,6 +378,7 @@ impl<'a> EditorState<'a> {
         self.cursor.0 = 0;
         // Preserve column position, clamp if line is shorter
         self.clamp_cursor();
+        self.update_desired_col();
         self.record_change();
     }
 
@@ -464,6 +484,7 @@ impl<'a> EditorState<'a> {
     fn move_word_forward(&mut self) {
         self.cursor = self.get_word_forward_pos();
         self.clamp_cursor();
+        self.update_desired_col();
     }
 
     fn get_word_backward_pos(&self) -> (usize, usize) {
@@ -595,6 +616,7 @@ impl<'a> EditorState<'a> {
 
     fn move_word_backward(&mut self) {
         self.cursor = self.get_word_backward_pos();
+        self.update_desired_col();
     }
 
     fn get_word_end_pos(&self) -> (usize, usize) {
@@ -659,6 +681,7 @@ impl<'a> EditorState<'a> {
 
     fn move_to_word_end(&mut self) {
         self.cursor = self.get_word_end_pos();
+        self.update_desired_col();
     }
 
     fn get_long_word_forward_pos(&self) -> (usize, usize) {
@@ -696,6 +719,7 @@ impl<'a> EditorState<'a> {
     fn move_long_word_forward(&mut self) {
         self.cursor = self.get_long_word_forward_pos();
         self.clamp_cursor();
+        self.update_desired_col();
     }
 
     fn get_long_word_backward_pos(&self) -> (usize, usize) {
@@ -788,6 +812,7 @@ impl<'a> EditorState<'a> {
 
     fn move_long_word_backward(&mut self) {
         self.cursor = self.get_long_word_backward_pos();
+        self.update_desired_col();
     }
 
     fn get_long_word_end_pos(&self) -> (usize, usize) {
@@ -834,6 +859,7 @@ impl<'a> EditorState<'a> {
 
     fn move_to_long_word_end(&mut self) {
         self.cursor = self.get_long_word_end_pos();
+        self.update_desired_col();
     }
 
     fn get_first_non_blank_pos(&self) -> (usize, usize) {
@@ -848,6 +874,7 @@ impl<'a> EditorState<'a> {
 
     fn move_to_first_non_blank(&mut self) {
         self.cursor = self.get_first_non_blank_pos();
+        self.update_desired_col();
     }
 
     fn get_line_start_pos(&self) -> (usize, usize) {
@@ -994,6 +1021,7 @@ impl<'a> EditorState<'a> {
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -1008,6 +1036,7 @@ impl<'a> EditorState<'a> {
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -1086,6 +1115,7 @@ impl<'a> EditorState<'a> {
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -1100,6 +1130,7 @@ impl<'a> EditorState<'a> {
             line.replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -1300,6 +1331,7 @@ impl<'a> EditorState<'a> {
                 }
             }
             self.clamp_cursor();
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -1335,6 +1367,7 @@ impl<'a> EditorState<'a> {
                 self.cursor.1 = open_col;
             }
             self.clamp_cursor();
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -1989,6 +2022,7 @@ impl<'a> EditorState<'a> {
             self.lines[self.cursor.0] = chars[..self.cursor.1].iter().collect();
         }
         self.clamp_cursor();
+        self.update_desired_col();
         self.record_change();
     }
 
@@ -2380,6 +2414,7 @@ impl<'a> EditorState<'a> {
             }
         }
         self.clamp_cursor();
+        self.update_desired_col();
         self.record_change();
     }
 
@@ -3030,6 +3065,7 @@ impl<'a> EditorState<'a> {
             }
         }
         self.clamp_cursor();
+        self.update_desired_col();
         self.record_change();
     }
 
@@ -3082,7 +3118,10 @@ impl<'a> EditorState<'a> {
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('R'),
                         modifiers: Modifiers::CTRL,
-                    }) => self.redo(),
+                    }) => {
+                        self.redo();
+                        self.update_desired_col();
+                    }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
                         ..
@@ -3466,6 +3505,14 @@ impl<'a> EditorState<'a> {
                             let first = self.pending_keys[0];
                             if first == KeyCode::Char('g') && c == 'g' {
                                 self.cursor.0 = 0;
+                                // Use desired_col like vertical movement
+                                let line_len = self.lines[self.cursor.0].chars().count();
+                                let max_col = if self.mode == EditorMode::Insert {
+                                    line_len
+                                } else {
+                                    line_len.saturating_sub(1)
+                                };
+                                self.cursor.1 = self.desired_col.min(max_col);
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('Z') && c == 'Z' {
                                 self.submit();
@@ -3474,31 +3521,39 @@ impl<'a> EditorState<'a> {
                                 break;
                             } else if first == KeyCode::Char('[') && c == '(' {
                                 self.jump_to_prev_unmatched('(', ')');
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('[') && c == '{' {
                                 self.jump_to_prev_unmatched('{', '}');
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char(']') && c == ')' {
                                 self.jump_to_next_unmatched('(', ')');
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char(']') && c == '}' {
                                 self.jump_to_next_unmatched('{', '}');
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('f') {
                                 self.move_to_char_forward(c);
                                 self.last_char_search = Some(('f', c));
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('F') {
                                 self.move_to_char_backward(c);
                                 self.last_char_search = Some(('F', c));
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('t') {
                                 self.move_till_char_forward(c);
                                 self.last_char_search = Some(('t', c));
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('T') {
                                 self.move_till_char_backward(c);
                                 self.last_char_search = Some(('T', c));
+                                self.update_desired_col();
                                 self.pending_keys.clear();
                             } else if first == KeyCode::Char('r') {
                                 self.replace_char(c);
@@ -3598,13 +3653,33 @@ impl<'a> EditorState<'a> {
                                 self.delete_char();
                                 self.last_change = LastChange::DeleteChar;
                             }
-                            'u' => self.undo(),
-                            '0' => self.cursor.1 = 0,
-                            '^' => self.move_to_first_non_blank(),
-                            '$' => {
-                                self.cursor.1 = self.lines[self.cursor.0].len().saturating_sub(1)
+                            'u' => {
+                                self.undo();
+                                self.update_desired_col();
                             }
-                            'G' => self.cursor.0 = self.lines.len() - 1,
+                            '0' => {
+                                self.cursor.1 = 0;
+                                self.update_desired_col();
+                            }
+                            '^' => {
+                                self.move_to_first_non_blank();
+                                self.update_desired_col();
+                            }
+                            '$' => {
+                                self.cursor.1 = self.lines[self.cursor.0].chars().count().saturating_sub(1);
+                                self.update_desired_col();
+                            }
+                            'G' => {
+                                self.cursor.0 = self.lines.len() - 1;
+                                // Use desired_col like vertical movement
+                                let line_len = self.lines[self.cursor.0].chars().count();
+                                let max_col = if self.mode == EditorMode::Insert {
+                                    line_len
+                                } else {
+                                    line_len.saturating_sub(1)
+                                };
+                                self.cursor.1 = self.desired_col.min(max_col);
+                            }
                             'D' => {
                                 self.delete_to_end_of_line();
                                 self.last_change = LastChange::DeleteToEndOfLine;
@@ -3632,12 +3707,27 @@ impl<'a> EditorState<'a> {
                                 self.toggle_case();
                                 self.last_change = LastChange::ToggleCase;
                             }
-                            '%' => self.jump_to_matching_bracket(),
+                            '%' => {
+                                self.jump_to_matching_bracket();
+                                self.update_desired_col();
+                            }
                             '.' => self.repeat_last_change(),
-                            ';' => self.repeat_char_search(false), // Same direction
-                            ',' => self.repeat_char_search(true),  // Opposite direction
-                            'p' => self.paste_after(),
-                            'P' => self.paste_before(),
+                            ';' => {
+                                self.repeat_char_search(false); // Same direction
+                                self.update_desired_col();
+                            }
+                            ',' => {
+                                self.repeat_char_search(true);  // Opposite direction
+                                self.update_desired_col();
+                            }
+                            'p' => {
+                                self.paste_after();
+                                self.update_desired_col();
+                            }
+                            'P' => {
+                                self.paste_before();
+                                self.update_desired_col();
+                            }
                             'Y' => self.yank_to_end_of_line(), // Y yanks to end of line (like y$)
                             '/' => {
                                 // Enter forward search mode
@@ -3651,10 +3741,22 @@ impl<'a> EditorState<'a> {
                                 self.search_direction = SearchDirection::Backward;
                                 self.search_input.clear();
                             }
-                            'n' => self.search_next(),
-                            'N' => self.search_prev(),
-                            '*' => self.search_word_under_cursor(true),  // Forward
-                            '#' => self.search_word_under_cursor(false), // Backward
+                            'n' => {
+                                self.search_next();
+                                self.update_desired_col();
+                            }
+                            'N' => {
+                                self.search_prev();
+                                self.update_desired_col();
+                            }
+                            '*' => {
+                                self.search_word_under_cursor(true);  // Forward
+                                self.update_desired_col();
+                            }
+                            '#' => {
+                                self.search_word_under_cursor(false); // Backward
+                                self.update_desired_col();
+                            }
                             'v' => {
                                 // Enter character-wise visual mode
                                 self.mode = EditorMode::Visual;
@@ -3696,6 +3798,8 @@ impl<'a> EditorState<'a> {
                         }
                         // Then clamp to ensure we're within line bounds
                         self.clamp_cursor();
+                        // Update desired_col after insert
+                        self.update_desired_col();
                         // Record state after insert session and cursor adjustment for redo to work
                         self.record_change();
                         // Save insert buffer as last change if we have text and it's not a change operation
@@ -3778,6 +3882,7 @@ impl<'a> EditorState<'a> {
                             SearchDirection::Forward => self.search_forward_from_cursor(),
                             SearchDirection::Backward => self.search_backward_from_cursor(),
                         }
+                        self.update_desired_col();
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Backspace,
@@ -3996,13 +4101,30 @@ impl<'a> EditorState<'a> {
                         'B' => self.move_long_word_backward(),
                         'e' => self.move_to_word_end(),
                         'E' => self.move_to_long_word_end(),
-                        '0' => self.cursor.1 = 0,
+                        '0' => {
+                            self.cursor.1 = 0;
+                            self.update_desired_col();
+                        }
                         '^' => self.move_to_first_non_blank(),
                         '$' => {
                             self.cursor.1 = self.lines[self.cursor.0].chars().count().saturating_sub(1);
+                            self.update_desired_col();
                         }
-                        'G' => self.cursor.0 = self.lines.len() - 1,
-                        '%' => self.jump_to_matching_bracket(),
+                        'G' => {
+                            self.cursor.0 = self.lines.len() - 1;
+                            // Use desired_col like vertical movement
+                            let line_len = self.lines[self.cursor.0].chars().count();
+                            let max_col = if self.mode == EditorMode::Insert {
+                                line_len
+                            } else {
+                                line_len.saturating_sub(1)
+                            };
+                            self.cursor.1 = self.desired_col.min(max_col);
+                        }
+                        '%' => {
+                            self.jump_to_matching_bracket();
+                            self.update_desired_col();
+                        }
                         // Operations on selection
                         'd' | 'x' => {
                             self.delete_visual_selection();
@@ -4066,6 +4188,7 @@ impl<'a> EditorState<'a> {
                         // Swap anchor and cursor
                         'o' => {
                             std::mem::swap(&mut self.cursor, &mut self.visual_start);
+                            self.update_desired_col();
                         }
                         // Text object selection - 'i' for inner, 'a' for around
                         'i' | 'a' => {
