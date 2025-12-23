@@ -425,6 +425,10 @@ impl<'a> EditorState<'a> {
         let yanked: Vec<&str> = self.lines[..=self.cursor.0].iter().map(|s| s.as_str()).collect();
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
+        // Move cursor to first line, maintaining column (like Neovim)
+        self.cursor.0 = 0;
+        self.clamp_cursor();
+        self.update_desired_col();
     }
 
     fn yank_to_end_of_line(&mut self) {
@@ -3226,6 +3230,10 @@ impl<'a> EditorState<'a> {
             // If yank ends at column 0 and starts at column 0, treat as linewise
             // (complete lines were yanked, like y{ from start of paragraph)
             self.yank_is_linewise = end.1 == 0 && start.1 == 0;
+            
+            // Move cursor to start of yanked region (like Neovim)
+            self.cursor = end;
+            self.update_desired_col();
         } else if end.0 == start.0 && end.1 < start.1 {
             // Backward motion on same line (yb, yB)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
@@ -3233,6 +3241,10 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = chars[end.1..start.1].iter().collect();
             }
             self.yank_is_linewise = false;
+            
+            // Move cursor to start of yanked region (like Neovim)
+            self.cursor.1 = end.1;
+            self.update_desired_col();
         } else if end.0 > start.0 {
             // Forward motion crossing to next line - yank multi-line
             let mut yanked_text = String::new();
@@ -3419,6 +3431,9 @@ impl<'a> EditorState<'a> {
                 let start_col = if inclusive { rel_pos } else { rel_pos + 1 };
                 self.yank_buffer = chars[start_col..self.cursor.1].iter().collect();
                 self.yank_is_linewise = false;
+                // Move cursor to start of yanked region (like Neovim)
+                self.cursor.1 = start_col;
+                self.update_desired_col();
             }
         }
     }
@@ -3444,6 +3459,7 @@ impl<'a> EditorState<'a> {
                 }
                 // Move cursor to opening bracket (smaller column)
                 self.cursor = (saved_cursor.0, start_col);
+                self.update_desired_col();
             } else {
                 // Multi-line: yank from start to end including brackets
                 let (start_pos, end_pos) = if saved_cursor.0 < end.0 || (saved_cursor.0 == end.0 && saved_cursor.1 < end.1) {
@@ -3468,6 +3484,7 @@ impl<'a> EditorState<'a> {
                 self.yank_is_linewise = false;
                 // Move cursor to opening bracket (earlier position)
                 self.cursor = start_pos;
+                self.update_desired_col();
             }
         }
     }
@@ -3478,17 +3495,18 @@ impl<'a> EditorState<'a> {
         // Check if cursor moved
         if self.cursor != saved_cursor {
             let target = self.cursor;
-            self.cursor = saved_cursor;
-            // Yank from target to cursor (exclusive of target position)
+            // Yank from target to saved_cursor (exclusive of target position)
             if target.0 == saved_cursor.0 {
                 // Same line - use character indices
-                let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                let chars: Vec<char> = self.lines[target.0].chars().collect();
                 if target.1 < saved_cursor.1 && saved_cursor.1 <= chars.len() {
                     self.yank_buffer = chars[target.1 + 1..saved_cursor.1].iter().collect();
                     self.yank_is_linewise = false;
                 }
             }
             // Multi-line yank not supported for this motion for simplicity
+            // Cursor stays at target (backward motion moves cursor like Neovim)
+            self.update_desired_col();
         }
     }
 
