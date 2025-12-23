@@ -198,7 +198,7 @@ impl<'a> EditorState<'a> {
         let new_row = (self.cursor.0 as isize + row)
             .max(0)
             .min((self.lines.len() - 1) as isize) as usize;
-        let line_len = self.lines[new_row].len();
+        let line_len = self.lines[new_row].chars().count();
         let max_col = if self.mode == EditorMode::Insert {
             line_len
         } else {
@@ -210,7 +210,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn clamp_cursor(&mut self) {
-        let line_len = self.lines[self.cursor.0].len();
+        let line_len = self.lines[self.cursor.0].chars().count();
         let max_col = if self.mode == EditorMode::Insert {
             line_len
         } else {
@@ -222,47 +222,50 @@ impl<'a> EditorState<'a> {
     }
 
     fn insert_char(&mut self, c: char) {
-        let line = &mut self.lines[self.cursor.0];
-        if self.cursor.1 >= line.len() {
-            line.push(c);
+        let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 >= chars.len() {
+            chars.push(c);
         } else {
-            line.insert(self.cursor.1, c);
+            chars.insert(self.cursor.1, c);
         }
+        self.lines[self.cursor.0] = chars.into_iter().collect();
         self.cursor.1 += 1;
         self.lines_modified = true;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
-            self.record_change();
+        self.record_change();
         }
     }
 
     fn delete_char(&mut self) {
-        let line = &mut self.lines[self.cursor.0];
-        if !line.is_empty() && self.cursor.1 < line.len() {
-            line.remove(self.cursor.1);
+        let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if !chars.is_empty() && self.cursor.1 < chars.len() {
+            chars.remove(self.cursor.1);
+            self.lines[self.cursor.0] = chars.into_iter().collect();
             self.clamp_cursor();
             self.lines_modified = true;
             // Only record change if not in insert mode (batch insert mode changes)
             if self.mode != EditorMode::Insert {
-                self.record_change();
+            self.record_change();
             }
         }
     }
 
     fn insert_newline(&mut self) {
-        let line = &mut self.lines[self.cursor.0];
-        let rest = if self.cursor.1 < line.len() {
-            line.split_off(self.cursor.1)
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let (before, after): (String, String) = if self.cursor.1 < chars.len() {
+            (chars[..self.cursor.1].iter().collect(), chars[self.cursor.1..].iter().collect())
         } else {
-            String::new()
+            (chars.into_iter().collect(), String::new())
         };
-        self.lines.insert(self.cursor.0 + 1, rest);
+        self.lines[self.cursor.0] = before;
+        self.lines.insert(self.cursor.0 + 1, after);
         self.cursor.0 += 1;
         self.cursor.1 = 0;
         self.lines_modified = true;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
-            self.record_change();
+        self.record_change();
         }
     }
 
@@ -358,9 +361,9 @@ impl<'a> EditorState<'a> {
 
     fn yank_to_end_of_line(&mut self) {
         // Yank from cursor to end of line (characterwise)
-        let line = &self.lines[self.cursor.0];
-        if self.cursor.1 < line.len() {
-            self.yank_buffer = line[self.cursor.1..].to_string();
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 < chars.len() {
+            self.yank_buffer = chars[self.cursor.1..].iter().collect();
         } else {
             self.yank_buffer.clear();
         }
@@ -368,8 +371,8 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_word_forward_pos(&self) -> (usize, usize) {
-        let current_line = &self.lines[self.cursor.0];
-        if self.cursor.1 >= current_line.len() {
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 >= chars.len() {
             if self.cursor.0 < self.lines.len() - 1 {
                 return (self.cursor.0 + 1, 0);
             }
@@ -377,7 +380,6 @@ impl<'a> EditorState<'a> {
         }
 
         let mut idx = self.cursor.1;
-        let chars: Vec<char> = current_line.chars().collect();
 
         while idx < chars.len() && chars[idx].is_whitespace() {
             idx += 1;
@@ -419,10 +421,47 @@ impl<'a> EditorState<'a> {
     fn get_word_backward_pos(&self) -> (usize, usize) {
         if self.cursor.1 == 0 {
             if self.cursor.0 > 0 {
-                return (
-                    self.cursor.0 - 1,
-                    self.lines[self.cursor.0 - 1].len().saturating_sub(1),
-                );
+                // Go to previous line and find start of last word
+                let prev_line = self.cursor.0 - 1;
+                let chars: Vec<char> = self.lines[prev_line].chars().collect();
+                if chars.is_empty() {
+                    return (prev_line, 0);
+                }
+                
+                let mut idx = chars.len() - 1;
+                
+                // Skip trailing whitespace
+                while idx > 0 && chars[idx].is_whitespace() {
+                    idx -= 1;
+                }
+                
+                if idx == 0 {
+                    return (prev_line, 0);
+                }
+                
+                // Find start of word
+                let start_type_is_word = !chars[idx].is_whitespace() && !chars[idx].is_ascii_punctuation();
+                let start_type_is_punct = chars[idx].is_ascii_punctuation();
+                
+                while idx > 0 {
+                    let prev = idx - 1;
+                    let prev_is_word = !chars[prev].is_whitespace() && !chars[prev].is_ascii_punctuation();
+                    let prev_is_punct = chars[prev].is_ascii_punctuation();
+                    
+                    if start_type_is_word && !prev_is_word {
+                        break;
+                    }
+                    if start_type_is_punct && !prev_is_punct {
+                        break;
+                    }
+                    if chars[prev].is_whitespace() {
+                        break;
+                    }
+                    
+                    idx -= 1;
+                }
+                
+                return (prev_line, idx);
             }
             return self.cursor;
         }
@@ -437,10 +476,47 @@ impl<'a> EditorState<'a> {
 
         if idx == 0 && chars[idx].is_whitespace() {
             if self.cursor.0 > 0 {
-                return (
-                    self.cursor.0 - 1,
-                    self.lines[self.cursor.0 - 1].len().saturating_sub(1),
-                );
+                // Go to previous line and find start of last word
+                let prev_line = self.cursor.0 - 1;
+                let prev_chars: Vec<char> = self.lines[prev_line].chars().collect();
+                if prev_chars.is_empty() {
+                    return (prev_line, 0);
+                }
+                
+                let mut prev_idx = prev_chars.len() - 1;
+                
+                // Skip trailing whitespace
+                while prev_idx > 0 && prev_chars[prev_idx].is_whitespace() {
+                    prev_idx -= 1;
+                }
+                
+                if prev_idx == 0 {
+                    return (prev_line, 0);
+                }
+                
+                // Find start of word
+                let start_type_is_word = !prev_chars[prev_idx].is_whitespace() && !prev_chars[prev_idx].is_ascii_punctuation();
+                let start_type_is_punct = prev_chars[prev_idx].is_ascii_punctuation();
+                
+                while prev_idx > 0 {
+                    let prev = prev_idx - 1;
+                    let prev_is_word = !prev_chars[prev].is_whitespace() && !prev_chars[prev].is_ascii_punctuation();
+                    let prev_is_punct = prev_chars[prev].is_ascii_punctuation();
+                    
+                    if start_type_is_word && !prev_is_word {
+                        break;
+                    }
+                    if start_type_is_punct && !prev_is_punct {
+                        break;
+                    }
+                    if prev_chars[prev].is_whitespace() {
+                        break;
+                    }
+                    
+                    prev_idx -= 1;
+                }
+                
+                return (prev_line, prev_idx);
             }
             return self.cursor;
         }
@@ -538,8 +614,8 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_long_word_forward_pos(&self) -> (usize, usize) {
-        let current_line = &self.lines[self.cursor.0];
-        if self.cursor.1 >= current_line.len() {
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 >= chars.len() {
             if self.cursor.0 < self.lines.len() - 1 {
                 return (self.cursor.0 + 1, 0);
             }
@@ -547,7 +623,6 @@ impl<'a> EditorState<'a> {
         }
 
         let mut idx = self.cursor.1;
-        let chars: Vec<char> = current_line.chars().collect();
 
         while idx < chars.len() && chars[idx].is_whitespace() {
             idx += 1;
@@ -578,10 +653,34 @@ impl<'a> EditorState<'a> {
     fn get_long_word_backward_pos(&self) -> (usize, usize) {
         if self.cursor.1 == 0 {
             if self.cursor.0 > 0 {
-                return (
-                    self.cursor.0 - 1,
-                    self.lines[self.cursor.0 - 1].len().saturating_sub(1),
-                );
+                // Go to previous line and find start of last WORD
+                let prev_line = self.cursor.0 - 1;
+                let chars: Vec<char> = self.lines[prev_line].chars().collect();
+                if chars.is_empty() {
+                    return (prev_line, 0);
+                }
+                
+                let mut idx = chars.len() - 1;
+                
+                // Skip trailing whitespace
+                while idx > 0 && chars[idx].is_whitespace() {
+                    idx -= 1;
+                }
+                
+                if idx == 0 {
+                    return (prev_line, 0);
+                }
+                
+                // Find start of WORD (non-whitespace sequence)
+                while idx > 0 {
+                    let prev = idx - 1;
+                    if chars[prev].is_whitespace() {
+                        break;
+                    }
+                    idx -= 1;
+                }
+                
+                return (prev_line, idx);
             }
             return self.cursor;
         }
@@ -596,10 +695,34 @@ impl<'a> EditorState<'a> {
 
         if idx == 0 && chars[idx].is_whitespace() {
             if self.cursor.0 > 0 {
-                return (
-                    self.cursor.0 - 1,
-                    self.lines[self.cursor.0 - 1].len().saturating_sub(1),
-                );
+                // Go to previous line and find start of last WORD
+                let prev_line = self.cursor.0 - 1;
+                let prev_chars: Vec<char> = self.lines[prev_line].chars().collect();
+                if prev_chars.is_empty() {
+                    return (prev_line, 0);
+                }
+                
+                let mut prev_idx = prev_chars.len() - 1;
+                
+                // Skip trailing whitespace
+                while prev_idx > 0 && prev_chars[prev_idx].is_whitespace() {
+                    prev_idx -= 1;
+                }
+                
+                if prev_idx == 0 {
+                    return (prev_line, 0);
+                }
+                
+                // Find start of WORD
+                while prev_idx > 0 {
+                    let prev = prev_idx - 1;
+                    if prev_chars[prev].is_whitespace() {
+                        break;
+                    }
+                    prev_idx -= 1;
+                }
+                
+                return (prev_line, prev_idx);
             }
             return self.cursor;
         }
@@ -684,7 +807,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_line_end_pos(&self) -> (usize, usize) {
-        (self.cursor.0, self.lines[self.cursor.0].len())
+        (self.cursor.0, self.lines[self.cursor.0].chars().count())
     }
 
     fn get_inner_word_bounds(&self) -> (usize, usize) {
@@ -1048,7 +1171,7 @@ impl<'a> EditorState<'a> {
                     // For ci( with content lines: insert empty line between brackets
                     self.lines.insert(open_row + 1, String::new());
                     self.cursor.0 = open_row + 1;
-                    self.cursor.1 = 0;
+        self.cursor.1 = 0;
                 } else {
                     // For di( or ci( without content lines: cursor on closing bracket
                     self.cursor.0 = open_row + 1;
@@ -1579,10 +1702,10 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteChar => self.delete_char(),
             LastChange::DeleteLine => self.delete_line(),
             LastChange::DeleteWord => {
-                self.perform_delete_motion(|s| s.get_word_forward_pos(), false);
+                self.perform_delete_motion(|s| s.get_word_forward_pos(), false, true);
             }
             LastChange::DeleteLongWord => {
-                self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false);
+                self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, true);
             }
             LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
             LastChange::DeleteInnerWord => self.delete_inner_word(),
@@ -1655,11 +1778,11 @@ impl<'a> EditorState<'a> {
                         // I - insert at first non-blank of line
                         self.cursor.1 = 0;
                         let line = &self.lines[self.cursor.0];
-                        for (i, ch) in line.chars().enumerate() {
-                            if !ch.is_whitespace() {
-                                self.cursor.1 = i;
-                                break;
-                            }
+        for (i, ch) in line.chars().enumerate() {
+            if !ch.is_whitespace() {
+                self.cursor.1 = i;
+                break;
+            }
                         }
                     }
                     InsertStyle::LineEnd => {
@@ -1714,9 +1837,11 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_to_end_of_line(&mut self) {
-        let line = &mut self.lines[self.cursor.0];
-        if self.cursor.1 < line.len() {
-            line.truncate(self.cursor.1);
+        self.record_change(); // Record state before deletion
+        self.lines_modified = true;
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 < chars.len() {
+            self.lines[self.cursor.0] = chars[..self.cursor.1].iter().collect();
         }
         self.clamp_cursor();
         self.record_change();
@@ -1903,7 +2028,8 @@ impl<'a> EditorState<'a> {
     }
 
     // Helper to perform delete action based on a motion
-    fn perform_delete_motion<F>(&mut self, motion: F, is_inclusive: bool)
+    // delete_empty_lines: if true, delete the entire line when backward motion would empty it
+    fn perform_delete_motion<F>(&mut self, motion: F, is_inclusive: bool, delete_empty_lines: bool)
     where
         F: Fn(&EditorState) -> (usize, usize),
     {
@@ -1913,37 +2039,62 @@ impl<'a> EditorState<'a> {
         let start = self.cursor;
         let end = motion(self);
 
-        // Handle direction
-        if end.0 < start.0 || (end.0 == start.0 && end.1 < start.1) {
-            // Backward motion (db, dB)
-            // Let's simplify: delete [end, start).
-            let range_end = start.1;
+        // Handle direction - use character-based operations
+        if end.0 < start.0 {
+            // Backward motion crossing to previous line
+            if end.1 == 0 && delete_empty_lines {
+                // Deleting from start of line = delete entire previous line (for delete ops)
+                self.lines.remove(end.0);
+                // Cursor stays on same line index (which is now different content)
+                // but we need to update row since we removed a line above
+                self.cursor.0 = end.0;
+                self.cursor.1 = 0;
+            } else {
+                // Delete from end.1 to end of previous line (or clear line for change ops)
+                let mut chars: Vec<char> = self.lines[end.0].chars().collect();
+                if end.1 < chars.len() {
+                    chars.drain(end.1..);
+                    self.lines[end.0] = chars.into_iter().collect();
+                }
+                // Move cursor to the deletion point on previous line
+                self.cursor.0 = end.0;
+                self.cursor.1 = end.1;
+            }
+        } else if end.0 == start.0 && end.1 < start.1 {
+            // Backward motion on same line (db, dB)
+            // Delete [end.1, start.1) in character indices
             let range_start = end.1;
-            let count = range_end - range_start;
-            let line = &mut self.lines[start.0]; // Assume single line for now
-            for _ in 0..count {
-                line.remove(range_start);
+            let range_end = start.1;
+            let mut chars: Vec<char> = self.lines[start.0].chars().collect();
+            if range_start < range_end && range_end <= chars.len() {
+                chars.drain(range_start..range_end);
+                self.lines[start.0] = chars.into_iter().collect();
             }
             self.cursor.1 = range_start; // Move cursor to start of deletion
+        } else if end.0 > start.0 {
+            // Forward motion crossing to next line - delete to end of current line
+            let mut chars: Vec<char> = self.lines[start.0].chars().collect();
+            if start.1 < chars.len() {
+                chars.drain(start.1..);
+                self.lines[start.0] = chars.into_iter().collect();
+            }
         } else {
-            // Forward motion (dw, de)
+            // Forward motion on same line (dw, de)
             // w: exclusive. delete [start, end)
             // e: inclusive. delete [start, end] -> delete [start, end + 1)
             let mut range_end = end.1;
             if is_inclusive {
                 range_end += 1;
             }
-            let line = &mut self.lines[start.0]; // Assume single line
-                                                 // Cap at line length
-            if range_end > line.len() {
-                range_end = line.len();
+            let mut chars: Vec<char> = self.lines[start.0].chars().collect();
+            // Cap at character count
+            if range_end > chars.len() {
+                range_end = chars.len();
             }
 
-            let count = range_end - start.1;
-            for _ in 0..count {
-                if start.1 < line.len() {
-                    line.remove(start.1);
-                }
+            if start.1 < range_end {
+                chars.drain(start.1..range_end);
+                self.lines[start.0] = chars.into_iter().collect();
             }
         }
         self.clamp_cursor();
@@ -1958,58 +2109,74 @@ impl<'a> EditorState<'a> {
         let start = self.cursor;
         let end = motion(self);
 
-        // Handle direction
-        if end.0 < start.0 || (end.0 == start.0 && end.1 < start.1) {
-            // Backward motion (yb, yB)
-            let line = &self.lines[start.0];
-            self.yank_buffer = line[end.1..start.1].to_string();
+        // Handle direction - use character-based operations
+        if end.0 < start.0 {
+            // Backward motion crossing to previous line - yank from end.1 to end of previous line
+            let chars: Vec<char> = self.lines[end.0].chars().collect();
+            if end.1 < chars.len() {
+                self.yank_buffer = chars[end.1..].iter().collect();
+            }
+        } else if end.0 == start.0 && end.1 < start.1 {
+            // Backward motion on same line (yb, yB)
+            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            if end.1 < start.1 && start.1 <= chars.len() {
+                self.yank_buffer = chars[end.1..start.1].iter().collect();
+            }
+        } else if end.0 > start.0 {
+            // Forward motion crossing to next line - yank to end of current line
+            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            if start.1 < chars.len() {
+                self.yank_buffer = chars[start.1..].iter().collect();
+            }
         } else {
-            // Forward motion (yw, ye)
+            // Forward motion on same line (yw, ye)
+            let chars: Vec<char> = self.lines[start.0].chars().collect();
             let mut range_end = end.1;
             if is_inclusive {
                 range_end += 1;
             }
-            let line = &self.lines[start.0];
-            if range_end > line.len() {
-                range_end = line.len();
+            if range_end > chars.len() {
+                range_end = chars.len();
             }
-            self.yank_buffer = line[start.1..range_end].to_string();
+            if start.1 < range_end {
+                self.yank_buffer = chars[start.1..range_end].iter().collect();
+            }
         }
         self.yank_is_linewise = false;
     }
 
     fn yank_inner_word(&mut self) {
         let (start, end) = self.get_inner_word_bounds();
-        let line = &self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
-            self.yank_buffer = line[start..end].to_string();
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if start < end && end <= chars.len() {
+            self.yank_buffer = chars[start..end].iter().collect();
             self.yank_is_linewise = false;
         }
     }
 
     fn yank_a_word(&mut self) {
         let (start, end) = self.get_a_word_bounds();
-        let line = &self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
-            self.yank_buffer = line[start..end].to_string();
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if start < end && end <= chars.len() {
+            self.yank_buffer = chars[start..end].iter().collect();
             self.yank_is_linewise = false;
         }
     }
 
     fn yank_inner_long_word(&mut self) {
         let (start, end) = self.get_inner_long_word_bounds();
-        let line = &self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
-            self.yank_buffer = line[start..end].to_string();
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if start < end && end <= chars.len() {
+            self.yank_buffer = chars[start..end].iter().collect();
             self.yank_is_linewise = false;
         }
     }
 
     fn yank_a_long_word(&mut self) {
         let (start, end) = self.get_a_long_word_bounds();
-        let line = &self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
-            self.yank_buffer = line[start..end].to_string();
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if start < end && end <= chars.len() {
+            self.yank_buffer = chars[start..end].iter().collect();
             self.yank_is_linewise = false;
         }
     }
@@ -2196,6 +2363,9 @@ impl<'a> EditorState<'a> {
     fn paste_after(&mut self) {
         self.record_change();
         self.lines_modified = true;
+        if self.yank_buffer.is_empty() {
+            return;
+        }
         if self.yank_is_linewise {
             // Insert yanked lines below current line
             let new_lines: Vec<String> = self.yank_buffer.lines().map(|s| s.to_string()).collect();
@@ -2205,13 +2375,48 @@ impl<'a> EditorState<'a> {
             // Move cursor to first non-blank of first inserted line
             self.cursor.0 += 1;
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        } else if self.yank_buffer.contains('\n') {
+            // Multi-line characterwise paste (e.g., from yi( across lines)
+            let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let insert_pos = if current_line_chars.is_empty() { 0 } else { self.cursor.1 + 1 };
+            
+            // Split current line at insert position
+            let before: String = current_line_chars[..insert_pos.min(current_line_chars.len())].iter().collect();
+            let after: String = current_line_chars[insert_pos.min(current_line_chars.len())..].iter().collect();
+            
+            // First part: before + first paste line
+            self.lines[self.cursor.0] = before + paste_lines[0];
+            
+            // Middle lines
+            for (i, paste_line) in paste_lines[1..paste_lines.len()-1].iter().enumerate() {
+                self.lines.insert(self.cursor.0 + 1 + i, paste_line.to_string());
+            }
+            
+            // Last part: last paste line + after
+            if paste_lines.len() > 1 {
+                let last_paste_line = paste_lines[paste_lines.len() - 1];
+                self.lines.insert(self.cursor.0 + paste_lines.len() - 1, last_paste_line.to_string() + &after);
+            }
+            
+            // Move cursor to end of pasted text (last character of last paste line)
+            self.cursor.0 += paste_lines.len() - 1;
+            let last_paste_chars = paste_lines[paste_lines.len() - 1].chars().count();
+            self.cursor.1 = if last_paste_chars > 0 { last_paste_chars - 1 } else { 0 };
         } else {
-            // Insert after cursor
-            let line = &mut self.lines[self.cursor.0];
-            let insert_pos = if line.is_empty() { 0 } else { self.cursor.1 + 1 };
-            line.insert_str(insert_pos, &self.yank_buffer);
-            // Move cursor to end of pasted text
-            self.cursor.1 = insert_pos + self.yank_buffer.len().saturating_sub(1);
+            // Single line characterwise paste - use character-based insertion
+            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let insert_pos = if chars.is_empty() { 0 } else { (self.cursor.1 + 1).min(chars.len()) };
+            let paste_chars: Vec<char> = self.yank_buffer.chars().collect();
+            
+            // Insert paste characters
+            for (i, c) in paste_chars.iter().enumerate() {
+                chars.insert(insert_pos + i, *c);
+            }
+            self.lines[self.cursor.0] = chars.into_iter().collect();
+            
+            // Move cursor to last character of pasted text
+            self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
         }
         self.clamp_cursor();
         self.record_change();
@@ -2220,6 +2425,9 @@ impl<'a> EditorState<'a> {
     fn paste_before(&mut self) {
         self.record_change();
         self.lines_modified = true;
+        if self.yank_buffer.is_empty() {
+            return;
+        }
         if self.yank_is_linewise {
             // Insert yanked lines above current line
             let new_lines: Vec<String> = self.yank_buffer.lines().map(|s| s.to_string()).collect();
@@ -2228,12 +2436,48 @@ impl<'a> EditorState<'a> {
             }
             // Move cursor to first non-blank of first inserted line
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
-        } else {
-            // Insert before cursor
-            let line = &mut self.lines[self.cursor.0];
-            line.insert_str(self.cursor.1, &self.yank_buffer);
+        } else if self.yank_buffer.contains('\n') {
+            // Multi-line characterwise paste
+            let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let insert_pos = self.cursor.1.min(current_line_chars.len());
+            
+            // Split current line at insert position
+            let before: String = current_line_chars[..insert_pos].iter().collect();
+            let after: String = current_line_chars[insert_pos..].iter().collect();
+            
+            // First part: before + first paste line
+            self.lines[self.cursor.0] = before + paste_lines[0];
+            
+            // Middle lines
+            for (i, paste_line) in paste_lines[1..paste_lines.len()-1].iter().enumerate() {
+                self.lines.insert(self.cursor.0 + 1 + i, paste_line.to_string());
+            }
+            
+            // Last part: last paste line + after
+            if paste_lines.len() > 1 {
+                let last_paste_line = paste_lines[paste_lines.len() - 1];
+                self.lines.insert(self.cursor.0 + paste_lines.len() - 1, last_paste_line.to_string() + &after);
+            }
+            
             // Move cursor to end of pasted text
-            self.cursor.1 = self.cursor.1 + self.yank_buffer.len().saturating_sub(1);
+            self.cursor.0 += paste_lines.len() - 1;
+            let last_paste_chars = paste_lines[paste_lines.len() - 1].chars().count();
+            self.cursor.1 = if last_paste_chars > 0 { last_paste_chars - 1 } else { 0 };
+        } else {
+            // Single line characterwise paste - use character-based insertion
+            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let insert_pos = self.cursor.1.min(chars.len());
+            let paste_chars: Vec<char> = self.yank_buffer.chars().collect();
+            
+            // Insert paste characters
+            for (i, c) in paste_chars.iter().enumerate() {
+                chars.insert(insert_pos + i, *c);
+            }
+            self.lines[self.cursor.0] = chars.into_iter().collect();
+            
+            // Move cursor to last character of pasted text
+            self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
         }
         self.clamp_cursor();
         self.record_change();
@@ -2455,55 +2699,61 @@ impl<'a> EditorState<'a> {
                                     'c' => self.substitute_line(), // cc == S
                                     'w' => {
                                         // cw is equivalent to ce in Vim (change to end of word)
-                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true);
                                         self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, false);
                                     }
                                     'W' => {
+                                        self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_long_word_end_pos(),
                                             true,
+                                            false,
                                         );
-                                        self.mode = EditorMode::Insert;
                                     }
                                     'e' => {
-                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true);
                                         self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, false);
                                     }
                                     'E' => {
+                                        self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_long_word_end_pos(),
                                             true,
+                                            false,
                                         );
-                                        self.mode = EditorMode::Insert;
                                     }
                                     'b' => {
+                                        self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_word_backward_pos(),
                                             false,
+                                            false,
                                         );
-                                        self.mode = EditorMode::Insert;
                                     }
                                     'B' => {
+                                        self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_long_word_backward_pos(),
                                             false,
+                                            false,
                                         );
-                                        self.mode = EditorMode::Insert;
                                     }
                                     '$' => self.change_to_end_of_line(),
                                     '^' => {
+                                        self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_first_non_blank_pos(),
                                             false,
+                                            false,
                                         );
-                                        self.mode = EditorMode::Insert;
                                     }
                                     '0' => {
+                                        self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_line_start_pos(),
                                             false,
+                                            false,
                                         );
-                                        self.mode = EditorMode::Insert;
                                     }
                                     'G' => self.change_to_end_of_file(),
                                     'g' => {
@@ -2537,34 +2787,38 @@ impl<'a> EditorState<'a> {
                                         self.last_change = LastChange::DeleteLine;
                                     }
                                     'w' => {
-                                        self.perform_delete_motion(|s| s.get_word_forward_pos(), false);
+                                        self.perform_delete_motion(|s| s.get_word_forward_pos(), false, true);
                                         self.last_change = LastChange::DeleteWord;
                                     }
                                     'W' => {
-                                        self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false);
+                                        self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, true);
                                         self.last_change = LastChange::DeleteLongWord;
                                     }
                                     'e' => {
-                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true)
+                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, true)
                                     }
                                     'E' => self
-                                        .perform_delete_motion(|s| s.get_long_word_end_pos(), true),
+                                        .perform_delete_motion(|s| s.get_long_word_end_pos(), true, true),
                                     'b' => self.perform_delete_motion(
                                         |s| s.get_word_backward_pos(),
                                         false,
+                                        true,
                                     ),
                                     'B' => self.perform_delete_motion(
                                         |s| s.get_long_word_backward_pos(),
                                         false,
+                                        true,
                                     ),
                                     '$' => self.delete_to_end_of_line(),
                                     '^' => self.perform_delete_motion(
                                         |s| s.get_first_non_blank_pos(),
                                         false,
+                                        true,
                                     ),
                                     '0' => self.perform_delete_motion(
                                         |s| s.get_line_start_pos(),
                                         false,
+                                        true,
                                     ),
                                     'G' => self.delete_to_end_of_file(),
                                     'g' => {
