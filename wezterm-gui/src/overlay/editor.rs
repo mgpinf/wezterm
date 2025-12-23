@@ -3711,7 +3711,10 @@ impl<'a> EditorState<'a> {
                                 self.jump_to_matching_bracket();
                                 self.update_desired_col();
                             }
-                            '.' => self.repeat_last_change(),
+                            '.' => {
+                                self.repeat_last_change();
+                                self.update_desired_col();
+                            }
                             ';' => {
                                 self.repeat_char_search(false); // Same direction
                                 self.update_desired_col();
