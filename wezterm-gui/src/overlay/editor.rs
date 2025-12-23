@@ -1616,6 +1616,230 @@ impl<'a> EditorState<'a> {
         after_col >= chars.len() || chars[after_col].is_whitespace()
     }
 
+    /// Get the position of the previous sentence start without moving cursor.
+    fn get_sentence_backward_pos(&self) -> (usize, usize) {
+        self.compute_sentence_backward_pos(self.cursor.0, self.cursor.1)
+    }
+
+    /// Get the position of the next sentence start without moving cursor.
+    fn get_sentence_forward_pos(&self) -> (usize, usize) {
+        self.compute_sentence_forward_pos(self.cursor.0, self.cursor.1)
+    }
+
+    /// Compute the position of the previous sentence start from a given position.
+    fn compute_sentence_backward_pos(&self, start_row: usize, start_col: usize) -> (usize, usize) {
+        let started_on_blank = self.lines[start_row].trim().is_empty();
+
+        // Search backward from cursor position for sentence end or paragraph start
+        let mut row = start_row;
+        let mut col = if start_col > 0 { start_col - 1 } else if start_row > 0 {
+            row = start_row - 1;
+            self.lines[row].chars().count().saturating_sub(1)
+        } else {
+            return (0, 0);
+        };
+
+        loop {
+            // If we're on a blank line and we didn't start on a blank line, stop here
+            if self.lines[row].trim().is_empty() {
+                if !started_on_blank {
+                    return (row, 0);
+                }
+                // Started on blank line, continue searching in previous paragraph
+                if row > 0 {
+                    row -= 1;
+                    col = self.lines[row].chars().count().saturating_sub(1);
+                    continue;
+                } else {
+                    return (0, 0);
+                }
+            }
+
+            let chars: Vec<char> = self.lines[row].chars().collect();
+
+            // Search backward through current line
+            loop {
+                if Self::is_valid_sentence_end(&chars, col) {
+                    // Found sentence end - find where the sentence after this starts
+                    if let Some((sent_row, sent_col)) = self.find_sentence_start_after_pos(row, col + 1) {
+                        // Check if this sentence start is before our starting position
+                        if sent_row < start_row || (sent_row == start_row && sent_col < start_col) {
+                            return (sent_row, sent_col);
+                        }
+                    } else {
+                        // This sentence ends at paragraph boundary (last sentence of paragraph)
+                        // Find the start of this sentence
+                        return self.find_sentence_start_for_end(row, col);
+                    }
+                }
+                if col == 0 {
+                    break;
+                }
+                col -= 1;
+            }
+
+            // Check if previous line is blank (paragraph boundary)
+            if row > 0 {
+                if self.lines[row - 1].trim().is_empty() {
+                    // At paragraph boundary
+                    let para_start_col = self.find_line_start(row);
+                    if row == start_row && para_start_col == start_col {
+                        return (row - 1, 0);
+                    } else if row < start_row || (row == start_row && para_start_col < start_col) {
+                        return (row, para_start_col);
+                    } else {
+                        return (row - 1, 0);
+                    }
+                }
+                row -= 1;
+                col = self.lines[row].chars().count().saturating_sub(1);
+            } else {
+                return (0, 0);
+            }
+        }
+    }
+
+    /// Compute the position of the next sentence start from a given position.
+    fn compute_sentence_forward_pos(&self, start_row: usize, start_col: usize) -> (usize, usize) {
+        let mut row = start_row;
+        let mut col = start_col;
+        let last_row = self.lines.len().saturating_sub(1);
+
+        // If starting on a blank line, skip to next paragraph's first sentence
+        if self.lines[row].trim().is_empty() {
+            while row < last_row && self.lines[row].trim().is_empty() {
+                row += 1;
+            }
+            if self.lines[row].trim().is_empty() {
+                return (last_row, 0);
+            }
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
+            return (row, start_col);
+        }
+
+        loop {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+
+            // Search forward through current line for sentence end
+            while col < chars.len() {
+                if Self::is_valid_sentence_end(&chars, col) {
+                    // Found sentence end, skip closing chars and whitespace
+                    col += 1;
+                    while col < chars.len() && Self::is_sentence_closing_char(chars[col]) {
+                        col += 1;
+                    }
+
+                    // Skip whitespace (including across lines)
+                    loop {
+                        let cur_chars: Vec<char> = self.lines[row].chars().collect();
+                        while col < cur_chars.len() && Self::is_sentence_closing_char(cur_chars[col]) {
+                            col += 1;
+                        }
+                        while col < cur_chars.len() && cur_chars[col].is_whitespace() {
+                            col += 1;
+                        }
+                        if col < cur_chars.len() {
+                            return (row, col);
+                        }
+                        if row < last_row {
+                            row += 1;
+                            col = 0;
+                            if self.lines[row].trim().is_empty() {
+                                return (row, 0);
+                            }
+                        } else {
+                            // End of file - return position past last character for exclusive motions
+                            return (last_row, self.lines[last_row].chars().count());
+                        }
+                    }
+                }
+                col += 1;
+            }
+
+            // Move to next line
+            if row < last_row {
+                row += 1;
+                col = 0;
+                if self.lines[row].trim().is_empty() {
+                    return (row, 0);
+                }
+            } else {
+                // End of file - return position past last character for exclusive motions
+                return (last_row, self.lines[last_row].chars().count());
+            }
+        }
+    }
+
+    /// Find sentence start after a given position (after sentence end punctuation).
+    fn find_sentence_start_after_pos(&self, from_row: usize, from_col: usize) -> Option<(usize, usize)> {
+        let mut r = from_row;
+        let mut c = from_col;
+        loop {
+            let chars: Vec<char> = self.lines[r].chars().collect();
+            while c < chars.len() && Self::is_sentence_closing_char(chars[c]) {
+                c += 1;
+            }
+            while c < chars.len() && chars[c].is_whitespace() {
+                c += 1;
+            }
+            if c < chars.len() {
+                return Some((r, c));
+            }
+            if r < self.lines.len() - 1 {
+                r += 1;
+                c = 0;
+                if self.lines[r].trim().is_empty() {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+
+    /// Find first non-whitespace of a line.
+    fn find_line_start(&self, row: usize) -> usize {
+        let chars: Vec<char> = self.lines[row].chars().collect();
+        chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0)
+    }
+
+    /// Find the start of a sentence that ends at (end_row, end_col).
+    fn find_sentence_start_for_end(&self, end_row: usize, end_col: usize) -> (usize, usize) {
+        let mut r = end_row;
+        let mut c = if end_col > 0 { end_col - 1 } else if end_row > 0 {
+            r = end_row - 1;
+            self.lines[r].chars().count().saturating_sub(1)
+        } else {
+            return (0, 0);
+        };
+
+        loop {
+            let chars: Vec<char> = self.lines[r].chars().collect();
+            loop {
+                if Self::is_valid_sentence_end(&chars, c) {
+                    if let Some(pos) = self.find_sentence_start_after_pos(r, c + 1) {
+                        return pos;
+                    }
+                }
+                if c == 0 {
+                    break;
+                }
+                c -= 1;
+            }
+
+            if r > 0 {
+                if self.lines[r - 1].trim().is_empty() {
+                    return (r, self.find_line_start(r));
+                }
+                r -= 1;
+                c = self.lines[r].chars().count().saturating_sub(1);
+            } else {
+                return (0, 0);
+            }
+        }
+    }
+
     fn move_sentence_backward(&mut self) {
         // Move to the beginning of the current sentence, or if already at the beginning,
         // move to the beginning of the previous sentence (or paragraph boundary)
@@ -3736,6 +3960,22 @@ impl<'a> EditorState<'a> {
                                         self.delete_to_matching_bracket();
                                         self.mode = EditorMode::Insert;
                                     }
+                                    '(' => {
+                                        self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(
+                                            |s| s.get_sentence_backward_pos(),
+                                            false,
+                                            false,
+                                        );
+                                    }
+                                    ')' => {
+                                        self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(
+                                            |s| s.get_sentence_forward_pos(),
+                                            false,
+                                            false,
+                                        );
+                                    }
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
@@ -3798,6 +4038,16 @@ impl<'a> EditorState<'a> {
                                         continue;
                                     }
                                     '%' => self.delete_to_matching_bracket(),
+                                    '(' => self.perform_delete_motion(
+                                        |s| s.get_sentence_backward_pos(),
+                                        false,
+                                        true,
+                                    ),
+                                    ')' => self.perform_delete_motion(
+                                        |s| s.get_sentence_forward_pos(),
+                                        false,
+                                        true,
+                                    ),
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
@@ -3832,6 +4082,14 @@ impl<'a> EditorState<'a> {
                                         continue;
                                     }
                                     '%' => self.yank_to_matching_bracket(),
+                                    '(' => self.perform_yank_motion(
+                                        |s| s.get_sentence_backward_pos(),
+                                        false,
+                                    ),
+                                    ')' => self.perform_yank_motion(
+                                        |s| s.get_sentence_forward_pos(),
+                                        false,
+                                    ),
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
