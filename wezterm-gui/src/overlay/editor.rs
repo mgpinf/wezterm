@@ -1718,6 +1718,41 @@ impl<'a> EditorState<'a> {
             return (row, start_col);
         }
 
+        // Check if we're in whitespace/closing chars after a sentence end
+        // If so, just skip to the next sentence start
+        let chars: Vec<char> = self.lines[row].chars().collect();
+        if col < chars.len() && (chars[col].is_whitespace() || Self::is_sentence_closing_char(chars[col])) {
+            // Look backward to see if there's a sentence end before us
+            let mut check_col = col;
+            // Skip back past whitespace and closing chars
+            while check_col > 0 && (chars[check_col - 1].is_whitespace() || Self::is_sentence_closing_char(chars[check_col - 1])) {
+                check_col -= 1;
+            }
+            // Check if what's before is sentence-ending punctuation
+            if check_col > 0 && Self::is_sentence_end_punct(chars[check_col - 1]) {
+                // We're in the whitespace after a sentence end, skip to next sentence start
+                let mut c = col;
+                while c < chars.len() && (chars[c].is_whitespace() || Self::is_sentence_closing_char(chars[c])) {
+                    c += 1;
+                }
+                if c < chars.len() {
+                    return (row, c);
+                }
+                // Continue to next line
+                if row < last_row {
+                    let next_row = row + 1;
+                    if self.lines[next_row].trim().is_empty() {
+                        return (next_row, 0);
+                    }
+                    let next_chars: Vec<char> = self.lines[next_row].chars().collect();
+                    let start = next_chars.iter().position(|ch| !ch.is_whitespace()).unwrap_or(0);
+                    return (next_row, start);
+                } else {
+                    return (last_row, self.lines[last_row].chars().count());
+                }
+            }
+        }
+
         loop {
             let chars: Vec<char> = self.lines[row].chars().collect();
 
@@ -2911,31 +2946,46 @@ impl<'a> EditorState<'a> {
 
         // Handle direction - use character-based operations
         if end.0 < start.0 {
-            // Backward motion crossing to previous line
-            if end.1 == 0 && delete_empty_lines {
-                // Deleting from start of line = delete entire previous line (for delete ops)
-                // Store deleted line in yank buffer
-                self.yank_buffer = self.lines[end.0].clone();
-                self.yank_is_linewise = true;
-                self.lines.remove(end.0);
-                // Cursor stays on same line index (which is now different content)
-                // but we need to update row since we removed a line above
-                self.cursor.0 = end.0;
-                self.cursor.1 = 0;
-            } else {
-                // Delete from end.1 to end of previous line (or clear line for change ops)
-                let mut chars: Vec<char> = self.lines[end.0].chars().collect();
-                if end.1 < chars.len() {
-                    // Store deleted text in yank buffer
-                    self.yank_buffer = chars[end.1..].iter().collect();
-                    self.yank_is_linewise = false;
-                    chars.drain(end.1..);
-                    self.lines[end.0] = chars.into_iter().collect();
-                }
-                // Move cursor to the deletion point on previous line
-                self.cursor.0 = end.0;
-                self.cursor.1 = end.1;
+            // Backward motion crossing to previous line - need to handle multi-line deletion
+            // 1. Collect text to delete for yank buffer
+            // 2. Keep start of end line (where motion landed) + rest of start line (after cursor)
+            // 3. Remove intermediate lines
+
+            let mut deleted_text = String::new();
+
+            // Get the part to keep from end line (before end position)
+            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            let end_prefix: String = end_chars[..end.1].iter().collect();
+            deleted_text.push_str(&end_chars[end.1..].iter().collect::<String>());
+
+            // Add intermediate lines to deleted text
+            for row in (end.0 + 1)..start.0 {
+                deleted_text.push('\n');
+                deleted_text.push_str(&self.lines[row]);
             }
+
+            // Get the part to keep from start line (at and after cursor)
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            deleted_text.push('\n');
+            deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
+            let start_suffix: String = start_chars[start.1..].iter().collect();
+
+            // Store in yank buffer
+            self.yank_buffer = deleted_text;
+            self.yank_is_linewise = false;
+
+            // Join the kept parts
+            let new_line = format!("{}{}", end_prefix, start_suffix);
+
+            // Remove lines from start.0 down to end.0+1, then update end.0
+            for _ in end.0..start.0 {
+                self.lines.remove(end.0 + 1);
+            }
+            self.lines[end.0] = new_line;
+
+            // Move cursor to the deletion point
+            self.cursor.0 = end.0;
+            self.cursor.1 = end.1;
         } else if end.0 == start.0 && end.1 < start.1 {
             // Backward motion on same line (db, dB)
             // Delete [end.1, start.1) in character indices
@@ -2951,15 +3001,46 @@ impl<'a> EditorState<'a> {
             }
             self.cursor.1 = range_start; // Move cursor to start of deletion
         } else if end.0 > start.0 {
-            // Forward motion crossing to next line - delete to end of current line
-            let mut chars: Vec<char> = self.lines[start.0].chars().collect();
-            if start.1 < chars.len() {
-                // Store deleted text in yank buffer
-                self.yank_buffer = chars[start.1..].iter().collect();
-                self.yank_is_linewise = false;
-                chars.drain(start.1..);
-                self.lines[start.0] = chars.into_iter().collect();
+            // Forward motion crossing to next line - need to handle multi-line deletion
+            // 1. Collect text to delete for yank buffer
+            // 2. Keep start of start line + end of end line
+            // 3. Remove intermediate lines
+
+            let mut deleted_text = String::new();
+
+            // Get the part to keep from start line (before cursor)
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            let start_prefix: String = start_chars[..start.1].iter().collect();
+            deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
+
+            // Add intermediate lines to deleted text
+            for row in (start.0 + 1)..end.0 {
+                deleted_text.push('\n');
+                deleted_text.push_str(&self.lines[row]);
             }
+
+            // Get the part to keep from end line (at and after end position)
+            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            let end_col = if is_inclusive { (end.1 + 1).min(end_chars.len()) } else { end.1 };
+            deleted_text.push('\n');
+            deleted_text.push_str(&end_chars[..end_col].iter().collect::<String>());
+            let end_suffix: String = end_chars[end_col..].iter().collect();
+
+            // Store in yank buffer
+            self.yank_buffer = deleted_text;
+            self.yank_is_linewise = false;
+
+            // Join the kept parts
+            let new_line = format!("{}{}", start_prefix, end_suffix);
+
+            // Remove lines from end.0 down to start.0+1, then update start.0
+            for _ in start.0..end.0 {
+                self.lines.remove(start.0 + 1);
+            }
+            self.lines[start.0] = new_line;
+
+            // Cursor stays at start position
+            self.cursor = start;
         } else {
             // Forward motion on same line (dw, de)
             // w: exclusive. delete [start, end)
@@ -2997,11 +3078,25 @@ impl<'a> EditorState<'a> {
 
         // Handle direction - use character-based operations
         if end.0 < start.0 {
-            // Backward motion crossing to previous line - yank from end.1 to end of previous line
-            let chars: Vec<char> = self.lines[end.0].chars().collect();
-            if end.1 < chars.len() {
-                self.yank_buffer = chars[end.1..].iter().collect();
+            // Backward motion crossing to previous line - yank multi-line
+            let mut yanked_text = String::new();
+
+            // From end position to end of end line
+            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            yanked_text.push_str(&end_chars[end.1..].iter().collect::<String>());
+
+            // Intermediate lines
+            for row in (end.0 + 1)..start.0 {
+                yanked_text.push('\n');
+                yanked_text.push_str(&self.lines[row]);
             }
+
+            // From start of start line to cursor
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            yanked_text.push('\n');
+            yanked_text.push_str(&start_chars[..start.1].iter().collect::<String>());
+
+            self.yank_buffer = yanked_text;
         } else if end.0 == start.0 && end.1 < start.1 {
             // Backward motion on same line (yb, yB)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
@@ -3009,11 +3104,26 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = chars[end.1..start.1].iter().collect();
             }
         } else if end.0 > start.0 {
-            // Forward motion crossing to next line - yank to end of current line
-            let chars: Vec<char> = self.lines[start.0].chars().collect();
-            if start.1 < chars.len() {
-                self.yank_buffer = chars[start.1..].iter().collect();
+            // Forward motion crossing to next line - yank multi-line
+            let mut yanked_text = String::new();
+
+            // From cursor to end of start line
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            yanked_text.push_str(&start_chars[start.1..].iter().collect::<String>());
+
+            // Intermediate lines
+            for row in (start.0 + 1)..end.0 {
+                yanked_text.push('\n');
+                yanked_text.push_str(&self.lines[row]);
             }
+
+            // From start of end line to end position
+            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            let end_col = if is_inclusive { (end.1 + 1).min(end_chars.len()) } else { end.1 };
+            yanked_text.push('\n');
+            yanked_text.push_str(&end_chars[..end_col].iter().collect::<String>());
+
+            self.yank_buffer = yanked_text;
         } else {
             // Forward motion on same line (yw, ye)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
