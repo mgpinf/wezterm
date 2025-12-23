@@ -5430,6 +5430,14 @@ impl<'a> EditorState<'a> {
                                     }
                                     true
                                 }
+                                ('g', 'g') => {
+                                    // gg - go to first line
+                                    self.cursor.0 = 0;
+                                    let line_len = self.lines[self.cursor.0].chars().count();
+                                    let max_col = line_len.saturating_sub(1);
+                                    self.cursor.1 = self.desired_col.min(max_col);
+                                    true
+                                }
                                 _ => false,
                             };
                             self.pending_keys.clear();
@@ -5556,6 +5564,10 @@ impl<'a> EditorState<'a> {
                         // Text object selection - 'i' for inner, 'a' for around
                         'i' | 'a' => {
                             self.pending_keys.push(KeyCode::Char(c));
+                        }
+                        // 'g' prefix for gg command
+                        'g' => {
+                            self.pending_keys.push(KeyCode::Char('g'));
                         }
                         _ => {
                             // Clear pending keys on unrecognized input
