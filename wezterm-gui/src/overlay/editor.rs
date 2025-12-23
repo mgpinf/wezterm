@@ -2210,41 +2210,51 @@ impl<'a> EditorState<'a> {
                     let chars: Vec<char> = line.chars().collect();
                     let line_len = chars.len();
                     
-                    let sel_col_start = if line_idx == sel_start.0 { sel_start.1 } else { 0 };
-                    let sel_col_end = if line_idx == sel_end.0 { sel_end.1 + 1 } else { line_len };
-                    
-                    // Text before selection
-                    if sel_col_start > 0 {
-                        let before: String = chars[..sel_col_start.min(line_len)].iter().collect();
+                    // Handle empty lines - show a highlighted space like Neovim
+                    if line_len == 0 {
                         self.buf.add_changes(vec![
-                            Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                            Change::Text(before),
+                            Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                            Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
+                            Change::Text(" ".to_string()),
+                            Change::AllAttributes(CellAttributes::default()),
                         ]);
-                    }
-                    
-                    // Selected text
-                    if sel_col_start < line_len {
-                        let selected: String = chars[sel_col_start.min(line_len)..sel_col_end.min(line_len)].iter().collect();
-                        if !selected.is_empty() {
+                    } else {
+                        let sel_col_start = if line_idx == sel_start.0 { sel_start.1 } else { 0 };
+                        let sel_col_end = if line_idx == sel_end.0 { sel_end.1 + 1 } else { line_len };
+                        
+                        // Text before selection
+                        if sel_col_start > 0 {
+                            let before: String = chars[..sel_col_start.min(line_len)].iter().collect();
                             self.buf.add_changes(vec![
-                                Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
-                                Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
-                                Change::Text(selected),
-                                Change::AllAttributes(CellAttributes::default()),
+                                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                                Change::Text(before),
                             ]);
                         }
+                        
+                        // Selected text
+                        if sel_col_start < line_len {
+                            let selected: String = chars[sel_col_start.min(line_len)..sel_col_end.min(line_len)].iter().collect();
+                            if !selected.is_empty() {
+                                self.buf.add_changes(vec![
+                                    Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                                    Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
+                                    Change::Text(selected),
+                                    Change::AllAttributes(CellAttributes::default()),
+                                ]);
+                            }
+                        }
+                        
+                        // Text after selection
+                        if sel_col_end < line_len {
+                            let after: String = chars[sel_col_end..].iter().collect();
+                            self.buf.add_changes(vec![
+                                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                                Change::Text(after),
+                            ]);
+                        }
+                        
+                        self.buf.add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
                     }
-                    
-                    // Text after selection
-                    if sel_col_end < line_len {
-                        let after: String = chars[sel_col_end..].iter().collect();
-                        self.buf.add_changes(vec![
-                            Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                            Change::Text(after),
-                        ]);
-                    }
-                    
-                    self.buf.add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
                 } else {
                     // Not in selection range
                     self.buf.add_changes(vec![
