@@ -92,6 +92,8 @@ enum LastChange {
     DeleteALongWord,                      // daW
     DeleteInnerPair(char),                // di( di{ etc.
     DeleteAroundPair(char),               // da( da{ etc.
+    DeleteInnerParagraph,                 // dip
+    DeleteAParagraph,                     // dap
     DeleteToChar(char, bool),             // df{char}, dt{char} (inclusive flag)
     DeleteBackToChar(char, bool),         // dF{char}, dT{char} (inclusive flag)
     SubstituteLine,                       // S, cc
@@ -103,6 +105,8 @@ enum LastChange {
     ChangeALongWord,                      // caW
     ChangeInnerPair(char),                // ci( ci{ etc.
     ChangeAroundPair(char),               // ca( ca{ etc.
+    ChangeInnerParagraph,                 // cip
+    ChangeAParagraph,                     // cap
     ChangeToChar(char, bool),             // cf{char}, ct{char}
     ChangeBackToChar(char, bool),         // cF{char}, cT{char}
     InsertText(String, InsertStyle),      // Text inserted in insert mode
@@ -1319,6 +1323,183 @@ impl<'a> EditorState<'a> {
             self.update_desired_col();
             self.record_change();
         }
+    }
+
+    fn get_inner_paragraph_bounds(&self) -> (usize, usize) {
+        // Find the bounds of the current paragraph (lines between blank lines)
+        let mut start_row = self.cursor.0;
+        let mut end_row = self.cursor.0;
+
+        // If we're on a blank line, treat it as its own "paragraph"
+        if self.lines[self.cursor.0].trim().is_empty() {
+            return (start_row, start_row);
+        }
+
+        // Find start of paragraph (first non-blank line after a blank line or start of file)
+        while start_row > 0 && !self.lines[start_row - 1].trim().is_empty() {
+            start_row -= 1;
+        }
+
+        // Find end of paragraph (last non-blank line before a blank line or end of file)
+        while end_row < self.lines.len() - 1 && !self.lines[end_row + 1].trim().is_empty() {
+            end_row += 1;
+        }
+
+        (start_row, end_row)
+    }
+
+    fn get_a_paragraph_bounds(&self) -> (usize, usize) {
+        // Like inner paragraph, but includes blank lines
+        // Vim behavior: include trailing blank lines if they exist,
+        // otherwise include leading blank lines (for last paragraph)
+        let (mut start_row, mut end_row) = self.get_inner_paragraph_bounds();
+
+        // First, try to include trailing blank lines
+        let original_end = end_row;
+        while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
+            end_row += 1;
+        }
+
+        // If no trailing blank lines were found, include leading blank lines instead
+        if end_row == original_end {
+            while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
+                start_row -= 1;
+            }
+        }
+
+        (start_row, end_row)
+    }
+
+    fn delete_inner_paragraph(&mut self) {
+        self.record_change();
+        self.lines_modified = true;
+        let (start_row, end_row) = self.get_inner_paragraph_bounds();
+
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+
+        // Remove the lines
+        for _ in start_row..=end_row {
+            self.lines.remove(start_row);
+        }
+
+        // Ensure at least one line exists
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+
+        // Position cursor
+        self.cursor.0 = start_row.min(self.lines.len() - 1);
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    fn delete_a_paragraph(&mut self) {
+        self.record_change();
+        self.lines_modified = true;
+        let (start_row, end_row) = self.get_a_paragraph_bounds();
+
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+
+        // Remove the lines
+        for _ in start_row..=end_row {
+            self.lines.remove(start_row);
+        }
+
+        // Ensure at least one line exists
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+
+        // Position cursor
+        self.cursor.0 = start_row.min(self.lines.len() - 1);
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    fn yank_inner_paragraph(&mut self) {
+        let (start_row, end_row) = self.get_inner_paragraph_bounds();
+        let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        // Move cursor to start of paragraph (like Neovim)
+        self.cursor.0 = start_row;
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.clamp_cursor();
+        self.update_desired_col();
+    }
+
+    fn yank_a_paragraph(&mut self) {
+        let (start_row, end_row) = self.get_a_paragraph_bounds();
+        let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        // Move cursor to start of paragraph (like Neovim)
+        self.cursor.0 = start_row;
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.clamp_cursor();
+        self.update_desired_col();
+    }
+
+    fn change_inner_paragraph(&mut self) {
+        self.record_change();
+        self.lines_modified = true;
+        let (start_row, end_row) = self.get_inner_paragraph_bounds();
+
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+
+        // Remove the lines
+        for _ in start_row..=end_row {
+            self.lines.remove(start_row);
+        }
+
+        // Insert a blank line for typing
+        self.lines.insert(start_row, String::new());
+
+        // Position cursor on the blank line
+        self.cursor.0 = start_row;
+        self.cursor.1 = 0;
+        self.update_desired_col();
+        self.mode = EditorMode::Insert;
+        self.record_change();
+    }
+
+    fn change_a_paragraph(&mut self) {
+        self.record_change();
+        self.lines_modified = true;
+        let (start_row, end_row) = self.get_a_paragraph_bounds();
+
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[start_row..=end_row].iter().map(|s| s.as_str()).collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+
+        // Remove the lines
+        for _ in start_row..=end_row {
+            self.lines.remove(start_row);
+        }
+
+        // Insert a blank line for typing
+        self.lines.insert(start_row, String::new());
+
+        // Position cursor on the blank line
+        self.cursor.0 = start_row;
+        self.cursor.1 = 0;
+        self.update_desired_col();
+        self.mode = EditorMode::Insert;
+        self.record_change();
     }
 
     fn get_matching_pair(open: char) -> Option<char> {
@@ -2719,6 +2900,8 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteALongWord => self.delete_a_long_word(),
             LastChange::DeleteInnerPair(c) => self.delete_inner_pair(c),
             LastChange::DeleteAroundPair(c) => self.delete_around_pair(c),
+            LastChange::DeleteInnerParagraph => self.delete_inner_paragraph(),
+            LastChange::DeleteAParagraph => self.delete_a_paragraph(),
             LastChange::DeleteToChar(c, inclusive) => self.delete_to_char_forward(c, inclusive),
             LastChange::DeleteBackToChar(c, inclusive) => self.delete_to_char_backward(c, inclusive),
             LastChange::SubstituteLine => self.substitute_line(),
@@ -2752,6 +2935,14 @@ impl<'a> EditorState<'a> {
             LastChange::ChangeAroundPair(c) => {
                 self.mode = EditorMode::Insert;
                 self.delete_around_pair(c);
+                self.insert_saved_text();
+            }
+            LastChange::ChangeInnerParagraph => {
+                self.change_inner_paragraph();
+                self.insert_saved_text();
+            }
+            LastChange::ChangeAParagraph => {
+                self.change_a_paragraph();
                 self.insert_saved_text();
             }
             LastChange::ChangeToChar(c, inclusive) => {
@@ -3720,9 +3911,10 @@ impl<'a> EditorState<'a> {
         }
         if self.yank_is_linewise {
             // Insert yanked lines below current line
-            let new_lines: Vec<String> = self.yank_buffer.lines().map(|s| s.to_string()).collect();
-            for (i, line) in new_lines.into_iter().enumerate() {
-                self.lines.insert(self.cursor.0 + 1 + i, line);
+            // Use split('\n') instead of lines() to preserve trailing blank lines
+            let new_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            for (i, line) in new_lines.iter().enumerate() {
+                self.lines.insert(self.cursor.0 + 1 + i, line.to_string());
             }
             // Move cursor to first non-blank of first inserted line
             self.cursor.0 += 1;
@@ -3782,9 +3974,10 @@ impl<'a> EditorState<'a> {
         }
         if self.yank_is_linewise {
             // Insert yanked lines above current line
-            let new_lines: Vec<String> = self.yank_buffer.lines().map(|s| s.to_string()).collect();
-            for (i, line) in new_lines.into_iter().enumerate() {
-                self.lines.insert(self.cursor.0 + i, line);
+            // Use split('\n') instead of lines() to preserve trailing blank lines
+            let new_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            for (i, line) in new_lines.iter().enumerate() {
+                self.lines.insert(self.cursor.0 + i, line.to_string());
             }
             // Move cursor to first non-blank of first inserted line
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
@@ -4241,6 +4434,30 @@ impl<'a> EditorState<'a> {
                                 } else {
                                     self.last_change = LastChange::DeleteAroundPair(c);
                                     self.delete_around_pair(c);
+                                }
+                            } else if first == KeyCode::Char('i') && c == 'p' {
+                                // dip / cip / yip - delete/change/yank inner paragraph
+                                if op == 'c' {
+                                    self.insert_buffer.clear();
+                                    self.last_change = LastChange::ChangeInnerParagraph;
+                                    self.change_inner_paragraph();
+                                } else if op == 'y' {
+                                    self.yank_inner_paragraph();
+                                } else {
+                                    self.last_change = LastChange::DeleteInnerParagraph;
+                                    self.delete_inner_paragraph();
+                                }
+                            } else if first == KeyCode::Char('a') && c == 'p' {
+                                // dap / cap / yap - delete/change/yank a paragraph
+                                if op == 'c' {
+                                    self.insert_buffer.clear();
+                                    self.last_change = LastChange::ChangeAParagraph;
+                                    self.change_a_paragraph();
+                                } else if op == 'y' {
+                                    self.yank_a_paragraph();
+                                } else {
+                                    self.last_change = LastChange::DeleteAParagraph;
+                                    self.delete_a_paragraph();
                                 }
                             } else if first == KeyCode::Char('[') && (c == '(' || c == '{') {
                                 // d[( d[{ c[( c[{ y[( y[{ - delete/change/yank to previous unmatched bracket
