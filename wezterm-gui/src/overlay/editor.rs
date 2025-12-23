@@ -1547,6 +1547,46 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Get the position of the previous paragraph boundary without moving cursor.
+    fn get_paragraph_backward_pos(&self) -> (usize, usize) {
+        let mut row = self.cursor.0;
+
+        // Skip up past any blank lines we're currently on
+        while row > 0 && self.lines[row].trim().is_empty() {
+            row -= 1;
+        }
+
+        // Skip up past non-blank lines (the paragraph content)
+        while row > 0 && !self.lines[row].trim().is_empty() {
+            row -= 1;
+        }
+
+        // Now row is either on a blank line or at 0
+        (row, 0)
+    }
+
+    /// Get the position of the next paragraph boundary without moving cursor.
+    fn get_paragraph_forward_pos(&self) -> (usize, usize) {
+        let mut row = self.cursor.0;
+        let last_row = self.lines.len().saturating_sub(1);
+
+        // Skip current blank lines (if any)
+        while row < last_row && self.lines[row].trim().is_empty() {
+            row += 1;
+        }
+        // Skip non-blank lines to find the next blank line
+        while row < last_row && !self.lines[row].trim().is_empty() {
+            row += 1;
+        }
+
+        // If we're on the last row and it's not blank, return position past end for exclusive motions
+        if row == last_row && !self.lines[row].trim().is_empty() {
+            (row, self.lines[row].chars().count())
+        } else {
+            (row, 0)
+        }
+    }
+
     fn move_paragraph_backward(&mut self) {
         // Move to previous paragraph boundary (blank line or start of file)
         let mut row = self.cursor.0;
@@ -2947,45 +2987,84 @@ impl<'a> EditorState<'a> {
         // Handle direction - use character-based operations
         if end.0 < start.0 {
             // Backward motion crossing to previous line - need to handle multi-line deletion
-            // 1. Collect text to delete for yank buffer
-            // 2. Keep start of end line (where motion landed) + rest of start line (after cursor)
-            // 3. Remove intermediate lines
+            // Special case: if end.1 == 0, don't merge with end line, keep it separate
 
             let mut deleted_text = String::new();
 
-            // Get the part to keep from end line (before end position)
-            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
-            let end_prefix: String = end_chars[..end.1].iter().collect();
-            deleted_text.push_str(&end_chars[end.1..].iter().collect::<String>());
+            if end.1 == 0 && !delete_empty_lines {
+                // Change operation landing at start of a line - preserve line structure
+                // Keep line end.0 (clear it if it has content), put suffix on separate line
 
-            // Add intermediate lines to deleted text
-            for row in (end.0 + 1)..start.0 {
+                // If line end.0 has content (first paragraph case), clear it and add to deleted text
+                if !self.lines[end.0].trim().is_empty() {
+                    deleted_text.push_str(&self.lines[end.0]);
+                    deleted_text.push('\n');
+                    self.lines[end.0] = String::new();
+                }
+
+                // Add content from line after end to deleted text
+                for row in (end.0 + 1)..start.0 {
+                    deleted_text.push_str(&self.lines[row]);
+                    deleted_text.push('\n');
+                }
+
+                // Get the part to delete from start line (before cursor)
+                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
+                let start_suffix: String = start_chars[start.1..].iter().collect();
+
+                // Store in yank buffer
+                self.yank_buffer = deleted_text;
+                self.yank_is_linewise = false;
+
+                // Update start line to just the suffix
+                self.lines[start.0] = start_suffix;
+
+                // Remove intermediate lines (from end.0+1 to start.0-1)
+                for _ in (end.0 + 1)..start.0 {
+                    self.lines.remove(end.0 + 1);
+                }
+
+                // Move cursor to line end.0
+                self.cursor.0 = end.0;
+                self.cursor.1 = 0;
+            } else {
+                // Motion lands in middle of a line - merge start and end lines
+
+                // Get the part to keep from end line (before end position)
+                let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let end_prefix: String = end_chars[..end.1].iter().collect();
+                deleted_text.push_str(&end_chars[end.1..].iter().collect::<String>());
+
+                // Add intermediate lines to deleted text
+                for row in (end.0 + 1)..start.0 {
+                    deleted_text.push('\n');
+                    deleted_text.push_str(&self.lines[row]);
+                }
+
+                // Get the part to keep from start line (at and after cursor)
+                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
                 deleted_text.push('\n');
-                deleted_text.push_str(&self.lines[row]);
+                deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
+                let start_suffix: String = start_chars[start.1..].iter().collect();
+
+                // Store in yank buffer
+                self.yank_buffer = deleted_text;
+                self.yank_is_linewise = false;
+
+                // Join the kept parts
+                let new_line = format!("{}{}", end_prefix, start_suffix);
+
+                // Remove lines from start.0 down to end.0+1, then update end.0
+                for _ in end.0..start.0 {
+                    self.lines.remove(end.0 + 1);
+                }
+                self.lines[end.0] = new_line;
+
+                // Move cursor to the deletion point
+                self.cursor.0 = end.0;
+                self.cursor.1 = end.1;
             }
-
-            // Get the part to keep from start line (at and after cursor)
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
-            deleted_text.push('\n');
-            deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
-            let start_suffix: String = start_chars[start.1..].iter().collect();
-
-            // Store in yank buffer
-            self.yank_buffer = deleted_text;
-            self.yank_is_linewise = false;
-
-            // Join the kept parts
-            let new_line = format!("{}{}", end_prefix, start_suffix);
-
-            // Remove lines from start.0 down to end.0+1, then update end.0
-            for _ in end.0..start.0 {
-                self.lines.remove(end.0 + 1);
-            }
-            self.lines[end.0] = new_line;
-
-            // Move cursor to the deletion point
-            self.cursor.0 = end.0;
-            self.cursor.1 = end.1;
         } else if end.0 == start.0 && end.1 < start.1 {
             // Backward motion on same line (db, dB)
             // Delete [end.1, start.1) in character indices
@@ -3002,45 +3081,91 @@ impl<'a> EditorState<'a> {
             self.cursor.1 = range_start; // Move cursor to start of deletion
         } else if end.0 > start.0 {
             // Forward motion crossing to next line - need to handle multi-line deletion
-            // 1. Collect text to delete for yank buffer
-            // 2. Keep start of start line + end of end line
-            // 3. Remove intermediate lines
+            // Special case: if end.1 == 0, don't merge with end line, keep it separate
 
             let mut deleted_text = String::new();
 
-            // Get the part to keep from start line (before cursor)
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
-            let start_prefix: String = start_chars[..start.1].iter().collect();
-            deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
+            if end.1 == 0 && !delete_empty_lines {
+                // Motion lands at start of a blank line - keep that line intact (for change operations)
+                // Only delete from cursor to end of start line, plus intermediate lines
 
-            // Add intermediate lines to deleted text
-            for row in (start.0 + 1)..end.0 {
+                // Get the part to keep from start line (before cursor)
+                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let start_prefix: String = start_chars[..start.1].iter().collect();
+                deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
+
+                // Add intermediate lines to deleted text (but not end line)
+                for row in (start.0 + 1)..end.0 {
+                    deleted_text.push('\n');
+                    deleted_text.push_str(&self.lines[row]);
+                }
+
+                // Store in yank buffer
+                self.yank_buffer = deleted_text;
+                self.yank_is_linewise = false;
+
+                // Update start line to just the prefix
+                self.lines[start.0] = start_prefix;
+
+                // Remove intermediate lines (from start.0+1 to end.0-1)
+                for _ in (start.0 + 1)..end.0 {
+                    self.lines.remove(start.0 + 1);
+                }
+
+                // Cursor stays at start position
+                self.cursor = start;
+            } else {
+                // Motion lands in middle of a line - merge start and end lines
+
+                // Get the part to keep from start line (before cursor)
+                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let start_line_was_blank = start_chars.iter().all(|c| c.is_whitespace());
+                let start_prefix: String = start_chars[..start.1].iter().collect();
+                deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
+
+                // Add intermediate lines to deleted text
+                for row in (start.0 + 1)..end.0 {
+                    deleted_text.push('\n');
+                    deleted_text.push_str(&self.lines[row]);
+                }
+
+                // Get the part to keep from end line (at and after end position)
+                let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let end_col = if is_inclusive { (end.1 + 1).min(end_chars.len()) } else { end.1 };
                 deleted_text.push('\n');
-                deleted_text.push_str(&self.lines[row]);
+                deleted_text.push_str(&end_chars[..end_col].iter().collect::<String>());
+                let end_suffix: String = end_chars[end_col..].iter().collect();
+
+                // Store in yank buffer
+                self.yank_buffer = deleted_text;
+                self.yank_is_linewise = false;
+
+                // Join the kept parts
+                let new_line = format!("{}{}", start_prefix, end_suffix);
+
+                // Remove lines from end.0 down to start.0+1, then update start.0
+                for _ in start.0..end.0 {
+                    self.lines.remove(start.0 + 1);
+                }
+                self.lines[start.0] = new_line.clone();
+
+                // Cursor stays at start position
+                self.cursor = start;
+
+                // For delete operations: handle cleanup of empty/blank lines
+                if delete_empty_lines && new_line.is_empty() {
+                    if start_line_was_blank && start.0 > 0 {
+                        // Cursor was on a blank line - remove it entirely and go to start of previous line
+                        self.lines.remove(start.0);
+                        self.cursor.0 = start.0 - 1;
+                        self.cursor.1 = 0;
+                    } else if start.0 > 0 && self.lines[start.0 - 1].trim().is_empty() {
+                        // There's a preceding blank line (paragraph boundary) - remove it
+                        self.lines.remove(start.0 - 1);
+                        self.cursor.0 = start.0 - 1;
+                    }
+                }
             }
-
-            // Get the part to keep from end line (at and after end position)
-            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
-            let end_col = if is_inclusive { (end.1 + 1).min(end_chars.len()) } else { end.1 };
-            deleted_text.push('\n');
-            deleted_text.push_str(&end_chars[..end_col].iter().collect::<String>());
-            let end_suffix: String = end_chars[end_col..].iter().collect();
-
-            // Store in yank buffer
-            self.yank_buffer = deleted_text;
-            self.yank_is_linewise = false;
-
-            // Join the kept parts
-            let new_line = format!("{}{}", start_prefix, end_suffix);
-
-            // Remove lines from end.0 down to start.0+1, then update start.0
-            for _ in start.0..end.0 {
-                self.lines.remove(start.0 + 1);
-            }
-            self.lines[start.0] = new_line;
-
-            // Cursor stays at start position
-            self.cursor = start;
         } else {
             // Forward motion on same line (dw, de)
             // w: exclusive. delete [start, end)
@@ -4086,6 +4211,22 @@ impl<'a> EditorState<'a> {
                                             false,
                                         );
                                     }
+                                    '{' => {
+                                        self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(
+                                            |s| s.get_paragraph_backward_pos(),
+                                            false,
+                                            false,
+                                        );
+                                    }
+                                    '}' => {
+                                        self.mode = EditorMode::Insert;
+                                        self.perform_delete_motion(
+                                            |s| s.get_paragraph_forward_pos(),
+                                            false,
+                                            false,
+                                        );
+                                    }
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
@@ -4158,6 +4299,16 @@ impl<'a> EditorState<'a> {
                                         false,
                                         true,
                                     ),
+                                    '{' => self.perform_delete_motion(
+                                        |s| s.get_paragraph_backward_pos(),
+                                        false,
+                                        true,
+                                    ),
+                                    '}' => self.perform_delete_motion(
+                                        |s| s.get_paragraph_forward_pos(),
+                                        false,
+                                        true,
+                                    ),
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
@@ -4198,6 +4349,14 @@ impl<'a> EditorState<'a> {
                                     ),
                                     ')' => self.perform_yank_motion(
                                         |s| s.get_sentence_forward_pos(),
+                                        false,
+                                    ),
+                                    '{' => self.perform_yank_motion(
+                                        |s| s.get_paragraph_backward_pos(),
+                                        false,
+                                    ),
+                                    '}' => self.perform_yank_motion(
+                                        |s| s.get_paragraph_forward_pos(),
                                         false,
                                     ),
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
