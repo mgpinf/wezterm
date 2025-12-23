@@ -2299,20 +2299,21 @@ impl<'a> EditorState<'a> {
         // Check if cursor moved (indicating a match was found)
         if self.cursor != saved_cursor {
             let end = self.cursor;
-            self.cursor = saved_cursor;
             // Handle multi-line case
             if saved_cursor.0 == end.0 {
                 // Same line - use character indices
-                let (start, end_col) = if saved_cursor.1 <= end.1 {
+                let (start_col, end_col) = if saved_cursor.1 <= end.1 {
                     (saved_cursor.1, end.1 + 1)
                 } else {
                     (end.1, saved_cursor.1 + 1)
                 };
-                let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                let chars: Vec<char> = self.lines[saved_cursor.0].chars().collect();
                 if end_col <= chars.len() {
-                    self.yank_buffer = chars[start..end_col].iter().collect();
+                    self.yank_buffer = chars[start_col..end_col].iter().collect();
                     self.yank_is_linewise = false;
                 }
+                // Move cursor to opening bracket (smaller column)
+                self.cursor = (saved_cursor.0, start_col);
             } else {
                 // Multi-line: yank from start to end including brackets
                 let (start_pos, end_pos) = if saved_cursor.0 < end.0 || (saved_cursor.0 == end.0 && saved_cursor.1 < end.1) {
@@ -2335,6 +2336,8 @@ impl<'a> EditorState<'a> {
                 yanked.extend(&last_chars[..=end_pos.1]);
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
+                // Move cursor to opening bracket (earlier position)
+                self.cursor = start_pos;
             }
         }
     }
