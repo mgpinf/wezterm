@@ -112,8 +112,7 @@ enum LastChange {
     DeleteAParagraph,                           // dap
     DeleteInnerSentence,                        // dis
     DeleteASentence,                            // das
-    DeleteToChar(char, bool),                   // df{char}, dt{char} (inclusive flag)
-    DeleteBackToChar(char, bool),               // dF{char}, dT{char} (inclusive flag)
+    DeleteToChar(char, bool, MotionDirection),  // df{char}, dt{char}, dF{char}, dT{char}
     SubstituteLine,                             // S, cc
     SubstituteChar,                             // s
     ChangeToEndOfLine,                          // C
@@ -127,8 +126,7 @@ enum LastChange {
     ChangeAParagraph,                           // cap
     ChangeInnerSentence,                        // cis
     ChangeASentence,                            // cas
-    ChangeToChar(char, bool),                   // cf{char}, ct{char}
-    ChangeBackToChar(char, bool),               // cF{char}, cT{char}
+    ChangeToChar(char, bool, MotionDirection),  // cf{char}, ct{char}, cF{char}, cT{char}
     InsertText(String, InsertStyle),            // Text inserted in insert mode
     ToggleCase,                                 // ~
     JoinLines,                                  // J
@@ -3149,10 +3147,10 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteAParagraph => self.delete_a_paragraph(),
             LastChange::DeleteInnerSentence => self.delete_inner_sentence(),
             LastChange::DeleteASentence => self.delete_a_sentence(),
-            LastChange::DeleteToChar(c, inclusive) => self.delete_to_char_forward(c, inclusive),
-            LastChange::DeleteBackToChar(c, inclusive) => {
-                self.delete_to_char_backward(c, inclusive)
-            }
+            LastChange::DeleteToChar(c, inclusive, dir) => match dir {
+                MotionDirection::Forward => self.delete_to_char_forward(c, inclusive),
+                MotionDirection::Backward => self.delete_to_char_backward(c, inclusive),
+            },
             LastChange::SubstituteLine => self.substitute_line(),
             LastChange::SubstituteChar => self.substitute_char(),
             LastChange::ChangeToEndOfLine => self.change_to_end_of_line(),
@@ -3251,14 +3249,12 @@ impl<'a> EditorState<'a> {
                 self.change_a_sentence();
                 self.insert_saved_text();
             }
-            LastChange::ChangeToChar(c, inclusive) => {
+            LastChange::ChangeToChar(c, inclusive, dir) => {
                 self.mode = EditorMode::Insert;
-                self.delete_to_char_forward(c, inclusive);
-                self.insert_saved_text();
-            }
-            LastChange::ChangeBackToChar(c, inclusive) => {
-                self.mode = EditorMode::Insert;
-                self.delete_to_char_backward(c, inclusive);
+                match dir {
+                    MotionDirection::Forward => self.delete_to_char_forward(c, inclusive),
+                    MotionDirection::Backward => self.delete_to_char_backward(c, inclusive),
+                }
                 self.insert_saved_text();
             }
             LastChange::InsertText(text, style) => {
@@ -5354,12 +5350,14 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeToChar(c, true);
+                                    self.last_change =
+                                        LastChange::ChangeToChar(c, true, MotionDirection::Forward);
                                     self.delete_to_char_forward(c, true);
                                 } else if op == 'y' {
                                     self.yank_to_char_forward(c, true);
                                 } else {
-                                    self.last_change = LastChange::DeleteToChar(c, true);
+                                    self.last_change =
+                                        LastChange::DeleteToChar(c, true, MotionDirection::Forward);
                                     self.delete_to_char_forward(c, true);
                                 }
                             } else if first == KeyCode::Char('F') {
@@ -5367,12 +5365,20 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeBackToChar(c, true);
+                                    self.last_change = LastChange::ChangeToChar(
+                                        c,
+                                        true,
+                                        MotionDirection::Backward,
+                                    );
                                     self.delete_to_char_backward(c, true);
                                 } else if op == 'y' {
                                     self.yank_to_char_backward(c, true);
                                 } else {
-                                    self.last_change = LastChange::DeleteBackToChar(c, true);
+                                    self.last_change = LastChange::DeleteToChar(
+                                        c,
+                                        true,
+                                        MotionDirection::Backward,
+                                    );
                                     self.delete_to_char_backward(c, true);
                                 }
                             } else if first == KeyCode::Char('t') {
@@ -5380,12 +5386,20 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeToChar(c, false);
+                                    self.last_change = LastChange::ChangeToChar(
+                                        c,
+                                        false,
+                                        MotionDirection::Forward,
+                                    );
                                     self.delete_to_char_forward(c, false);
                                 } else if op == 'y' {
                                     self.yank_to_char_forward(c, false);
                                 } else {
-                                    self.last_change = LastChange::DeleteToChar(c, false);
+                                    self.last_change = LastChange::DeleteToChar(
+                                        c,
+                                        false,
+                                        MotionDirection::Forward,
+                                    );
                                     self.delete_to_char_forward(c, false);
                                 }
                             } else if first == KeyCode::Char('T') {
@@ -5393,12 +5407,20 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeBackToChar(c, false);
+                                    self.last_change = LastChange::ChangeToChar(
+                                        c,
+                                        false,
+                                        MotionDirection::Backward,
+                                    );
                                     self.delete_to_char_backward(c, false);
                                 } else if op == 'y' {
                                     self.yank_to_char_backward(c, false);
                                 } else {
-                                    self.last_change = LastChange::DeleteBackToChar(c, false);
+                                    self.last_change = LastChange::DeleteToChar(
+                                        c,
+                                        false,
+                                        MotionDirection::Backward,
+                                    );
                                     self.delete_to_char_backward(c, false);
                                 }
                             }
@@ -6226,8 +6248,7 @@ impl<'a> EditorState<'a> {
                                 | LastChange::ChangeAParagraph
                                 | LastChange::ChangeInnerSentence
                                 | LastChange::ChangeASentence
-                                | LastChange::ChangeToChar(_, _)
-                                | LastChange::ChangeBackToChar(_, _)
+                                | LastChange::ChangeToChar(_, _, _)
                                 | LastChange::ChangeToEndOfLine
                                 | LastChange::SubstituteLine
                                 | LastChange::SubstituteChar => {
