@@ -3455,10 +3455,10 @@ impl<'a> EditorState<'a> {
                 self.perform_delete_motion(|s| s.get_long_word_end_pos(), true, true, false);
             }
             LastChange::DeleteWordEndBackward => {
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(), false, true, false);
+                self.perform_delete_motion(|s| s.get_word_end_backward_pos(), true, true, false);
             }
             LastChange::DeleteLongWordEndBackward => {
-                self.perform_delete_motion(|s| s.get_long_word_end_backward_pos(), false, true, false);
+                self.perform_delete_motion(|s| s.get_long_word_end_backward_pos(), true, true, false);
             }
             LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
             LastChange::DeleteInnerWord => self.delete_inner_word(),
@@ -3527,12 +3527,12 @@ impl<'a> EditorState<'a> {
             }
             LastChange::ChangeWordEndBackward => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(), false, false, false);
+                self.perform_delete_motion(|s| s.get_word_end_backward_pos(), true, false, false);
                 self.insert_saved_text();
             }
             LastChange::ChangeLongWordEndBackward => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_long_word_end_backward_pos(), false, false, false);
+                self.perform_delete_motion(|s| s.get_long_word_end_backward_pos(), true, false, false);
                 self.insert_saved_text();
             }
             LastChange::ChangeInnerWord => {
@@ -4336,10 +4336,14 @@ impl<'a> EditorState<'a> {
                 self.cursor.1 = end.1;
             }
         } else if end.0 == start.0 && end.1 < start.1 {
-            // Backward motion on same line (db, dB)
-            // Delete [end.1, start.1) in character indices
+            // Backward motion on same line (db, dB, dge)
+            // For inclusive motions (dge), include the character at cursor position
             let range_start = end.1;
-            let range_end = start.1;
+            let range_end = if is_inclusive {
+                (start.1 + 1).min(self.lines[start.0].chars().count())
+            } else {
+                start.1
+            };
             let mut chars: Vec<char> = self.lines[start.0].chars().collect();
             if range_start < range_end && range_end <= chars.len() {
                 // Store deleted text in yank buffer
@@ -4601,10 +4605,16 @@ impl<'a> EditorState<'a> {
             self.cursor = end;
             self.update_desired_col();
         } else if end.0 == start.0 && end.1 < start.1 {
-            // Backward motion on same line (yb, yB)
+            // Backward motion on same line (yb, yB, yge)
+            // For inclusive motions (yge), include the character at cursor position
             let chars: Vec<char> = self.lines[start.0].chars().collect();
-            if end.1 < start.1 && start.1 <= chars.len() {
-                self.yank_buffer = chars[end.1..start.1].iter().collect();
+            let yank_end = if is_inclusive {
+                (start.1 + 1).min(chars.len())
+            } else {
+                start.1
+            };
+            if end.1 < yank_end && yank_end <= chars.len() {
+                self.yank_buffer = chars[end.1..yank_end].iter().collect();
             }
             self.yank_is_linewise = false;
 
@@ -5426,17 +5436,17 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                     self.perform_delete_motion(
                                         |s| s.get_word_end_backward_pos(),
-                                        false,
+                                        true,
                                         false,
                                         false,
                                     );
                                     self.last_change = LastChange::ChangeWordEndBackward;
                                 } else if op == 'y' {
-                                    self.perform_yank_motion(|s| s.get_word_end_backward_pos(), false);
+                                    self.perform_yank_motion(|s| s.get_word_end_backward_pos(), true);
                                 } else {
                                     self.perform_delete_motion(
                                         |s| s.get_word_end_backward_pos(),
-                                        false,
+                                        true,
                                         true,
                                         false,
                                     );
@@ -5449,17 +5459,17 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                     self.perform_delete_motion(
                                         |s| s.get_long_word_end_backward_pos(),
-                                        false,
+                                        true,
                                         false,
                                         false,
                                     );
                                     self.last_change = LastChange::ChangeLongWordEndBackward;
                                 } else if op == 'y' {
-                                    self.perform_yank_motion(|s| s.get_long_word_end_backward_pos(), false);
+                                    self.perform_yank_motion(|s| s.get_long_word_end_backward_pos(), true);
                                 } else {
                                     self.perform_delete_motion(
                                         |s| s.get_long_word_end_backward_pos(),
-                                        false,
+                                        true,
                                         true,
                                         false,
                                     );
