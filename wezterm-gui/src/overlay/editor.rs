@@ -120,7 +120,6 @@ struct EditorState<'a> {
     window: GuiWin,
     pane: MuxPane,
     lines: Vec<String>,
-    lines_modified: bool, // Track if lines changed since last record
     lines_version: u64,   // Increments on any line modification
     history_version: u64, // Version when last pushed to history
     cursor: (usize, usize), // row, col
@@ -165,7 +164,6 @@ impl<'a> EditorState<'a> {
             window,
             pane,
             lines: lines.clone(),
-            lines_modified: false,
             lines_version: 0,
             history_version: 0,
             cursor: (0, 0),
@@ -196,12 +194,11 @@ impl<'a> EditorState<'a> {
         if self.history_idx < self.history.len() - 1 {
             self.history.truncate(self.history_idx + 1);
         }
-        // Always push a new entry when lines are modified
-        if self.lines_modified {
+        // Push a new entry when lines are modified (O(1) version check)
+        if self.lines_version != self.history_version {
             self.history.push((self.lines.clone(), self.cursor));
             self.history_idx = self.history.len() - 1;
             self.history_version = self.lines_version;
-            self.lines_modified = false;
         }
     }
     
@@ -303,7 +300,6 @@ impl<'a> EditorState<'a> {
         }
         self.lines[self.cursor.0] = chars.into_iter().collect();
         self.cursor.1 += 1;
-        self.lines_modified = true;
         self.lines_version += 1;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
@@ -321,8 +317,7 @@ impl<'a> EditorState<'a> {
             self.lines[self.cursor.0] = chars.into_iter().collect();
             self.clamp_cursor();
             self.update_desired_col();
-            self.lines_modified = true;
-        self.lines_version += 1;
+            self.lines_version += 1;
             // Only record change if not in insert mode (batch insert mode changes)
             if self.mode != EditorMode::Insert {
                 self.record_change();
@@ -341,7 +336,6 @@ impl<'a> EditorState<'a> {
         self.lines.insert(self.cursor.0 + 1, after);
         self.cursor.0 += 1;
         self.cursor.1 = 0;
-        self.lines_modified = true;
         self.lines_version += 1;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
@@ -352,7 +346,6 @@ impl<'a> EditorState<'a> {
     fn delete_line(&mut self) {
         // Save state before deletion for undo (preserves cursor position)
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         // Store deleted line in yank buffer
         self.yank_buffer = self.lines[self.cursor.0].clone();
@@ -381,7 +374,6 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
         
-        self.lines_modified = true;
         self.lines_version += 1;
         self.lines.truncate(self.cursor.0 + 1);
         self.lines[self.cursor.0].clear();
@@ -403,7 +395,6 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
         
-        self.lines_modified = true;
         self.lines_version += 1;
         for _ in 0..=self.cursor.0 {
             self.lines.remove(0);
@@ -426,7 +417,6 @@ impl<'a> EditorState<'a> {
             return;
         }
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         
         // Store deleted lines in yank buffer
@@ -463,7 +453,6 @@ impl<'a> EditorState<'a> {
             return;
         }
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         
         // Store deleted lines in yank buffer
@@ -496,7 +485,6 @@ impl<'a> EditorState<'a> {
             return;
         }
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         
         // Store deleted lines in yank buffer
@@ -527,7 +515,6 @@ impl<'a> EditorState<'a> {
             return;
         }
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         
         // Store deleted lines in yank buffer
@@ -552,7 +539,6 @@ impl<'a> EditorState<'a> {
     fn change_to_start_of_file(&mut self) {
         // Delete from start of file to current line, insert blank line for typing
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         for _ in 0..=self.cursor.0 {
             self.lines.remove(0);
@@ -568,7 +554,6 @@ impl<'a> EditorState<'a> {
     fn change_to_end_of_file(&mut self) {
         // Delete from current line to end, leave blank line for typing
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         self.lines.truncate(self.cursor.0);
         self.lines.push(String::new());
@@ -1449,7 +1434,6 @@ impl<'a> EditorState<'a> {
 
     fn delete_inner_paragraph(&mut self) {
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         let (start_row, end_row) = self.get_inner_paragraph_bounds();
 
@@ -1483,7 +1467,6 @@ impl<'a> EditorState<'a> {
         };
 
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
 
         // Store deleted lines in yank buffer
@@ -1539,7 +1522,6 @@ impl<'a> EditorState<'a> {
 
     fn change_inner_paragraph(&mut self) {
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         let (start_row, end_row) = self.get_inner_paragraph_bounds();
 
@@ -1571,7 +1553,6 @@ impl<'a> EditorState<'a> {
         };
 
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
 
         // Store deleted lines in yank buffer
@@ -1752,8 +1733,7 @@ impl<'a> EditorState<'a> {
             self.yank_inner_pair(pair_char);
             
             self.save_undo_state();
-            self.lines_modified = true;
-        self.lines_version += 1;
+            self.lines_version += 1;
             if open_row == close_row {
                 // Same line - simple case
                 let line = &mut self.lines[open_row];
@@ -1804,8 +1784,7 @@ impl<'a> EditorState<'a> {
             self.yank_around_pair(pair_char);
             
             self.save_undo_state();
-            self.lines_modified = true;
-        self.lines_version += 1;
+            self.lines_version += 1;
             if open_row == close_row {
                 // Same line - simple case
                 let line = &mut self.lines[open_row];
@@ -2788,7 +2767,6 @@ impl<'a> EditorState<'a> {
 
     fn delete_range_multiline(&mut self, start: (usize, usize), end: (usize, usize), inclusive: bool) {
         // Delete from start position to end position (multi-line support)
-        self.lines_modified = true;
         self.lines_version += 1;
         let (start_row, start_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
             start
@@ -3089,16 +3067,14 @@ impl<'a> EditorState<'a> {
                     }
                     InsertStyle::NewLineBelow => {
                         // o - open new line below current line
-                        self.lines_modified = true;
-        self.lines_version += 1;
+                        self.lines_version += 1;
                         self.lines.insert(self.cursor.0 + 1, String::new());
                         self.cursor.0 += 1;
                         self.cursor.1 = 0;
                     }
                     InsertStyle::NewLineAbove => {
                         // O - open new line above current line
-                        self.lines_modified = true;
-        self.lines_version += 1;
+                        self.lines_version += 1;
                         self.lines.insert(self.cursor.0, String::new());
                         self.cursor.1 = 0;
                     }
@@ -3138,7 +3114,6 @@ impl<'a> EditorState<'a> {
 
     fn delete_to_end_of_line(&mut self) {
         self.save_undo_state(); // Save state before deletion
-        self.lines_modified = true;
         self.lines_version += 1;
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 < chars.len() {
@@ -3190,8 +3165,7 @@ impl<'a> EditorState<'a> {
         let line_len = self.lines[self.cursor.0].len();
         if line_len > 0 && self.cursor.1 < line_len {
             self.save_undo_state();
-            self.lines_modified = true;
-        self.lines_version += 1;
+            self.lines_version += 1;
             let line = &mut self.lines[self.cursor.0];
             let mut chars: Vec<char> = line.chars().collect();
             chars[self.cursor.1] = replacement;
@@ -3203,8 +3177,7 @@ impl<'a> EditorState<'a> {
     fn join_lines(&mut self) {
         if self.cursor.0 < self.lines.len() - 1 {
             self.save_undo_state();
-            self.lines_modified = true;
-        self.lines_version += 1;
+            self.lines_version += 1;
             let next_line = self.lines.remove(self.cursor.0 + 1);
             let current_line = &mut self.lines[self.cursor.0];
 
@@ -3465,7 +3438,6 @@ impl<'a> EditorState<'a> {
     {
         // Record state before deletion for undo (preserves cursor position)
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         let start = self.cursor;
         let end = motion(self);
@@ -4014,7 +3986,6 @@ impl<'a> EditorState<'a> {
 
     fn paste_after(&mut self) {
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         if self.yank_buffer.is_empty() {
             return;
@@ -4078,7 +4049,6 @@ impl<'a> EditorState<'a> {
 
     fn paste_before(&mut self) {
         self.save_undo_state();
-        self.lines_modified = true;
         self.lines_version += 1;
         if self.yank_buffer.is_empty() {
             return;
@@ -4317,8 +4287,7 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked.join("\n");
             self.yank_is_linewise = true;
             
-            self.lines_modified = true;
-        self.lines_version += 1;
+            self.lines_version += 1;
             for _ in start.0..=end.0 {
                 if self.lines.len() > 1 {
                     self.lines.remove(start.0);
@@ -4341,8 +4310,7 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = chars[start.1..sel_end].iter().collect();
                 self.yank_is_linewise = false;
                 
-                self.lines_modified = true;
-        self.lines_version += 1;
+                self.lines_version += 1;
                 let new_line: String = chars[..start.1].iter().chain(&chars[sel_end..]).collect();
                 self.lines[start.0] = new_line;
                 self.cursor = start;
@@ -4362,8 +4330,7 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
                 
-                self.lines_modified = true;
-        self.lines_version += 1;
+                self.lines_version += 1;
                 let first_part: String = first_chars[..start.1].iter().collect();
                 let first_part_len = first_part.chars().count();
                 let last_part: String = last_chars[sel_end..].iter().collect();
@@ -5074,8 +5041,7 @@ impl<'a> EditorState<'a> {
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_style = InsertStyle::NewLineBelow;
-                                self.lines_modified = true;
-        self.lines_version += 1;
+                                self.lines_version += 1;
                                 self.lines.insert(self.cursor.0 + 1, String::new());
                                 self.cursor.0 += 1;
                                 self.cursor.1 = 0;
@@ -5086,8 +5052,7 @@ impl<'a> EditorState<'a> {
                                 self.insert_buffer.clear();
                                 self.last_change = LastChange::None;
                                 self.insert_style = InsertStyle::NewLineAbove;
-                                self.lines_modified = true;
-        self.lines_version += 1;
+                                self.lines_version += 1;
                                 self.lines.insert(self.cursor.0, String::new());
                                 self.cursor.1 = 0;
                                 self.mode = EditorMode::Insert;
@@ -5312,8 +5277,7 @@ impl<'a> EditorState<'a> {
                             self.delete_char();
                         } else if self.cursor.0 > 0 {
                             // Join lines logic
-                            self.lines_modified = true;
-        self.lines_version += 1;
+                            self.lines_version += 1;
                             let current_line = self.lines.remove(self.cursor.0);
                             self.cursor.0 -= 1;
                             self.cursor.1 = self.lines[self.cursor.0].len();
@@ -5653,8 +5617,7 @@ impl<'a> EditorState<'a> {
                         '~' => {
                             let (start, end) = self.get_visual_selection();
                             self.save_undo_state();
-                            self.lines_modified = true;
-        self.lines_version += 1;
+                            self.lines_version += 1;
                             if self.mode == EditorMode::VisualLine {
                                 for row in start.0..=end.0 {
                                     let toggled: String = self.lines[row].chars().map(|c| {
@@ -5833,7 +5796,6 @@ mod tests {
         yank_is_linewise: bool,
         history: Vec<(Vec<String>, (usize, usize))>,
         history_idx: usize,
-        lines_modified: bool,
         lines_version: u64,
         history_version: u64,
     }
@@ -5854,7 +5816,6 @@ mod tests {
                 yank_is_linewise: false,
                 history: vec![(lines, (0, 0))],
                 history_idx: 0,
-                lines_modified: false,
                 lines_version: 0,
                 history_version: 0,
             }
@@ -5887,14 +5848,14 @@ mod tests {
         }
 
         fn record_change(&mut self) {
-            if self.lines_modified {
+            if self.lines_version != self.history_version {
                 // Trim future history if we made new changes after undo
                 if self.history_idx < self.history.len() - 1 {
                     self.history.truncate(self.history_idx + 1);
                 }
                 self.history.push((self.lines.clone(), self.cursor));
                 self.history_idx = self.history.len() - 1;
-                self.lines_modified = false;
+                self.history_version = self.lines_version;
             }
         }
         
@@ -5945,8 +5906,7 @@ mod tests {
             }
             self.lines[self.cursor.0] = chars.into_iter().collect();
             self.cursor.1 += 1;
-            self.lines_modified = true;
-        self.lines_version += 1;
+            self.lines_version += 1;
         }
 
         fn delete_char(&mut self) {
@@ -5954,8 +5914,7 @@ mod tests {
             if self.cursor.1 < chars.len() {
                 chars.remove(self.cursor.1);
                 self.lines[self.cursor.0] = chars.into_iter().collect();
-                self.lines_modified = true;
-        self.lines_version += 1;
+                self.lines_version += 1;
                 self.clamp_cursor();
             }
         }
@@ -5963,14 +5922,12 @@ mod tests {
         fn delete_line(&mut self, row: usize) {
             if self.lines.len() > 1 && row < self.lines.len() {
                 self.lines.remove(row);
-                self.lines_modified = true;
-        self.lines_version += 1;
+                self.lines_version += 1;
                 self.clamp_cursor();
             } else if self.lines.len() == 1 {
                 self.lines[0].clear();
                 self.cursor = (0, 0);
-                self.lines_modified = true;
-        self.lines_version += 1;
+                self.lines_version += 1;
             }
         }
 
@@ -6148,8 +6105,7 @@ mod tests {
                 self.find_pair_bounds(pair_char)
             {
                 self.save_undo_state();
-                self.lines_modified = true;
-        self.lines_version += 1;
+                self.lines_version += 1;
 
                 if open_row == close_row {
                     let mut chars: Vec<char> = self.lines[open_row].chars().collect();
@@ -6270,7 +6226,7 @@ mod tests {
     fn test_undo_single_change() {
         let mut editor = TestEditor::new("hello");
         editor.insert_char('X');
-        editor.lines_modified = true;
+        editor.lines_version += 1;
         editor.record_change();
         assert_eq!(editor.text(), "Xhello");
 
@@ -6282,7 +6238,7 @@ mod tests {
     fn test_redo_after_undo() {
         let mut editor = TestEditor::new("hello");
         editor.insert_char('X');
-        editor.lines_modified = true;
+        editor.lines_version += 1;
         editor.record_change();
 
         editor.undo();
