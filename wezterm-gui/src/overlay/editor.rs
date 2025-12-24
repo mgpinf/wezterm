@@ -205,6 +205,14 @@ impl<'a> EditorState<'a> {
             self.history_version = self.lines_version;
         }
     }
+
+    /// Record change only if not in Insert mode.
+    /// For change operations (c, s, C, S, etc.), we defer recording until exiting insert mode.
+    fn maybe_record_change(&mut self) {
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
+    }
     
     /// Save current state before making changes (for undo to restore to)
     fn save_undo_state(&mut self) {
@@ -1236,44 +1244,30 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn delete_inner_word(&mut self) {
-        let (start, end) = self.get_inner_word_bounds();
+    /// Helper to delete a text object on the current line given (start, end) bounds
+    fn delete_text_object_on_line(&mut self, start: usize, end: usize) {
         let line_len = self.lines[self.cursor.0].len();
         if start < end && end <= line_len {
             self.save_undo_state();
             self.lines_version += 1;
-            // Store deleted text in yank buffer
             self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
             self.yank_is_linewise = false;
             self.lines[self.cursor.0].replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
             self.update_desired_col();
-            // For change operations (Insert mode), don't record yet
-            if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
+            self.maybe_record_change();
         }
+    }
+
+    fn delete_inner_word(&mut self) {
+        let (start, end) = self.get_inner_word_bounds();
+        self.delete_text_object_on_line(start, end);
     }
 
     fn delete_a_word(&mut self) {
         let (start, end) = self.get_a_word_bounds();
-        let line_len = self.lines[self.cursor.0].len();
-        if start < end && end <= line_len {
-            self.save_undo_state();
-            self.lines_version += 1;
-            // Store deleted text in yank buffer
-            self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
-            self.yank_is_linewise = false;
-            self.lines[self.cursor.0].replace_range(start..end, "");
-            self.cursor.1 = start;
-            self.clamp_cursor();
-            self.update_desired_col();
-            // For change operations (Insert mode), don't record yet
-            if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
-        }
+        self.delete_text_object_on_line(start, end);
     }
 
     fn get_inner_long_word_bounds(&self) -> (usize, usize) {
@@ -1342,42 +1336,12 @@ impl<'a> EditorState<'a> {
 
     fn delete_inner_long_word(&mut self) {
         let (start, end) = self.get_inner_long_word_bounds();
-        let line_len = self.lines[self.cursor.0].len();
-        if start < end && end <= line_len {
-            self.save_undo_state();
-            self.lines_version += 1;
-            // Store deleted text in yank buffer
-            self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
-            self.yank_is_linewise = false;
-            self.lines[self.cursor.0].replace_range(start..end, "");
-            self.cursor.1 = start;
-            self.clamp_cursor();
-            self.update_desired_col();
-            // For change operations (Insert mode), don't record yet
-            if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
-        }
+        self.delete_text_object_on_line(start, end);
     }
 
     fn delete_a_long_word(&mut self) {
         let (start, end) = self.get_a_long_word_bounds();
-        let line_len = self.lines[self.cursor.0].len();
-        if start < end && end <= line_len {
-            self.save_undo_state();
-            self.lines_version += 1;
-            // Store deleted text in yank buffer
-            self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
-            self.yank_is_linewise = false;
-            self.lines[self.cursor.0].replace_range(start..end, "");
-            self.cursor.1 = start;
-            self.clamp_cursor();
-            self.update_desired_col();
-            // For change operations (Insert mode), don't record yet
-            if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
-        }
+        self.delete_text_object_on_line(start, end);
     }
 
     fn get_inner_paragraph_bounds(&self) -> (usize, usize) {
@@ -2232,10 +2196,7 @@ impl<'a> EditorState<'a> {
             }
             self.clamp_cursor();
             self.update_desired_col();
-            // For change operations (Insert mode), don't record yet
-            if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
+            self.maybe_record_change();
         }
     }
 
@@ -2272,10 +2233,7 @@ impl<'a> EditorState<'a> {
             }
             self.clamp_cursor();
             self.update_desired_col();
-            // For change operations (Insert mode), don't record yet
-            if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
+            self.maybe_record_change();
         }
     }
 
@@ -4120,40 +4078,33 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn yank_inner_word(&mut self) {
-        let (start, end) = self.get_inner_word_bounds();
+    /// Helper to yank a text object on the current line given (start, end) bounds
+    fn yank_text_object_on_line(&mut self, start: usize, end: usize) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if start < end && end <= chars.len() {
             self.yank_buffer = chars[start..end].iter().collect();
             self.yank_is_linewise = false;
         }
+    }
+
+    fn yank_inner_word(&mut self) {
+        let (start, end) = self.get_inner_word_bounds();
+        self.yank_text_object_on_line(start, end);
     }
 
     fn yank_a_word(&mut self) {
         let (start, end) = self.get_a_word_bounds();
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
-        if start < end && end <= chars.len() {
-            self.yank_buffer = chars[start..end].iter().collect();
-            self.yank_is_linewise = false;
-        }
+        self.yank_text_object_on_line(start, end);
     }
 
     fn yank_inner_long_word(&mut self) {
         let (start, end) = self.get_inner_long_word_bounds();
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
-        if start < end && end <= chars.len() {
-            self.yank_buffer = chars[start..end].iter().collect();
-            self.yank_is_linewise = false;
-        }
+        self.yank_text_object_on_line(start, end);
     }
 
     fn yank_a_long_word(&mut self) {
         let (start, end) = self.get_a_long_word_bounds();
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
-        if start < end && end <= chars.len() {
-            self.yank_buffer = chars[start..end].iter().collect();
-            self.yank_is_linewise = false;
-        }
+        self.yank_text_object_on_line(start, end);
     }
 
     fn yank_inner_pair(&mut self, pair_char: char) {
