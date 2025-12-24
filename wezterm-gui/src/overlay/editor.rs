@@ -91,6 +91,8 @@ enum LastChange {
     DeleteLongWordBackward,          // dB
     DeleteWordEnd,                   // de
     DeleteLongWordEnd,               // dE
+    DeleteWordEndBackward,           // dge
+    DeleteLongWordEndBackward,       // dgE
     DeleteToEndOfLine,               // D
     DeleteInnerWord,                 // diw
     DeleteAWord,                     // daw
@@ -113,6 +115,8 @@ enum LastChange {
     ChangeLongWordBackward,          // cB
     ChangeWordEnd,                   // ce
     ChangeLongWordEnd,               // cE
+    ChangeWordEndBackward,           // cge
+    ChangeLongWordEndBackward,       // cgE
     ChangeInnerWord,                 // ciw
     ChangeAWord,                     // caw
     ChangeInnerLongWord,             // ciW
@@ -1145,6 +1149,276 @@ impl<'a> EditorState<'a> {
 
     fn move_to_long_word_end(&mut self) {
         self.cursor = self.get_long_word_end_pos();
+        self.update_desired_col();
+    }
+
+    /// Get position of end of previous word (ge motion)
+    fn get_word_end_backward_pos(&self) -> (usize, usize) {
+        let mut row = self.cursor.0;
+        let mut col = self.cursor.1;
+
+        // Helper to get char type: 0 = whitespace, 1 = word, 2 = punct
+        let char_type = |c: char| -> u8 {
+            if c.is_whitespace() {
+                0
+            } else if c.is_ascii_punctuation() {
+                2
+            } else {
+                1
+            }
+        };
+
+        let get_char = |r: usize, c: usize, lines: &[String]| -> Option<char> {
+            let chars: Vec<char> = lines[r].chars().collect();
+            if c < chars.len() {
+                Some(chars[c])
+            } else {
+                None
+            }
+        };
+
+        // Step 1: Move back one position
+        if col > 0 {
+            col -= 1;
+        } else if row > 0 {
+            row -= 1;
+            col = self.lines[row].chars().count().saturating_sub(1);
+        } else {
+            return (0, 0);
+        }
+
+        // Step 2: Skip whitespace and empty lines backward
+        loop {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            if chars.is_empty() {
+                if row > 0 {
+                    row -= 1;
+                    col = self.lines[row].chars().count().saturating_sub(1);
+                    continue;
+                }
+                return (0, 0);
+            }
+
+            if col < chars.len() && chars[col].is_whitespace() {
+                if col > 0 {
+                    col -= 1;
+                    continue;
+                } else if row > 0 {
+                    row -= 1;
+                    col = self.lines[row].chars().count().saturating_sub(1);
+                    continue;
+                }
+                return (0, 0);
+            }
+            break;
+        }
+
+        // Step 3: Now we're on a non-whitespace char
+        // Check if we started from a non-whitespace position in the same word
+        let orig_char = get_char(self.cursor.0, self.cursor.1, &self.lines);
+        let curr_char = get_char(row, col, &self.lines);
+
+        if let (Some(orig_c), Some(curr_c)) = (orig_char, curr_char) {
+            let orig_type = char_type(orig_c);
+            let curr_type = char_type(curr_c);
+
+            // If we started on a non-whitespace and are still in the same word type
+            // on the same line, we need to skip this word entirely
+            if orig_type != 0 && row == self.cursor.0 {
+                // Check if we're still in the same continuous word
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let mut still_same_word = true;
+
+                // Check characters between col and cursor for continuity
+                for i in (col + 1)..=self.cursor.1 {
+                    if i < chars.len() {
+                        let t = char_type(chars[i]);
+                        if t == 0 || (t != orig_type && orig_type != 0) {
+                            still_same_word = false;
+                            break;
+                        }
+                    }
+                }
+
+                if still_same_word && curr_type == orig_type {
+                    // Skip backward through this word entirely
+                    while col > 0 {
+                        let prev_type = char_type(chars[col - 1]);
+                        if prev_type != curr_type {
+                            break;
+                        }
+                        col -= 1;
+                    }
+
+                    // Now move back one more and skip whitespace again
+                    if col > 0 {
+                        col -= 1;
+                    } else if row > 0 {
+                        row -= 1;
+                        col = self.lines[row].chars().count().saturating_sub(1);
+                    } else {
+                        return (0, 0);
+                    }
+
+                    // Skip whitespace again
+                    loop {
+                        let chars: Vec<char> = self.lines[row].chars().collect();
+                        if chars.is_empty() {
+                            if row > 0 {
+                                row -= 1;
+                                col = self.lines[row].chars().count().saturating_sub(1);
+                                continue;
+                            }
+                            return (0, 0);
+                        }
+
+                        if col < chars.len() && chars[col].is_whitespace() {
+                            if col > 0 {
+                                col -= 1;
+                                continue;
+                            } else if row > 0 {
+                                row -= 1;
+                                col = self.lines[row].chars().count().saturating_sub(1);
+                                continue;
+                            }
+                            return (0, 0);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        (row, col)
+    }
+
+    fn move_to_word_end_backward(&mut self) {
+        self.cursor = self.get_word_end_backward_pos();
+        self.update_desired_col();
+    }
+
+    /// Get position of end of previous WORD (gE motion)
+    fn get_long_word_end_backward_pos(&self) -> (usize, usize) {
+        let mut row = self.cursor.0;
+        let mut col = self.cursor.1;
+
+        let get_char = |r: usize, c: usize, lines: &[String]| -> Option<char> {
+            let chars: Vec<char> = lines[r].chars().collect();
+            if c < chars.len() {
+                Some(chars[c])
+            } else {
+                None
+            }
+        };
+
+        // Step 1: Move back one position
+        if col > 0 {
+            col -= 1;
+        } else if row > 0 {
+            row -= 1;
+            col = self.lines[row].chars().count().saturating_sub(1);
+        } else {
+            return (0, 0);
+        }
+
+        // Step 2: Skip whitespace and empty lines backward
+        loop {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            if chars.is_empty() {
+                if row > 0 {
+                    row -= 1;
+                    col = self.lines[row].chars().count().saturating_sub(1);
+                    continue;
+                }
+                return (0, 0);
+            }
+
+            if col < chars.len() && chars[col].is_whitespace() {
+                if col > 0 {
+                    col -= 1;
+                    continue;
+                } else if row > 0 {
+                    row -= 1;
+                    col = self.lines[row].chars().count().saturating_sub(1);
+                    continue;
+                }
+                return (0, 0);
+            }
+            break;
+        }
+
+        // Step 3: Now we're on a non-whitespace char
+        // Check if we started from a non-whitespace position in the same WORD
+        let orig_char = get_char(self.cursor.0, self.cursor.1, &self.lines);
+        let curr_char = get_char(row, col, &self.lines);
+
+        if let (Some(orig_c), Some(_curr_c)) = (orig_char, curr_char) {
+            let orig_is_ws = orig_c.is_whitespace();
+
+            // If we started on a non-whitespace and are still on the same line
+            // we need to check if we're in the same continuous WORD
+            if !orig_is_ws && row == self.cursor.0 {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let mut still_same_word = true;
+
+                // Check characters between col and cursor for whitespace
+                for i in (col + 1)..=self.cursor.1 {
+                    if i < chars.len() && chars[i].is_whitespace() {
+                        still_same_word = false;
+                        break;
+                    }
+                }
+
+                if still_same_word {
+                    // Skip backward through this WORD entirely (until whitespace)
+                    while col > 0 && !chars[col - 1].is_whitespace() {
+                        col -= 1;
+                    }
+
+                    // Now move back one more and skip whitespace again
+                    if col > 0 {
+                        col -= 1;
+                    } else if row > 0 {
+                        row -= 1;
+                        col = self.lines[row].chars().count().saturating_sub(1);
+                    } else {
+                        return (0, 0);
+                    }
+
+                    // Skip whitespace again
+                    loop {
+                        let chars: Vec<char> = self.lines[row].chars().collect();
+                        if chars.is_empty() {
+                            if row > 0 {
+                                row -= 1;
+                                col = self.lines[row].chars().count().saturating_sub(1);
+                                continue;
+                            }
+                            return (0, 0);
+                        }
+
+                        if col < chars.len() && chars[col].is_whitespace() {
+                            if col > 0 {
+                                col -= 1;
+                                continue;
+                            } else if row > 0 {
+                                row -= 1;
+                                col = self.lines[row].chars().count().saturating_sub(1);
+                                continue;
+                            }
+                            return (0, 0);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        (row, col)
+    }
+
+    fn move_to_long_word_end_backward(&mut self) {
+        self.cursor = self.get_long_word_end_backward_pos();
         self.update_desired_col();
     }
 
@@ -3180,6 +3454,12 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteLongWordEnd => {
                 self.perform_delete_motion(|s| s.get_long_word_end_pos(), true, true, false);
             }
+            LastChange::DeleteWordEndBackward => {
+                self.perform_delete_motion(|s| s.get_word_end_backward_pos(), false, true, false);
+            }
+            LastChange::DeleteLongWordEndBackward => {
+                self.perform_delete_motion(|s| s.get_long_word_end_backward_pos(), false, true, false);
+            }
             LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
             LastChange::DeleteInnerWord => self.delete_inner_word(),
             LastChange::DeleteAWord => self.delete_a_word(),
@@ -3243,6 +3523,16 @@ impl<'a> EditorState<'a> {
             LastChange::ChangeLongWordEnd => {
                 self.mode = EditorMode::Insert;
                 self.perform_delete_motion(|s| s.get_long_word_end_pos(), true, false, false);
+                self.insert_saved_text();
+            }
+            LastChange::ChangeWordEndBackward => {
+                self.mode = EditorMode::Insert;
+                self.perform_delete_motion(|s| s.get_word_end_backward_pos(), false, false, false);
+                self.insert_saved_text();
+            }
+            LastChange::ChangeLongWordEndBackward => {
+                self.mode = EditorMode::Insert;
+                self.perform_delete_motion(|s| s.get_long_word_end_backward_pos(), false, false, false);
                 self.insert_saved_text();
             }
             LastChange::ChangeInnerWord => {
@@ -5129,6 +5419,52 @@ impl<'a> EditorState<'a> {
                                 } else if op == 'y' {
                                     self.yank_to_start_of_file();
                                 }
+                            } else if first == KeyCode::Char('g') && c == 'e' {
+                                // dge / cge / yge - delete/change/yank backward to end of previous word
+                                if op == 'c' {
+                                    self.insert_buffer.clear();
+                                    self.mode = EditorMode::Insert;
+                                    self.perform_delete_motion(
+                                        |s| s.get_word_end_backward_pos(),
+                                        false,
+                                        false,
+                                        false,
+                                    );
+                                    self.last_change = LastChange::ChangeWordEndBackward;
+                                } else if op == 'y' {
+                                    self.perform_yank_motion(|s| s.get_word_end_backward_pos(), false);
+                                } else {
+                                    self.perform_delete_motion(
+                                        |s| s.get_word_end_backward_pos(),
+                                        false,
+                                        true,
+                                        false,
+                                    );
+                                    self.last_change = LastChange::DeleteWordEndBackward;
+                                }
+                            } else if first == KeyCode::Char('g') && c == 'E' {
+                                // dgE / cgE / ygE - delete/change/yank backward to end of previous WORD
+                                if op == 'c' {
+                                    self.insert_buffer.clear();
+                                    self.mode = EditorMode::Insert;
+                                    self.perform_delete_motion(
+                                        |s| s.get_long_word_end_backward_pos(),
+                                        false,
+                                        false,
+                                        false,
+                                    );
+                                    self.last_change = LastChange::ChangeLongWordEndBackward;
+                                } else if op == 'y' {
+                                    self.perform_yank_motion(|s| s.get_long_word_end_backward_pos(), false);
+                                } else {
+                                    self.perform_delete_motion(
+                                        |s| s.get_long_word_end_backward_pos(),
+                                        false,
+                                        true,
+                                        false,
+                                    );
+                                    self.last_change = LastChange::DeleteLongWordEndBackward;
+                                }
                             } else if first == KeyCode::Char('i') && c == 'w' {
                                 // diw / ciw / yiw - delete/change/yank inner word
                                 if op == 'c' {
@@ -5804,6 +6140,14 @@ impl<'a> EditorState<'a> {
                                 };
                                 self.cursor.1 = self.desired_col.min(max_col);
                                 self.pending_keys.clear();
+                            } else if first == KeyCode::Char('g') && c == 'e' {
+                                // ge - move backward to end of previous word
+                                self.move_to_word_end_backward();
+                                self.pending_keys.clear();
+                            } else if first == KeyCode::Char('g') && c == 'E' {
+                                // gE - move backward to end of previous WORD
+                                self.move_to_long_word_end_backward();
+                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('Z') && c == 'Z' {
                                 self.submit();
                                 break;
@@ -6125,6 +6469,8 @@ impl<'a> EditorState<'a> {
                                 | LastChange::ChangeLongWordBackward
                                 | LastChange::ChangeWordEnd
                                 | LastChange::ChangeLongWordEnd
+                                | LastChange::ChangeWordEndBackward
+                                | LastChange::ChangeLongWordEndBackward
                                 | LastChange::ChangeInnerWord
                                 | LastChange::ChangeAWord
                                 | LastChange::ChangeInnerLongWord
