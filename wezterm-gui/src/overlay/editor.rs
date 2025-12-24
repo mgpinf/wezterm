@@ -123,6 +123,20 @@ enum LastChange {
     DecrementNumber,                 // Ctrl-X
 }
 
+/// Information about a number found at cursor position
+struct NumberAtCursor {
+    /// Start column (includes negative sign if present)
+    start: usize,
+    /// End column (exclusive)
+    end: usize,
+    /// The digits of the number (without prefix or sign)
+    digits: String,
+    /// Whether this is a hexadecimal number
+    is_hex: bool,
+    /// Whether the number is negative
+    is_negative: bool,
+}
+
 struct EditorState<'a> {
     args: &'a InputText,
     window: GuiWin,
@@ -3582,23 +3596,25 @@ impl<'a> EditorState<'a> {
     }
 
     /// Find a number under or after the cursor on the current line.
-    /// Returns (start_col, end_col, number_string, is_hex, is_octal, is_negative)
-    fn find_number_at_cursor(&self) -> Option<(usize, usize, String, bool, bool, bool)> {
+    fn find_number_at_cursor(&self) -> Option<NumberAtCursor> {
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
         if chars.is_empty() {
             return None;
         }
 
-        let mut pos = self.cursor.1;
-        if pos >= chars.len() {
-            pos = chars.len() - 1;
-        }
+        let pos = self.cursor.1.min(chars.len() - 1);
 
-        // Helper to check if we're in a hex number by looking backwards for 0x
+        // Try to find a hex number first, then fall back to decimal
+        self.try_find_hex_number(&chars, pos)
+            .or_else(|| self.try_find_decimal_number(&chars, pos))
+    }
+
+    /// Try to find a hex number (0x...) at or after the given position
+    fn try_find_hex_number(&self, chars: &[char], pos: usize) -> Option<NumberAtCursor> {
+        // Find where the 0x prefix might be by looking backwards through hex digits
         let find_hex_start = |from: usize| -> Option<usize> {
             let mut i = from;
-            // Go back through hex digits
             while i > 0 && chars[i - 1].is_ascii_hexdigit() {
                 i -= 1;
             }
@@ -3606,120 +3622,106 @@ impl<'a> EditorState<'a> {
             if i >= 2 && chars[i - 1].to_ascii_lowercase() == 'x' && chars[i - 2] == '0' {
                 Some(i - 2)
             } else if i >= 1 && chars[i].to_ascii_lowercase() == 'x' && chars[i - 1] == '0' {
-                // Cursor might be on 'x'
                 Some(i - 1)
             } else {
                 None
             }
         };
 
-        // First, check if cursor is on a hex digit (a-f, A-F) and part of a hex number
-        if chars[pos].is_ascii_hexdigit() && !chars[pos].is_ascii_digit() {
-            // On a-f or A-F, check if this is part of a hex number
-            if let Some(hex_start) = find_hex_start(pos) {
-                // Find end of hex number
-                let mut end = pos;
-                while end < chars.len() && chars[end].is_ascii_hexdigit() {
-                    end += 1;
-                }
-                let number_str: String = chars[(hex_start + 2)..end].iter().collect();
-                if !number_str.is_empty() {
-                    // Check for negative
-                    let is_negative = hex_start > 0 && chars[hex_start - 1] == '-';
-                    let actual_start = if is_negative { hex_start - 1 } else { hex_start };
-                    return Some((actual_start, end, number_str, true, false, is_negative));
-                }
-            }
+        // Check various cases where cursor might be on a hex number
+        let hex_start = if chars[pos].is_ascii_hexdigit() {
+            // On a hex digit (0-9, a-f, A-F)
+            find_hex_start(pos)
+        } else if chars[pos].to_ascii_lowercase() == 'x' && pos > 0 && chars[pos - 1] == '0' {
+            // On 'x' of 0x
+            Some(pos - 1)
+        } else {
+            None
+        };
+
+        let hex_start = hex_start?;
+
+        // Find end of hex number
+        let mut end = hex_start + 2; // Skip 0x
+        while end < chars.len() && chars[end].is_ascii_hexdigit() {
+            end += 1;
         }
 
-        // Check if cursor is on 'x' of 0x
-        if chars[pos].to_ascii_lowercase() == 'x' && pos > 0 && chars[pos - 1] == '0' {
-            let hex_start = pos - 1;
-            let mut end = pos + 1;
-            while end < chars.len() && chars[end].is_ascii_hexdigit() {
-                end += 1;
-            }
-            if end > pos + 1 {
-                let number_str: String = chars[(hex_start + 2)..end].iter().collect();
-                let is_negative = hex_start > 0 && chars[hex_start - 1] == '-';
-                let actual_start = if is_negative { hex_start - 1 } else { hex_start };
-                return Some((actual_start, end, number_str, true, false, is_negative));
-            }
+        let digits: String = chars[(hex_start + 2)..end].iter().collect();
+        if digits.is_empty() {
+            return None;
         }
 
+        let is_negative = hex_start > 0 && chars[hex_start - 1] == '-';
+        let start = if is_negative { hex_start - 1 } else { hex_start };
+
+        Some(NumberAtCursor {
+            start,
+            end,
+            digits,
+            is_hex: true,
+            is_negative,
+        })
+    }
+
+    /// Try to find a decimal number at or after the given position
+    fn try_find_decimal_number(&self, chars: &[char], mut pos: usize) -> Option<NumberAtCursor> {
         let mut is_negative = false;
 
-        // If we're not on a digit, search forward to find one
+        // If not on a digit, search forward
         if !chars[pos].is_ascii_digit() {
-            // Check if on '-' followed by digit
             if chars[pos] == '-' && pos + 1 < chars.len() && chars[pos + 1].is_ascii_digit() {
                 is_negative = true;
                 pos += 1;
             } else {
-                // Search forward for a number
-                let mut found = false;
-                for i in pos..chars.len() {
-                    if chars[i].is_ascii_digit() {
-                        // Check for negative
-                        if i > 0 && chars[i - 1] == '-' {
-                            is_negative = true;
-                        }
+                // Search forward for a digit
+                let found_pos = (pos..chars.len()).find(|&i| chars[i].is_ascii_digit());
+                match found_pos {
+                    Some(i) => {
+                        is_negative = i > 0 && chars[i - 1] == '-';
                         pos = i;
-                        found = true;
-                        break;
                     }
-                }
-                if !found {
-                    return None;
+                    None => return None,
                 }
             }
         }
 
-        // Now pos is on a digit. First check if we might be in a hex number by
-        // looking backwards through ALL hex digits (not just decimal).
-        if let Some(hex_start) = find_hex_start(pos) {
-            // Find end including all hex digits
-            let mut end = pos;
-            while end < chars.len() && chars[end].is_ascii_hexdigit() {
-                end += 1;
-            }
-            let number_str: String = chars[(hex_start + 2)..end].iter().collect();
-            if !number_str.is_empty() {
-                // Check for negative before 0x
-                let is_neg = hex_start > 0 && chars[hex_start - 1] == '-';
-                let actual_start = if is_neg { hex_start - 1 } else { hex_start };
-                return Some((actual_start, end, number_str, true, false, is_neg));
-            }
+        // Check if this digit is part of a hex number
+        if self.try_find_hex_number(chars, pos).is_some() {
+            return None; // Let hex handling take care of it
         }
 
-        // Not a hex number - look backwards through decimal digits only
-        let mut start = pos;
-        while start > 0 && chars[start - 1].is_ascii_digit() {
-            start -= 1;
+        // Find start of decimal number
+        let mut num_start = pos;
+        while num_start > 0 && chars[num_start - 1].is_ascii_digit() {
+            num_start -= 1;
         }
 
-        // Check for negative sign before the number
-        if !is_negative && start > 0 && chars[start - 1] == '-' {
+        // Check for negative sign
+        if !is_negative && num_start > 0 && chars[num_start - 1] == '-' {
             is_negative = true;
         }
 
-        // Find the end of the number
+        // Find end of decimal number
         let mut end = pos;
         while end < chars.len() && chars[end].is_ascii_digit() {
             end += 1;
         }
 
-        // Extract the number string
-        let number_str: String = chars[start..end].iter().collect();
-
-        if number_str.is_empty() {
+        let digits: String = chars[num_start..end].iter().collect();
+        if digits.is_empty() {
             return None;
         }
 
-        // actual_start includes the negative sign if present
-        let actual_start = if is_negative { start - 1 } else { start };
+        let start = if is_negative { num_start - 1 } else { num_start };
 
-        Some((actual_start, end, number_str, false, false, is_negative))
+        Some(NumberAtCursor {
+            start,
+            end,
+            digits,
+            is_hex: false,
+            is_negative,
+        })
     }
 
     fn increment_number(&mut self) {
@@ -3731,56 +3733,62 @@ impl<'a> EditorState<'a> {
     }
 
     fn modify_number(&mut self, delta: i64) {
-        if let Some((start, end, num_str, is_hex, _is_octal, is_negative)) =
-            self.find_number_at_cursor()
-        {
-            // Format the new number
-            let new_num_str = if is_hex {
-                // Hex numbers are treated as unsigned and wrap around (like Neovim)
-                // Preserve the original width (number of hex digits)
-                let width = num_str.len();
-                let parsed = u64::from_str_radix(&num_str, 16).unwrap_or(0);
-                let new_value = if delta >= 0 {
-                    parsed.wrapping_add(delta as u64)
-                } else {
-                    parsed.wrapping_sub((-delta) as u64)
-                };
-                format!("0x{:0>width$x}", new_value, width = width)
+        let Some(num) = self.find_number_at_cursor() else {
+            return;
+        };
+
+        let new_num_str = if num.is_hex {
+            self.format_hex_number(&num.digits, delta)
+        } else {
+            self.format_decimal_number(&num.digits, num.is_negative, delta)
+        };
+
+        // Replace in line
+        self.save_undo_state();
+        self.lines_version += 1;
+        let line = &mut self.lines[self.cursor.0];
+        let chars: Vec<char> = line.chars().collect();
+        let before: String = chars[..num.start].iter().collect();
+        let after: String = chars[num.end..].iter().collect();
+        *line = format!("{}{}{}", before, new_num_str, after);
+
+        // Position cursor at the last digit of the new number
+        let new_end = num.start + new_num_str.chars().count();
+        self.cursor.1 = new_end.saturating_sub(1);
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    /// Format a hex number after applying delta (unsigned wrapping)
+    fn format_hex_number(&self, digits: &str, delta: i64) -> String {
+        let width = digits.len();
+        let parsed = u64::from_str_radix(digits, 16).unwrap_or(0);
+        let new_value = if delta >= 0 {
+            parsed.wrapping_add(delta as u64)
+        } else {
+            parsed.wrapping_sub((-delta) as u64)
+        };
+        format!("0x{:0>width$x}", new_value, width = width)
+    }
+
+    /// Format a decimal number after applying delta (signed)
+    fn format_decimal_number(&self, digits: &str, is_negative: bool, delta: i64) -> String {
+        let parsed = digits.parse::<i64>().unwrap_or(0);
+        let value = if is_negative { -parsed } else { parsed };
+        let new_value = value + delta;
+
+        // Only preserve width if original number has leading zeros
+        let has_leading_zeros = digits.len() > 1 && digits.starts_with('0');
+
+        if has_leading_zeros {
+            let width = digits.len();
+            if new_value >= 0 {
+                format!("{:0>width$}", new_value, width = width)
             } else {
-                // Decimal numbers are signed
-                let parsed = num_str.parse::<i64>().unwrap_or(0);
-                let value = if is_negative { -parsed } else { parsed };
-                let new_value = value + delta;
-                
-                // Only preserve width if original number has leading zeros
-                let has_leading_zeros = num_str.len() > 1 && num_str.starts_with('0');
-                
-                if has_leading_zeros {
-                    let width = num_str.len();
-                    if new_value >= 0 {
-                        format!("{:0>width$}", new_value, width = width)
-                    } else {
-                        format!("-{:0>width$}", -new_value, width = width)
-                    }
-                } else {
-                    format!("{}", new_value)
-                }
-            };
-
-            // Replace in line
-            self.save_undo_state();
-            self.lines_version += 1;
-            let line = &mut self.lines[self.cursor.0];
-            let chars: Vec<char> = line.chars().collect();
-            let before: String = chars[..start].iter().collect();
-            let after: String = chars[end..].iter().collect();
-            *line = format!("{}{}{}", before, new_num_str, after);
-
-            // Position cursor at the last digit of the new number
-            let new_end = start + new_num_str.chars().count();
-            self.cursor.1 = new_end.saturating_sub(1);
-            self.update_desired_col();
-            self.record_change();
+                format!("-{:0>width$}", -new_value, width = width)
+            }
+        } else {
+            format!("{}", new_value)
         }
     }
 
