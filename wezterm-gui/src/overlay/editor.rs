@@ -649,22 +649,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn get_line_below_pos(&self) -> (usize, usize) {
-        if self.cursor.0 < self.lines.len() - 1 {
-            (self.cursor.0 + 1, 0)
-        } else {
-            self.cursor
-        }
-    }
-
-    fn get_line_above_pos(&self) -> (usize, usize) {
-        if self.cursor.0 > 0 {
-            (self.cursor.0 - 1, 0)
-        } else {
-            self.cursor
-        }
-    }
-
     fn get_word_forward_pos(&self) -> (usize, usize) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 >= chars.len() {
@@ -1112,10 +1096,6 @@ impl<'a> EditorState<'a> {
 
     fn get_line_start_pos(&self) -> (usize, usize) {
         (self.cursor.0, 0)
-    }
-
-    fn get_line_end_pos(&self) -> (usize, usize) {
-        (self.cursor.0, self.lines[self.cursor.0].chars().count())
     }
 
     /// Compute proper inner pair selection bounds for Visual mode
@@ -2346,7 +2326,7 @@ impl<'a> EditorState<'a> {
             // Search forward for matching close (multi-line)
             let mut depth = 0i32;
             let mut row = self.cursor.0;
-            let mut start_col = col;
+            let start_col = col;
 
             loop {
                 let line = &self.lines[row];
@@ -4549,13 +4529,10 @@ impl<'a> EditorState<'a> {
         // Wrap around to end
         for row in (start_row..self.lines.len()).rev() {
             let search_start = if row == start_row { 
-                // Search from cursor to end on the starting row
+                // Get byte offset for start_col
                 let chars: Vec<char> = self.lines[row].chars().collect();
                 if start_col < chars.len() {
-                    let after_cursor: String = chars[start_col..].iter().collect();
-                    // Get byte offset for start_col
-                    let byte_offset: usize = chars[..start_col].iter().map(|c| c.len_utf8()).sum();
-                    byte_offset
+                    chars[..start_col].iter().map(|c| c.len_utf8()).sum()
                 } else {
                     0
                 }
