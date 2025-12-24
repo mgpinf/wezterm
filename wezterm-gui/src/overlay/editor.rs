@@ -667,26 +667,32 @@ impl<'a> EditorState<'a> {
         }
 
         let mut idx = self.cursor.1;
+        let start_char = chars[idx];
 
-        while idx < chars.len() && chars[idx].is_whitespace() {
-            idx += 1;
-        }
-
-        if idx < chars.len() && !chars[idx].is_whitespace() && !chars[idx].is_ascii_punctuation() {
+        if start_char.is_whitespace() {
+            // Starting on whitespace: skip whitespace to find start of next word
+            while idx < chars.len() && chars[idx].is_whitespace() {
+                idx += 1;
+            }
+        } else if start_char.is_ascii_punctuation() {
+            // Starting on punctuation: skip punctuation, then skip whitespace
+            while idx < chars.len() && chars[idx].is_ascii_punctuation() {
+                idx += 1;
+            }
+            while idx < chars.len() && chars[idx].is_whitespace() {
+                idx += 1;
+            }
+        } else {
+            // Starting on word: skip word, then skip whitespace
             while idx < chars.len()
                 && !chars[idx].is_whitespace()
                 && !chars[idx].is_ascii_punctuation()
             {
                 idx += 1;
             }
-        } else if idx < chars.len() && chars[idx].is_ascii_punctuation() {
-            while idx < chars.len() && chars[idx].is_ascii_punctuation() {
+            while idx < chars.len() && chars[idx].is_whitespace() {
                 idx += 1;
             }
-        }
-
-        while idx < chars.len() && chars[idx].is_whitespace() {
-            idx += 1;
         }
 
         if idx >= chars.len() {
@@ -2631,8 +2637,30 @@ impl<'a> EditorState<'a> {
             while check_col > 0 && (chars[check_col - 1].is_whitespace() || Self::is_sentence_closing_char(chars[check_col - 1])) {
                 check_col -= 1;
             }
+            
             // Check if what's before is sentence-ending punctuation
-            if check_col > 0 && Self::is_sentence_end_punct(chars[check_col - 1]) {
+            // Also check previous line if we're at the start of a line
+            let prev_line_ends_sentence = if check_col == 0 && row > 0 {
+                let prev_chars: Vec<char> = self.lines[row - 1].chars().collect();
+                if !prev_chars.is_empty() {
+                    // Find the last non-whitespace character on previous line
+                    let mut prev_col = prev_chars.len() - 1;
+                    while prev_col > 0 && prev_chars[prev_col].is_whitespace() {
+                        prev_col -= 1;
+                    }
+                    // Skip closing chars
+                    while prev_col > 0 && Self::is_sentence_closing_char(prev_chars[prev_col]) {
+                        prev_col -= 1;
+                    }
+                    Self::is_sentence_end_punct(prev_chars[prev_col])
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            
+            if (check_col > 0 && Self::is_sentence_end_punct(chars[check_col - 1])) || prev_line_ends_sentence {
                 // We're in the whitespace after a sentence end, skip to next sentence start
                 let mut c = col;
                 while c < chars.len() && (chars[c].is_whitespace() || Self::is_sentence_closing_char(chars[c])) {
@@ -2779,279 +2807,17 @@ impl<'a> EditorState<'a> {
     }
 
     fn move_sentence_backward(&mut self) {
-        // Move to the beginning of the current sentence, or if already at the beginning,
-        // move to the beginning of the previous sentence (or paragraph boundary)
-        let start_row = self.cursor.0;
-        let start_col = self.cursor.1;
-        let started_on_blank = self.lines[start_row].trim().is_empty();
-
-        // Helper: find sentence start after a given position (after sentence end punctuation)
-        // Skips closing chars (')', ']', '"', '\'') and whitespace
-        let find_sentence_start_after = |lines: &[String], from_row: usize, from_col: usize| -> Option<(usize, usize)> {
-            let mut r = from_row;
-            let mut c = from_col;
-            loop {
-                let chars: Vec<char> = lines[r].chars().collect();
-                // Skip closing characters first
-                while c < chars.len() && Self::is_sentence_closing_char(chars[c]) {
-                    c += 1;
-                }
-                // Then skip whitespace
-                while c < chars.len() && chars[c].is_whitespace() {
-                    c += 1;
-                }
-                if c < chars.len() {
-                    return Some((r, c));
-                }
-                if r < lines.len() - 1 {
-                    r += 1;
-                    c = 0;
-                    if lines[r].trim().is_empty() {
-                        return None; // Hit paragraph boundary
-                    }
-                } else {
-                    return None;
-                }
-            }
-        };
-
-        // Helper: find first non-whitespace of a line (paragraph/sentence start)
-        let find_line_start = |lines: &[String], r: usize| -> usize {
-            let chars: Vec<char> = lines[r].chars().collect();
-            chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0)
-        };
-
-        // Helper: find the start of a sentence that ends at (end_row, end_col)
-        // by searching backward for the previous sentence end or paragraph start
-        let find_sentence_start = |lines: &[String], end_row: usize, end_col: usize| -> (usize, usize) {
-            let mut r = end_row;
-            let mut c = if end_col > 0 { end_col - 1 } else if end_row > 0 {
-                r = end_row - 1;
-                lines[r].chars().count().saturating_sub(1)
-            } else {
-                return (0, 0);
-            };
-
-            loop {
-                let chars: Vec<char> = lines[r].chars().collect();
-                loop {
-                    if Self::is_valid_sentence_end(&chars, c) {
-                        // Found previous sentence end, the sentence we want starts after this
-                        if let Some(pos) = find_sentence_start_after(lines, r, c + 1) {
-                            return pos;
-                        }
-                    }
-                    if c == 0 {
-                        break;
-                    }
-                    c -= 1;
-                }
-
-                if r > 0 {
-                    if lines[r - 1].trim().is_empty() {
-                        // Hit paragraph boundary, sentence starts at beginning of this paragraph
-                        return (r, find_line_start(lines, r));
-                    }
-                    r -= 1;
-                    c = lines[r].chars().count().saturating_sub(1);
-                } else {
-                    return (0, 0);
-                }
-            }
-        };
-
-        // Search backward from cursor position for sentence end or paragraph start
-        let mut row = start_row;
-        let mut col = if start_col > 0 { start_col - 1 } else if start_row > 0 {
-            row = start_row - 1;
-            self.lines[row].chars().count().saturating_sub(1)
-        } else {
-            // At start of file
-            self.cursor = (0, 0);
-            self.update_desired_col();
-            return;
-        };
-
-        loop {
-            // If we're on a blank line and we didn't start on a blank line, stop here
-            if self.lines[row].trim().is_empty() {
-                if !started_on_blank {
-                    self.cursor = (row, 0);
-                    self.update_desired_col();
-                    return;
-                }
-                // Started on blank line, continue searching in previous paragraph
-                if row > 0 {
-                    row -= 1;
-                    col = self.lines[row].chars().count().saturating_sub(1);
-                    continue;
-                } else {
-                    self.cursor = (0, 0);
-                    self.update_desired_col();
-                    return;
-                }
-            }
-
-            let chars: Vec<char> = self.lines[row].chars().collect();
-
-            // Search backward through current line
-            loop {
-                if Self::is_valid_sentence_end(&chars, col) {
-                    // Found sentence end - find where this sentence starts
-                    if let Some((sent_row, sent_col)) = find_sentence_start_after(&self.lines, row, col + 1) {
-                        // Check if this sentence start is before our starting position
-                        if sent_row < start_row || (sent_row == start_row && sent_col < start_col) {
-                            // We were in the middle of this sentence - go to its start
-                            self.cursor = (sent_row, sent_col);
-                            self.update_desired_col();
-                            return;
-                        }
-                        // We were at or after this sentence start, continue searching backward
-                    } else {
-                        // This sentence ends at paragraph boundary (last sentence of paragraph)
-                        // Find the start of this sentence
-                        let (sent_start_row, sent_start_col) = find_sentence_start(&self.lines, row, col);
-                        self.cursor = (sent_start_row, sent_start_col);
-                        self.update_desired_col();
-                        return;
-                    }
-                }
-                if col == 0 {
-                    break;
-                }
-                col -= 1;
-            }
-
-            // Check if previous line is blank (paragraph boundary)
-            if row > 0 {
-                if self.lines[row - 1].trim().is_empty() {
-                    // At paragraph boundary
-                    let para_start_col = find_line_start(&self.lines, row);
-                    // Check if we were at the paragraph start (first sentence start)
-                    if row == start_row && para_start_col == start_col {
-                        // We were at the start of first sentence, go to blank line (like {)
-                        self.cursor = (row - 1, 0);
-                    } else if row < start_row || (row == start_row && para_start_col < start_col) {
-                        // We were in the middle of first sentence, go to paragraph start
-                        self.cursor = (row, para_start_col);
-                    } else {
-                        // Go to blank line
-                        self.cursor = (row - 1, 0);
-                    }
-                    self.update_desired_col();
-                    return;
-                }
-                row -= 1;
-                col = self.lines[row].chars().count().saturating_sub(1);
-            } else {
-                // Reached start of file
-                self.cursor = (0, 0);
-                self.update_desired_col();
-                return;
-            }
-        }
+        // Use the unified sentence backward position logic
+        let new_pos = self.get_sentence_backward_pos();
+        self.cursor = new_pos;
+        self.update_desired_col();
     }
 
     fn move_sentence_forward(&mut self) {
-        // Move to the beginning of the next sentence
-        // When on the last sentence of a paragraph, behave like } (go to blank line)
-        // When on a blank line, go to first sentence of next paragraph
-        let mut row = self.cursor.0;
-        let mut col = self.cursor.1;
-        let last_row = self.lines.len().saturating_sub(1);
-        let started_on_blank = self.lines[row].trim().is_empty();
-
-        // If starting on a blank line, skip to next paragraph's first sentence
-        if started_on_blank {
-            while row < last_row && self.lines[row].trim().is_empty() {
-                row += 1;
-            }
-            if self.lines[row].trim().is_empty() {
-                // All remaining lines are blank, go to last position
-                self.cursor.0 = last_row;
-                self.cursor.1 = 0;
-                self.update_desired_col();
-                return;
-            }
-            // Find first non-whitespace of this line
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
-            self.cursor = (row, start_col);
-            self.update_desired_col();
-            return;
-        }
-
-        loop {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-
-            // Search forward through current line for sentence end
-            while col < chars.len() {
-                if Self::is_valid_sentence_end(&chars, col) {
-                    // Found sentence end, skip closing chars and whitespace to find start of next sentence
-                    col += 1;
-                    // Skip closing characters
-                    while col < chars.len() && Self::is_sentence_closing_char(chars[col]) {
-                        col += 1;
-                    }
-
-                    // Skip whitespace (including across lines)
-                    loop {
-                        let cur_chars: Vec<char> = self.lines[row].chars().collect();
-                        // Skip closing characters first (in case we moved to a new line)
-                        while col < cur_chars.len() && Self::is_sentence_closing_char(cur_chars[col]) {
-                            col += 1;
-                        }
-                        while col < cur_chars.len() && cur_chars[col].is_whitespace() {
-                            col += 1;
-                        }
-                        if col < cur_chars.len() {
-                            // Found start of next sentence
-                            self.cursor = (row, col);
-                            self.update_desired_col();
-                            return;
-                        }
-                        // Move to next line
-                        if row < last_row {
-                            row += 1;
-                            col = 0;
-                            // Check if line is blank (paragraph boundary)
-                            // Stop at the blank line like } does
-                            if self.lines[row].trim().is_empty() {
-                                self.cursor = (row, 0);
-                                self.update_desired_col();
-                                return;
-                            }
-                        } else {
-                            // End of file
-                            self.cursor.0 = last_row;
-                            self.cursor.1 = self.lines[last_row].chars().count().saturating_sub(1);
-                            self.update_desired_col();
-                            return;
-                        }
-                    }
-                }
-                col += 1;
-            }
-
-            // Move to next line
-            if row < last_row {
-                row += 1;
-                col = 0;
-                // Check if line is blank (paragraph boundary = sentence boundary)
-                // Stop at the blank line like } does
-                if self.lines[row].trim().is_empty() {
-                    self.cursor = (row, 0);
-                    self.update_desired_col();
-                    return;
-                }
-            } else {
-                // End of file
-                self.cursor.0 = last_row;
-                self.cursor.1 = self.lines[last_row].chars().count().saturating_sub(1);
-                self.update_desired_col();
-                return;
-            }
-        }
+        // Use the unified sentence forward position logic
+        let new_pos = self.get_sentence_forward_pos();
+        self.cursor = new_pos;
+        self.update_desired_col();
     }
 
     fn find_char_forward(&self, target: char) -> Option<usize> {
@@ -3973,8 +3739,20 @@ impl<'a> EditorState<'a> {
 
             let mut deleted_text = String::new();
 
-            if end.1 == 0 && !delete_empty_lines {
-                // Motion lands at start of a blank line - keep that line intact (for change operations)
+            // Check if cursor position qualifies for linewise delete
+            // First line of paragraph: cursor at or before first non-whitespace
+            // Other lines: cursor at first non-whitespace only
+            let first_non_blank = self.get_first_non_blank_in_line(start.0);
+            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let cursor_qualifies_for_linewise = if is_first_line_of_para {
+                start.1 <= first_non_blank  // At or before first non-whitespace
+            } else {
+                start.1 == first_non_blank  // Exactly at first non-whitespace
+            };
+            
+            if end.1 == 0 && !cursor_qualifies_for_linewise {
+                // Motion lands at start of next line, cursor is after first non-whitespace
+                // Preserve line structure (Neovim behavior for d) from middle of line)
                 // Only delete from cursor to end of start line, plus intermediate lines
 
                 // Get the part to keep from start line (before cursor)
@@ -4000,8 +3778,40 @@ impl<'a> EditorState<'a> {
                     self.lines.remove(start.0 + 1);
                 }
 
-                // Cursor stays at start position
+                // Cursor stays at start position, but clamp to line length
                 self.cursor = start;
+                let line_len = self.lines[self.cursor.0].chars().count();
+                if self.cursor.1 >= line_len {
+                    self.cursor.1 = line_len.saturating_sub(1);
+                }
+            } else if end.1 == 0 && cursor_qualifies_for_linewise {
+                // Motion from start/before first char to start of next line - linewise deletion
+                // Delete entire lines and shift content up (like Neovim d) from start of sentence)
+
+                // Collect deleted text
+                deleted_text.push_str(&self.lines[start.0]);
+                for row in (start.0 + 1)..end.0 {
+                    deleted_text.push('\n');
+                    deleted_text.push_str(&self.lines[row]);
+                }
+
+                // Store in yank buffer
+                self.yank_buffer = deleted_text;
+                self.yank_is_linewise = true;
+
+                // Remove lines from start.0 to end.0-1
+                for _ in start.0..end.0 {
+                    self.lines.remove(start.0);
+                }
+
+                // Ensure at least one line exists
+                if self.lines.is_empty() {
+                    self.lines.push(String::new());
+                }
+
+                // Cursor stays at start row, column 0
+                self.cursor.0 = start.0.min(self.lines.len() - 1);
+                self.cursor.1 = 0;
             } else {
                 // Motion lands in middle of a line - merge start and end lines
 
@@ -4092,28 +3902,53 @@ impl<'a> EditorState<'a> {
         // Handle direction - use character-based operations
         if end.0 < start.0 {
             // Backward motion crossing to previous line - yank multi-line
+            
+            // Determine if this is a linewise yank
+            // First line of paragraph: cursor at or before first non-whitespace
+            // Other lines: cursor at first non-whitespace only
+            let first_non_blank = self.get_first_non_blank_in_line(start.0);
+            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let cursor_qualifies_for_linewise = if is_first_line_of_para {
+                start.1 <= first_non_blank
+            } else {
+                start.1 == first_non_blank
+            };
+            let is_linewise = end.1 == 0 && cursor_qualifies_for_linewise;
+            
             let mut yanked_text = String::new();
-
-            // From end position to end of end line
             let end_chars: Vec<char> = self.lines[end.0].chars().collect();
-            yanked_text.push_str(&end_chars[end.1..].iter().collect::<String>());
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
 
-            // Intermediate lines
-            for row in (end.0 + 1)..start.0 {
+            if is_linewise {
+                // Linewise yank: include entire lines
+                yanked_text.push_str(&end_chars.iter().collect::<String>());
+                
+                // Intermediate lines
+                for row in (end.0 + 1)..start.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+                
+                // Include entire start line
                 yanked_text.push('\n');
-                yanked_text.push_str(&self.lines[row]);
+                yanked_text.push_str(&start_chars.iter().collect::<String>());
+            } else {
+                // Character-wise yank
+                yanked_text.push_str(&end_chars[end.1..].iter().collect::<String>());
+
+                // Intermediate lines
+                for row in (end.0 + 1)..start.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+
+                // From start of start line to cursor
+                yanked_text.push('\n');
+                yanked_text.push_str(&start_chars[..start.1].iter().collect::<String>());
             }
 
-            // From start of start line to cursor
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
-            yanked_text.push('\n');
-            yanked_text.push_str(&start_chars[..start.1].iter().collect::<String>());
-
             self.yank_buffer = yanked_text;
-            
-            // If yank ends at column 0 and starts at column 0, treat as linewise
-            // (complete lines were yanked, like y{ from start of paragraph)
-            self.yank_is_linewise = end.1 == 0 && start.1 == 0;
+            self.yank_is_linewise = is_linewise;
             
             // Move cursor to start of yanked region (like Neovim)
             self.cursor = end;
@@ -4131,29 +3966,53 @@ impl<'a> EditorState<'a> {
             self.update_desired_col();
         } else if end.0 > start.0 {
             // Forward motion crossing to next line - yank multi-line
-            let mut yanked_text = String::new();
-
-            // From cursor to end of start line
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
-            yanked_text.push_str(&start_chars[start.1..].iter().collect::<String>());
-
-            // Intermediate lines
-            for row in (start.0 + 1)..end.0 {
-                yanked_text.push('\n');
-                yanked_text.push_str(&self.lines[row]);
-            }
-
-            // From start of end line to end position
             let end_chars: Vec<char> = self.lines[end.0].chars().collect();
             let end_col = if is_inclusive { (end.1 + 1).min(end_chars.len()) } else { end.1 };
-            yanked_text.push('\n');
-            yanked_text.push_str(&end_chars[..end_col].iter().collect::<String>());
+            
+            // Determine if this is a linewise yank
+            // First line of paragraph: cursor at or before first non-whitespace
+            // Other lines: cursor at first non-whitespace only
+            let first_non_blank = self.get_first_non_blank_in_line(start.0);
+            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let cursor_qualifies_for_linewise = if is_first_line_of_para {
+                start.1 <= first_non_blank
+            } else {
+                start.1 == first_non_blank
+            };
+            let is_linewise = cursor_qualifies_for_linewise && end_col == 0;
+            
+            let mut yanked_text = String::new();
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+
+            if is_linewise {
+                // Linewise yank: include entire line from column 0 (including leading whitespace)
+                yanked_text.push_str(&start_chars.iter().collect::<String>());
+                
+                // Intermediate lines
+                for row in (start.0 + 1)..end.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+                // Don't add trailing newline for linewise
+            } else {
+                // Character-wise yank: from cursor position
+                yanked_text.push_str(&start_chars[start.1..].iter().collect::<String>());
+
+                // Intermediate lines
+                for row in (start.0 + 1)..end.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+
+                // Add content from the end line if there's something to add
+                if end_col > 0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&end_chars[..end_col].iter().collect::<String>());
+                }
+            }
 
             self.yank_buffer = yanked_text;
-            
-            // If yank starts at column 0 and ends at column 0, treat as linewise
-            // (complete lines were yanked, like y} from start of paragraph)
-            self.yank_is_linewise = start.1 == 0 && end_col == 0;
+            self.yank_is_linewise = is_linewise;
         } else {
             // Forward motion on same line (yw, ye)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
@@ -5083,17 +4942,29 @@ impl<'a> EditorState<'a> {
                                 match c {
                                     'c' => self.substitute_line(), // cc == S
                                     'w' => {
-                                        // cw is equivalent to ce in Vim (change to end of word)
+                                        // cw behavior depends on what we're on:
+                                        // - On a word: cw is like ce (change to end of word)
+                                        // - On whitespace: cw uses w motion (change whitespace to start of next word)
+                                        // - On punctuation: cw is like ce (change to end of punctuation)
                                         self.mode = EditorMode::Insert;
-                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, false);
+                                        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                                        let on_whitespace = self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
+                                        if on_whitespace {
+                                            self.perform_delete_motion(|s| s.get_word_forward_pos(), false, false);
+                                        } else {
+                                            self.perform_delete_motion(|s| s.get_word_end_pos(), true, false);
+                                        }
                                     }
                                     'W' => {
+                                        // cW behavior: like cw but for WORD
                                         self.mode = EditorMode::Insert;
-                                        self.perform_delete_motion(
-                                            |s| s.get_long_word_end_pos(),
-                                            true,
-                                            false,
-                                        );
+                                        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                                        let on_whitespace = self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
+                                        if on_whitespace {
+                                            self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, false);
+                                        } else {
+                                            self.perform_delete_motion(|s| s.get_long_word_end_pos(), true, false);
+                                        }
                                     }
                                     'e' => {
                                         self.mode = EditorMode::Insert;
