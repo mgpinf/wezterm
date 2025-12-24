@@ -119,6 +119,8 @@ enum LastChange {
     ToggleCase,                      // ~
     JoinLines,                       // J
     ReplaceChar(char),               // r{char}
+    IncrementNumber,                 // Ctrl-A
+    DecrementNumber,                 // Ctrl-X
 }
 
 struct EditorState<'a> {
@@ -3435,6 +3437,8 @@ impl<'a> EditorState<'a> {
             LastChange::ToggleCase => self.toggle_case(),
             LastChange::JoinLines => self.join_lines(),
             LastChange::ReplaceChar(c) => self.replace_char(c),
+            LastChange::IncrementNumber => self.increment_number(),
+            LastChange::DecrementNumber => self.decrement_number(),
         }
     }
 
@@ -3573,6 +3577,209 @@ impl<'a> EditorState<'a> {
             *line = chars.into_iter().collect();
 
             self.move_cursor(0, 1);
+            self.record_change();
+        }
+    }
+
+    /// Find a number under or after the cursor on the current line.
+    /// Returns (start_col, end_col, number_string, is_hex, is_octal, is_negative)
+    fn find_number_at_cursor(&self) -> Option<(usize, usize, String, bool, bool, bool)> {
+        let line = &self.lines[self.cursor.0];
+        let chars: Vec<char> = line.chars().collect();
+        if chars.is_empty() {
+            return None;
+        }
+
+        let mut pos = self.cursor.1;
+        if pos >= chars.len() {
+            pos = chars.len() - 1;
+        }
+
+        // Helper to check if we're in a hex number by looking backwards for 0x
+        let find_hex_start = |from: usize| -> Option<usize> {
+            let mut i = from;
+            // Go back through hex digits
+            while i > 0 && chars[i - 1].is_ascii_hexdigit() {
+                i -= 1;
+            }
+            // Check for 0x prefix
+            if i >= 2 && chars[i - 1].to_ascii_lowercase() == 'x' && chars[i - 2] == '0' {
+                Some(i - 2)
+            } else if i >= 1 && chars[i].to_ascii_lowercase() == 'x' && chars[i - 1] == '0' {
+                // Cursor might be on 'x'
+                Some(i - 1)
+            } else {
+                None
+            }
+        };
+
+        // First, check if cursor is on a hex digit (a-f, A-F) and part of a hex number
+        if chars[pos].is_ascii_hexdigit() && !chars[pos].is_ascii_digit() {
+            // On a-f or A-F, check if this is part of a hex number
+            if let Some(hex_start) = find_hex_start(pos) {
+                // Find end of hex number
+                let mut end = pos;
+                while end < chars.len() && chars[end].is_ascii_hexdigit() {
+                    end += 1;
+                }
+                let number_str: String = chars[(hex_start + 2)..end].iter().collect();
+                if !number_str.is_empty() {
+                    // Check for negative
+                    let is_negative = hex_start > 0 && chars[hex_start - 1] == '-';
+                    let actual_start = if is_negative { hex_start - 1 } else { hex_start };
+                    return Some((actual_start, end, number_str, true, false, is_negative));
+                }
+            }
+        }
+
+        // Check if cursor is on 'x' of 0x
+        if chars[pos].to_ascii_lowercase() == 'x' && pos > 0 && chars[pos - 1] == '0' {
+            let hex_start = pos - 1;
+            let mut end = pos + 1;
+            while end < chars.len() && chars[end].is_ascii_hexdigit() {
+                end += 1;
+            }
+            if end > pos + 1 {
+                let number_str: String = chars[(hex_start + 2)..end].iter().collect();
+                let is_negative = hex_start > 0 && chars[hex_start - 1] == '-';
+                let actual_start = if is_negative { hex_start - 1 } else { hex_start };
+                return Some((actual_start, end, number_str, true, false, is_negative));
+            }
+        }
+
+        let mut is_negative = false;
+
+        // If we're not on a digit, search forward to find one
+        if !chars[pos].is_ascii_digit() {
+            // Check if on '-' followed by digit
+            if chars[pos] == '-' && pos + 1 < chars.len() && chars[pos + 1].is_ascii_digit() {
+                is_negative = true;
+                pos += 1;
+            } else {
+                // Search forward for a number
+                let mut found = false;
+                for i in pos..chars.len() {
+                    if chars[i].is_ascii_digit() {
+                        // Check for negative
+                        if i > 0 && chars[i - 1] == '-' {
+                            is_negative = true;
+                        }
+                        pos = i;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return None;
+                }
+            }
+        }
+
+        // Now pos is on a digit. First check if we might be in a hex number by
+        // looking backwards through ALL hex digits (not just decimal).
+        if let Some(hex_start) = find_hex_start(pos) {
+            // Find end including all hex digits
+            let mut end = pos;
+            while end < chars.len() && chars[end].is_ascii_hexdigit() {
+                end += 1;
+            }
+            let number_str: String = chars[(hex_start + 2)..end].iter().collect();
+            if !number_str.is_empty() {
+                // Check for negative before 0x
+                let is_neg = hex_start > 0 && chars[hex_start - 1] == '-';
+                let actual_start = if is_neg { hex_start - 1 } else { hex_start };
+                return Some((actual_start, end, number_str, true, false, is_neg));
+            }
+        }
+
+        // Not a hex number - look backwards through decimal digits only
+        let mut start = pos;
+        while start > 0 && chars[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+
+        // Check for negative sign before the number
+        if !is_negative && start > 0 && chars[start - 1] == '-' {
+            is_negative = true;
+        }
+
+        // Find the end of the number
+        let mut end = pos;
+        while end < chars.len() && chars[end].is_ascii_digit() {
+            end += 1;
+        }
+
+        // Extract the number string
+        let number_str: String = chars[start..end].iter().collect();
+
+        if number_str.is_empty() {
+            return None;
+        }
+
+        // actual_start includes the negative sign if present
+        let actual_start = if is_negative { start - 1 } else { start };
+
+        Some((actual_start, end, number_str, false, false, is_negative))
+    }
+
+    fn increment_number(&mut self) {
+        self.modify_number(1);
+    }
+
+    fn decrement_number(&mut self) {
+        self.modify_number(-1);
+    }
+
+    fn modify_number(&mut self, delta: i64) {
+        if let Some((start, end, num_str, is_hex, _is_octal, is_negative)) =
+            self.find_number_at_cursor()
+        {
+            // Format the new number
+            let new_num_str = if is_hex {
+                // Hex numbers are treated as unsigned and wrap around (like Neovim)
+                // Preserve the original width (number of hex digits)
+                let width = num_str.len();
+                let parsed = u64::from_str_radix(&num_str, 16).unwrap_or(0);
+                let new_value = if delta >= 0 {
+                    parsed.wrapping_add(delta as u64)
+                } else {
+                    parsed.wrapping_sub((-delta) as u64)
+                };
+                format!("0x{:0>width$x}", new_value, width = width)
+            } else {
+                // Decimal numbers are signed
+                let parsed = num_str.parse::<i64>().unwrap_or(0);
+                let value = if is_negative { -parsed } else { parsed };
+                let new_value = value + delta;
+                
+                // Only preserve width if original number has leading zeros
+                let has_leading_zeros = num_str.len() > 1 && num_str.starts_with('0');
+                
+                if has_leading_zeros {
+                    let width = num_str.len();
+                    if new_value >= 0 {
+                        format!("{:0>width$}", new_value, width = width)
+                    } else {
+                        format!("-{:0>width$}", -new_value, width = width)
+                    }
+                } else {
+                    format!("{}", new_value)
+                }
+            };
+
+            // Replace in line
+            self.save_undo_state();
+            self.lines_version += 1;
+            let line = &mut self.lines[self.cursor.0];
+            let chars: Vec<char> = line.chars().collect();
+            let before: String = chars[..start].iter().collect();
+            let after: String = chars[end..].iter().collect();
+            *line = format!("{}{}{}", before, new_num_str, after);
+
+            // Position cursor at the last digit of the new number
+            let new_end = start + new_num_str.chars().count();
+            self.cursor.1 = new_end.saturating_sub(1);
+            self.update_desired_col();
             self.record_change();
         }
     }
@@ -4967,6 +5174,20 @@ impl<'a> EditorState<'a> {
                     }) => {
                         self.redo();
                         self.update_desired_col();
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('A'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        self.increment_number();
+                        self.last_change = LastChange::IncrementNumber;
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('X'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        self.decrement_number();
+                        self.last_change = LastChange::DecrementNumber;
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
