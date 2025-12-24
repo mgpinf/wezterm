@@ -3779,10 +3779,17 @@ impl<'a> EditorState<'a> {
                 }
 
                 // Cursor stays at start position, but clamp to line length
+                // For insert mode (change operations), cursor can be at line_len
+                // For normal mode, cursor must be at line_len - 1
                 self.cursor = start;
                 let line_len = self.lines[self.cursor.0].chars().count();
-                if self.cursor.1 >= line_len {
-                    self.cursor.1 = line_len.saturating_sub(1);
+                let max_col = if self.mode == EditorMode::Insert {
+                    line_len
+                } else {
+                    line_len.saturating_sub(1)
+                };
+                if self.cursor.1 > max_col {
+                    self.cursor.1 = max_col;
                 }
             } else if end.1 == 0 && cursor_qualifies_for_linewise {
                 // Motion from start/before first char to start of next line - linewise deletion
@@ -3799,19 +3806,34 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = true;
 
-                // Remove lines from start.0 to end.0-1
-                for _ in start.0..end.0 {
-                    self.lines.remove(start.0);
-                }
+                if delete_empty_lines {
+                    // For delete operations: remove lines entirely
+                    for _ in start.0..end.0 {
+                        self.lines.remove(start.0);
+                    }
 
-                // Ensure at least one line exists
-                if self.lines.is_empty() {
-                    self.lines.push(String::new());
-                }
+                    // Ensure at least one line exists
+                    if self.lines.is_empty() {
+                        self.lines.push(String::new());
+                    }
 
-                // Cursor stays at start row, column 0
-                self.cursor.0 = start.0.min(self.lines.len() - 1);
-                self.cursor.1 = 0;
+                    // Cursor stays at start row, column 0
+                    self.cursor.0 = start.0.min(self.lines.len() - 1);
+                    self.cursor.1 = 0;
+                } else {
+                    // For change operations: clear the start line, remove intermediate lines
+                    // Keep an empty line for the user to type on
+                    self.lines[start.0] = String::new();
+                    
+                    // Remove intermediate lines (from start.0+1 to end.0-1)
+                    for _ in (start.0 + 1)..end.0 {
+                        self.lines.remove(start.0 + 1);
+                    }
+
+                    // Cursor stays at start row, column 0 (on empty line)
+                    self.cursor.0 = start.0;
+                    self.cursor.1 = 0;
+                }
             } else {
                 // Motion lands in middle of a line - merge start and end lines
 
