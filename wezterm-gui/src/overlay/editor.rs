@@ -6539,6 +6539,213 @@ mod tests {
                 }
             }
         }
+
+        /// Record change only if not in Insert mode
+        fn maybe_record_change(&mut self) {
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
+        }
+
+        /// Helper to delete a text object on the current line given (start, end) bounds
+        fn delete_text_object_on_line(&mut self, start: usize, end: usize) {
+            let line_len = self.lines[self.cursor.0].len();
+            if start < end && end <= line_len {
+                self.save_undo_state();
+                self.lines_version += 1;
+                self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
+                self.yank_is_linewise = false;
+                self.lines[self.cursor.0].replace_range(start..end, "");
+                self.cursor.1 = start;
+                self.clamp_cursor();
+                self.maybe_record_change();
+            }
+        }
+
+        /// Helper to yank a text object on the current line given (start, end) bounds
+        fn yank_text_object_on_line(&mut self, start: usize, end: usize) {
+            let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            if start < end && end <= chars.len() {
+                self.yank_buffer = chars[start..end].iter().collect();
+                self.yank_is_linewise = false;
+            }
+        }
+
+        fn get_inner_word_bounds(&self) -> (usize, usize) {
+            let line = &self.lines[self.cursor.0];
+            if line.is_empty() {
+                return (0, 0);
+            }
+            let chars: Vec<char> = line.chars().collect();
+            let col = self.cursor.1.min(chars.len().saturating_sub(1));
+            
+            // Find word boundaries
+            let mut start = col;
+            let mut end = col;
+            
+            let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+            let current_is_word = is_word_char(chars[col]);
+            
+            if current_is_word {
+                while start > 0 && is_word_char(chars[start - 1]) {
+                    start -= 1;
+                }
+                while end < chars.len() && is_word_char(chars[end]) {
+                    end += 1;
+                }
+            } else if chars[col].is_whitespace() {
+                while start > 0 && chars[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                while end < chars.len() && chars[end].is_whitespace() {
+                    end += 1;
+                }
+            } else {
+                while start > 0 && !is_word_char(chars[start - 1]) && !chars[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                while end < chars.len() && !is_word_char(chars[end]) && !chars[end].is_whitespace() {
+                    end += 1;
+                }
+            }
+            (start, end)
+        }
+
+        fn get_a_word_bounds(&self) -> (usize, usize) {
+            let (word_start, word_end) = self.get_inner_word_bounds();
+            let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            
+            // Try to include trailing whitespace
+            let mut end = word_end;
+            while end < chars.len() && chars[end].is_whitespace() {
+                end += 1;
+            }
+            
+            if end == word_end {
+                // No trailing, try leading
+                let mut start = word_start;
+                while start > 0 && chars[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                (start, word_end)
+            } else {
+                (word_start, end)
+            }
+        }
+
+        fn get_inner_long_word_bounds(&self) -> (usize, usize) {
+            let line = &self.lines[self.cursor.0];
+            if line.is_empty() {
+                return (0, 0);
+            }
+            let chars: Vec<char> = line.chars().collect();
+            let col = self.cursor.1.min(chars.len().saturating_sub(1));
+            
+            let mut start = col;
+            let mut end = col;
+            
+            if !chars[col].is_whitespace() {
+                while start > 0 && !chars[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                while end < chars.len() && !chars[end].is_whitespace() {
+                    end += 1;
+                }
+            } else {
+                while start > 0 && chars[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                while end < chars.len() && chars[end].is_whitespace() {
+                    end += 1;
+                }
+            }
+            (start, end)
+        }
+
+        fn delete_inner_word(&mut self) {
+            let (start, end) = self.get_inner_word_bounds();
+            self.delete_text_object_on_line(start, end);
+        }
+
+        fn delete_a_word(&mut self) {
+            let (start, end) = self.get_a_word_bounds();
+            self.delete_text_object_on_line(start, end);
+        }
+
+        fn delete_inner_long_word(&mut self) {
+            let (start, end) = self.get_inner_long_word_bounds();
+            self.delete_text_object_on_line(start, end);
+        }
+
+        fn get_word_forward_pos(&self) -> (usize, usize) {
+            // Simple implementation: move to next word
+            let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let mut col = self.cursor.1;
+            
+            // Skip current word
+            while col < chars.len() && !chars[col].is_whitespace() {
+                col += 1;
+            }
+            // Skip whitespace
+            while col < chars.len() && chars[col].is_whitespace() {
+                col += 1;
+            }
+            
+            // If we reached end of line, go to next line
+            if col >= chars.len() && self.cursor.0 < self.lines.len() - 1 {
+                return (self.cursor.0 + 1, 0);
+            }
+            (self.cursor.0, col)
+        }
+
+        /// Helper for testing delete motions
+        fn perform_delete_motion_for_test(&mut self, end: (usize, usize), is_inclusive: bool, delete_empty_lines: bool, allow_linewise: bool) {
+            self.save_undo_state();
+            self.lines_version += 1;
+            
+            let start = self.cursor;
+            
+            if end.0 > start.0 {
+                // Forward multi-line
+                if end.1 == 0 && !allow_linewise {
+                    // Preserve line structure
+                    let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                    let start_prefix: String = start_chars[..start.1].iter().collect();
+                    self.yank_buffer = start_chars[start.1..].iter().collect::<String>();
+                    self.yank_is_linewise = false;
+                    self.lines[start.0] = start_prefix;
+                    for _ in (start.0 + 1)..end.0 {
+                        self.lines.remove(start.0 + 1);
+                    }
+                    self.cursor = start;
+                } else {
+                    // Merge lines
+                    let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                    let start_prefix: String = start_chars[..start.1].iter().collect();
+                    let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+                    let end_suffix: String = end_chars[end.1..].iter().collect();
+                    
+                    self.lines[start.0] = start_prefix + &end_suffix;
+                    for _ in start.0 + 1..=end.0 {
+                        self.lines.remove(start.0 + 1);
+                    }
+                    self.cursor = start;
+                }
+            } else if end.0 == start.0 && end.1 > start.1 {
+                // Forward same line
+                let mut chars: Vec<char> = self.lines[start.0].chars().collect();
+                let range_end = if is_inclusive { (end.1 + 1).min(chars.len()) } else { end.1 };
+                if start.1 < range_end {
+                    self.yank_buffer = chars[start.1..range_end].iter().collect();
+                    self.yank_is_linewise = false;
+                    chars.drain(start.1..range_end);
+                    self.lines[start.0] = chars.into_iter().collect();
+                }
+            }
+            
+            self.clamp_cursor();
+            self.maybe_record_change();
+        }
     }
 
     // ============ Basic Cursor Tests ============
@@ -7031,6 +7238,114 @@ mod tests {
         let mut editor = TestEditor::new("()").with_cursor(0, 0);
         editor.delete_inner_pair('(');
         assert_eq!(editor.text(), "()");
+    }
+
+    // ============ Undo Behavior Tests ============
+
+    #[test]
+    fn test_delete_inner_word_undo() {
+        // diw should create a single undo entry
+        let mut editor = TestEditor::new("hello world");
+        editor.cursor = (0, 0);
+        editor.delete_inner_word();
+        assert_eq!(editor.text(), " world");
+        
+        // Undo should restore the original
+        editor.undo();
+        assert_eq!(editor.text(), "hello world");
+    }
+
+    #[test]
+    fn test_delete_a_word_undo() {
+        // daw should create a single undo entry
+        let mut editor = TestEditor::new("hello world");
+        editor.cursor = (0, 0);
+        editor.delete_a_word();
+        assert_eq!(editor.text(), "world");
+        
+        // Undo should restore the original
+        editor.undo();
+        assert_eq!(editor.text(), "hello world");
+    }
+
+    #[test]
+    fn test_delete_inner_long_word_undo() {
+        let mut editor = TestEditor::new("hello-world test");
+        editor.cursor = (0, 0);
+        editor.delete_inner_long_word();
+        assert_eq!(editor.text(), " test");
+        
+        editor.undo();
+        assert_eq!(editor.text(), "hello-world test");
+    }
+
+    // ============ Word Motion Delete Tests ============
+
+    #[test]
+    fn test_dw_single_word_line_keeps_line() {
+        // dw on single word should delete word but keep the line
+        let mut editor = TestEditor::new("word\nnext line");
+        editor.cursor = (0, 0);
+        // Simulate dw - delete to next word position
+        let end = editor.get_word_forward_pos();
+        editor.perform_delete_motion_for_test(end, false, true, false);
+        
+        // Line should still exist (empty), not deleted
+        assert_eq!(editor.lines.len(), 2);
+        assert_eq!(editor.lines[0], "");
+        assert_eq!(editor.lines[1], "next line");
+    }
+
+    #[test]
+    fn test_dw_preserves_line_structure() {
+        // dw should not merge lines or delete entire line
+        let mut editor = TestEditor::new("one two\nthree");
+        editor.cursor = (0, 4); // on 'two'
+        let end = editor.get_word_forward_pos();
+        editor.perform_delete_motion_for_test(end, false, true, false);
+        
+        // Should delete 'two' but keep both lines
+        assert_eq!(editor.lines.len(), 2);
+        assert_eq!(editor.lines[0], "one ");
+    }
+
+    // ============ Text Object Helper Tests ============
+
+    #[test]
+    fn test_delete_text_object_on_line() {
+        let mut editor = TestEditor::new("hello world");
+        editor.delete_text_object_on_line(0, 5);
+        assert_eq!(editor.text(), " world");
+        assert_eq!(editor.cursor.1, 0);
+    }
+
+    #[test]
+    fn test_yank_text_object_on_line() {
+        let mut editor = TestEditor::new("hello world");
+        editor.yank_text_object_on_line(6, 11);
+        assert_eq!(editor.yank_buffer, "world");
+        assert!(!editor.yank_is_linewise);
+    }
+
+    #[test]
+    fn test_maybe_record_change_normal_mode() {
+        let mut editor = TestEditor::new("test");
+        editor.mode = EditorMode::Normal;
+        editor.lines_version = 1;
+        editor.maybe_record_change();
+        // Should record change in normal mode
+        assert!(editor.history.len() > 1);
+    }
+
+    #[test]
+    fn test_maybe_record_change_insert_mode() {
+        let mut editor = TestEditor::new("test");
+        editor.mode = EditorMode::Insert;
+        editor.lines_version = 1;
+        let history_len_before = editor.history.len();
+        editor.maybe_record_change();
+        // Should NOT record change in insert mode
+        assert_eq!(editor.history.len(), history_len_before);
     }
 }
 
