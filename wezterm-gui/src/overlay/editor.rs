@@ -321,7 +321,7 @@ impl<'a> EditorState<'a> {
             self.cursor = (new_row, new_col);
         }
     }
-    
+
     /// Update desired_col to current cursor position (call after explicit column changes)
     fn update_desired_col(&mut self) {
         self.desired_col = self.cursor.1;
@@ -356,7 +356,7 @@ impl<'a> EditorState<'a> {
         self.lines_version += 1;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
-        self.record_change();
+            self.record_change();
         }
     }
 
@@ -395,7 +395,7 @@ impl<'a> EditorState<'a> {
         self.lines_version += 1;
         // Only record change if not in insert mode (batch insert mode changes)
         if self.mode != EditorMode::Insert {
-        self.record_change();
+            self.record_change();
         }
     }
 
@@ -432,7 +432,7 @@ impl<'a> EditorState<'a> {
             .collect();
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
-        
+
         self.lines_version += 1;
         self.lines.truncate(self.cursor.0 + 1);
         self.lines[self.cursor.0].clear();
@@ -456,7 +456,7 @@ impl<'a> EditorState<'a> {
             .collect();
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
-        
+
         self.lines_version += 1;
         for _ in 0..=self.cursor.0 {
             self.lines.remove(0);
@@ -744,9 +744,9 @@ impl<'a> EditorState<'a> {
             WordType::Word => {
                 if start_char.is_whitespace() {
                     // Starting on whitespace: skip whitespace to find start of next word
-        while idx < chars.len() && chars[idx].is_whitespace() {
-            idx += 1;
-        }
+                    while idx < chars.len() && chars[idx].is_whitespace() {
+                        idx += 1;
+                    }
                 } else if start_char.is_ascii_punctuation() {
                     // Starting on punctuation: skip punctuation, then skip whitespace
                     while idx < chars.len() && chars[idx].is_ascii_punctuation() {
@@ -757,21 +757,21 @@ impl<'a> EditorState<'a> {
                     }
                 } else {
                     // Starting on word: skip word, then skip whitespace
-            while idx < chars.len()
-                && !chars[idx].is_whitespace()
-                && !chars[idx].is_ascii_punctuation()
-            {
-                idx += 1;
-            }
+                    while idx < chars.len()
+                        && !chars[idx].is_whitespace()
+                        && !chars[idx].is_ascii_punctuation()
+                    {
+                        idx += 1;
+                    }
                     while idx < chars.len() && chars[idx].is_whitespace() {
-                idx += 1;
-            }
-        }
+                        idx += 1;
+                    }
+                }
             }
             WordType::LongWord => {
                 // Skip current non-whitespace, then skip whitespace
-        while idx < chars.len() && chars[idx].is_whitespace() {
-            idx += 1;
+                while idx < chars.len() && chars[idx].is_whitespace() {
+                    idx += 1;
                 }
                 while idx < chars.len() && !chars[idx].is_whitespace() {
                     idx += 1;
@@ -817,22 +817,22 @@ impl<'a> EditorState<'a> {
 
         // Helper to find start of word on a line, given starting index
         let find_word_start = |chars: &[char], mut idx: usize, wt: WordType| -> usize {
-                // Skip trailing whitespace
-                while idx > 0 && chars[idx].is_whitespace() {
-                    idx -= 1;
-                }
-                if idx == 0 {
+            // Skip trailing whitespace
+            while idx > 0 && chars[idx].is_whitespace() {
+                idx -= 1;
+            }
+            if idx == 0 {
                 return 0;
-                }
-                // Find start of word
+            }
+            // Find start of word
             let ref_char = chars[idx];
-                while idx > 0 {
-                    let prev = idx - 1;
+            while idx > 0 {
+                let prev = idx - 1;
                 if chars[prev].is_whitespace() || !is_same_type(chars[prev], ref_char, wt) {
-                        break;
-                    }
-                    idx -= 1;
+                    break;
                 }
+                idx -= 1;
+            }
             idx
         };
 
@@ -843,7 +843,10 @@ impl<'a> EditorState<'a> {
                 if chars.is_empty() {
                     return (prev_line, 0);
                 }
-                return (prev_line, find_word_start(&chars, chars.len() - 1, word_type));
+                return (
+                    prev_line,
+                    find_word_start(&chars, chars.len() - 1, word_type),
+                );
             }
             return self.cursor;
         }
@@ -983,7 +986,7 @@ impl<'a> EditorState<'a> {
         // Step 2: Skip whitespace and empty lines backward
         loop {
             let chars: Vec<char> = self.lines[row].chars().collect();
-                if chars.is_empty() {
+            if chars.is_empty() {
                 if row > 0 {
                     row -= 1;
                     col = self.lines[row].chars().count().saturating_sub(1);
@@ -1003,7 +1006,7 @@ impl<'a> EditorState<'a> {
                 }
                 return (0, 0);
             }
-                        break;
+            break;
         }
 
         // Step 3: Now we're on a non-whitespace char
@@ -1046,8 +1049,8 @@ impl<'a> EditorState<'a> {
                         match word_type {
                             WordType::Word => {
                                 if prev_type != curr_type {
-                        break;
-                    }
+                                    break;
+                                }
                             }
                             WordType::LongWord => {
                                 if prev_type == 0 {
@@ -1069,21 +1072,21 @@ impl<'a> EditorState<'a> {
                     }
 
                     // Skip whitespace again
-        loop {
+                    loop {
                         let chars: Vec<char> = self.lines[row].chars().collect();
                         if chars.is_empty() {
                             if row > 0 {
                                 row -= 1;
                                 col = self.lines[row].chars().count().saturating_sub(1);
-                    continue;
-                }
+                                continue;
+                            }
                             return (0, 0);
                         }
 
                         if col < chars.len() && chars[col].is_whitespace() {
                             if col > 0 {
                                 col -= 1;
-                    continue;
+                                continue;
                             } else if row > 0 {
                                 row -= 1;
                                 col = self.lines[row].chars().count().saturating_sub(1);
@@ -1091,14 +1094,14 @@ impl<'a> EditorState<'a> {
                             }
                             return (0, 0);
                         }
-                    break;
-                }
+                        break;
+                    }
                 }
             }
-            }
+        }
 
         (row, col)
-        }
+    }
 
     fn move_to_word_end_backward(&mut self, word_type: WordType) {
         self.cursor = self.get_word_end_backward_pos(word_type);
@@ -1133,11 +1136,11 @@ impl<'a> EditorState<'a> {
     ) -> ((usize, usize), (usize, usize)) {
         let (open_row, open_col) = open_pos;
         let (close_row, close_col) = close_pos;
-        
+
         // For multi-line pairs where brackets are on their own lines,
         // we need to keep start/end spanning the lines so delete_visual_selection
         // properly handles it as a multi-line deletion.
-        
+
         if open_row == close_row {
             // Same line: select content between brackets
             if close_col > open_col + 1 {
@@ -1151,13 +1154,13 @@ impl<'a> EditorState<'a> {
             // Multi-line: start after opening bracket, end before closing bracket
             // Keep positions on the bracket lines to ensure proper multi-line deletion
             let open_line_len = self.lines[open_row].chars().count();
-            
+
             // Start position: right after opening bracket
             // If bracket is at end of line, use that position (past end) to indicate
             // the selection starts from the next line's beginning
             let start = (open_row, (open_col + 1).min(open_line_len));
-            
-            // End position: right before closing bracket  
+
+            // End position: right before closing bracket
             // If bracket is at start of line (col 0), we need to end at previous line's end
             let end = if close_col > 0 {
                 (close_row, close_col - 1)
@@ -1170,7 +1173,7 @@ impl<'a> EditorState<'a> {
                     (close_row - 1, 0)
                 }
             };
-            
+
             // Ensure start <= end
             if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
                 (start, end)
@@ -1533,8 +1536,8 @@ impl<'a> EditorState<'a> {
         // Position cursor
         self.cursor.0 = start_row.min(self.lines.len() - 1);
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
-            self.clamp_cursor();
-            self.update_desired_col();
+        self.clamp_cursor();
+        self.update_desired_col();
         // For change operations (Insert mode), don't record yet
         if self.mode != EditorMode::Insert {
             self.record_change();
@@ -1571,8 +1574,8 @@ impl<'a> EditorState<'a> {
         // Position cursor
         self.cursor.0 = start_row.min(self.lines.len() - 1);
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
-            self.clamp_cursor();
-            self.update_desired_col();
+        self.clamp_cursor();
+        self.update_desired_col();
         // For change operations (Insert mode), don't record yet
         if self.mode != EditorMode::Insert {
             self.record_change();
@@ -2088,7 +2091,7 @@ impl<'a> EditorState<'a> {
         {
             // Store content to be deleted in yank buffer (reuse yank logic)
             self.yank_inner_pair(pair_char);
-            
+
             self.save_undo_state();
             self.lines_version += 1;
             if open_row == close_row {
@@ -2141,7 +2144,7 @@ impl<'a> EditorState<'a> {
         {
             // Store content to be deleted in yank buffer (reuse yank logic)
             self.yank_around_pair(pair_char);
-            
+
             self.save_undo_state();
             self.lines_version += 1;
             if open_row == close_row {
@@ -2962,7 +2965,7 @@ impl<'a> EditorState<'a> {
             }
             self.yank_buffer = yanked;
             self.yank_is_linewise = false;
-            
+
             let first_part: String = self.lines[start_row].chars().take(start_col).collect();
             let last_part: String = self.lines[end_row].chars().skip(actual_end_col).collect();
 
@@ -3120,28 +3123,68 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteChar => self.delete_char(),
             LastChange::DeleteLine => self.delete_line(),
             LastChange::DeleteWord => {
-                self.perform_delete_motion(|s| s.get_word_forward_pos(WordType::Word), false, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_forward_pos(WordType::Word),
+                    false,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteLongWord => {
-                self.perform_delete_motion(|s| s.get_word_forward_pos(WordType::LongWord), false, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_forward_pos(WordType::LongWord),
+                    false,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteWordBackward => {
-                self.perform_delete_motion(|s| s.get_word_backward_pos(WordType::Word), false, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_backward_pos(WordType::Word),
+                    false,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteLongWordBackward => {
-                self.perform_delete_motion(|s| s.get_word_backward_pos(WordType::LongWord), false, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_backward_pos(WordType::LongWord),
+                    false,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteWordEnd => {
-                self.perform_delete_motion(|s| s.get_word_end_pos(WordType::Word), true, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_pos(WordType::Word),
+                    true,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteLongWordEnd => {
-                self.perform_delete_motion(|s| s.get_word_end_pos(WordType::LongWord), true, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_pos(WordType::LongWord),
+                    true,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteWordEndBackward => {
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(WordType::Word), true, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_backward_pos(WordType::Word),
+                    true,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteLongWordEndBackward => {
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(WordType::LongWord), true, true, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_backward_pos(WordType::LongWord),
+                    true,
+                    true,
+                    false,
+                );
             }
             LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
             LastChange::DeleteInnerWord => self.delete_inner_word(),
@@ -3166,12 +3209,22 @@ impl<'a> EditorState<'a> {
                 // cw behaves like ce when on a word
                 let line = &self.lines[self.cursor.0];
                 let chars: Vec<char> = line.chars().collect();
-                let on_whitespace = self.cursor.1 < chars.len()
-                    && chars[self.cursor.1].is_whitespace();
+                let on_whitespace =
+                    self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
                 if on_whitespace {
-                    self.perform_delete_motion(|s| s.get_word_forward_pos(WordType::Word), false, false, false);
+                    self.perform_delete_motion(
+                        |s| s.get_word_forward_pos(WordType::Word),
+                        false,
+                        false,
+                        false,
+                    );
                 } else {
-                    self.perform_delete_motion(|s| s.get_word_end_pos(WordType::Word), true, false, false);
+                    self.perform_delete_motion(
+                        |s| s.get_word_end_pos(WordType::Word),
+                        true,
+                        false,
+                        false,
+                    );
                 }
                 self.insert_saved_text();
             }
@@ -3179,43 +3232,83 @@ impl<'a> EditorState<'a> {
                 self.mode = EditorMode::Insert;
                 let line = &self.lines[self.cursor.0];
                 let chars: Vec<char> = line.chars().collect();
-                let on_whitespace = self.cursor.1 < chars.len()
-                    && chars[self.cursor.1].is_whitespace();
+                let on_whitespace =
+                    self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
                 if on_whitespace {
-                    self.perform_delete_motion(|s| s.get_word_forward_pos(WordType::LongWord), false, false, false);
+                    self.perform_delete_motion(
+                        |s| s.get_word_forward_pos(WordType::LongWord),
+                        false,
+                        false,
+                        false,
+                    );
                 } else {
-                    self.perform_delete_motion(|s| s.get_word_end_pos(WordType::LongWord), true, false, false);
+                    self.perform_delete_motion(
+                        |s| s.get_word_end_pos(WordType::LongWord),
+                        true,
+                        false,
+                        false,
+                    );
                 }
                 self.insert_saved_text();
             }
             LastChange::ChangeWordBackward => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_backward_pos(WordType::Word), false, false, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_backward_pos(WordType::Word),
+                    false,
+                    false,
+                    false,
+                );
                 self.insert_saved_text();
             }
             LastChange::ChangeLongWordBackward => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_backward_pos(WordType::LongWord), false, false, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_backward_pos(WordType::LongWord),
+                    false,
+                    false,
+                    false,
+                );
                 self.insert_saved_text();
             }
             LastChange::ChangeWordEnd => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_end_pos(WordType::Word), true, false, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_pos(WordType::Word),
+                    true,
+                    false,
+                    false,
+                );
                 self.insert_saved_text();
             }
             LastChange::ChangeLongWordEnd => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_end_pos(WordType::LongWord), true, false, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_pos(WordType::LongWord),
+                    true,
+                    false,
+                    false,
+                );
                 self.insert_saved_text();
             }
             LastChange::ChangeWordEndBackward => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(WordType::Word), true, false, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_backward_pos(WordType::Word),
+                    true,
+                    false,
+                    false,
+                );
                 self.insert_saved_text();
             }
             LastChange::ChangeLongWordEndBackward => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(WordType::LongWord), true, false, false);
+                self.perform_delete_motion(
+                    |s| s.get_word_end_backward_pos(WordType::LongWord),
+                    true,
+                    false,
+                    false,
+                );
                 self.insert_saved_text();
             }
             LastChange::ChangeInnerWord => {
@@ -3294,11 +3387,11 @@ impl<'a> EditorState<'a> {
                         // I - insert at first non-blank of line
                         self.cursor.1 = 0;
                         let line = &self.lines[self.cursor.0];
-        for (i, ch) in line.chars().enumerate() {
-            if !ch.is_whitespace() {
-                self.cursor.1 = i;
-                break;
-            }
+                        for (i, ch) in line.chars().enumerate() {
+                            if !ch.is_whitespace() {
+                                self.cursor.1 = i;
+                                break;
+                            }
                         }
                     }
                     InsertStyle::LineEnd => {
@@ -3539,7 +3632,11 @@ impl<'a> EditorState<'a> {
         }
 
         let is_negative = hex_start > 0 && chars[hex_start - 1] == '-';
-        let start = if is_negative { hex_start - 1 } else { hex_start };
+        let start = if is_negative {
+            hex_start - 1
+        } else {
+            hex_start
+        };
 
         Some(NumberAtCursor {
             start,
@@ -3599,7 +3696,11 @@ impl<'a> EditorState<'a> {
             return None;
         }
 
-        let start = if is_negative { num_start - 1 } else { num_start };
+        let start = if is_negative {
+            num_start - 1
+        } else {
+            num_start
+        };
 
         Some(NumberAtCursor {
             start,
@@ -3706,11 +3807,11 @@ impl<'a> EditorState<'a> {
         }
 
         let status_text = if self.mode == EditorMode::Search {
-                let prompt = match self.search_direction {
-                    SearchDirection::Forward => "/",
-                    SearchDirection::Backward => "?",
-                };
-                format!("{}{}", prompt, self.search_input)
+            let prompt = match self.search_direction {
+                SearchDirection::Forward => "/",
+                SearchDirection::Backward => "?",
+            };
+            format!("{}{}", prompt, self.search_input)
         } else {
             let position = format!("{}:{}", self.cursor.0 + 1, self.cursor.1 + 1);
             if pending_str.is_empty() {
@@ -3791,7 +3892,7 @@ impl<'a> EditorState<'a> {
             if let Some((sel_start, sel_end)) = selection {
                 // Check if this line is part of the selection
                 let line_in_selection = line_idx >= sel_start.0 && line_idx <= sel_end.0;
-                
+
                 if line_in_selection && self.mode == EditorMode::VisualLine {
                     // Entire line is selected in VisualLine mode
                     self.buf.add_changes(vec![
@@ -3808,7 +3909,7 @@ impl<'a> EditorState<'a> {
                     // Character-wise selection
                     let chars: Vec<char> = line.chars().collect();
                     let line_len = chars.len();
-                    
+
                     // Handle empty lines - show a highlighted space like Neovim
                     if line_len == 0 {
                         self.buf.add_changes(vec![
@@ -3832,7 +3933,7 @@ impl<'a> EditorState<'a> {
                         } else {
                             line_len
                         };
-                        
+
                         // Text before selection
                         if sel_col_start > 0 {
                             let before: String =
@@ -3842,7 +3943,7 @@ impl<'a> EditorState<'a> {
                                 Change::Text(before),
                             ]);
                         }
-                        
+
                         // Selected text
                         if sel_col_start < line_len {
                             let selected: String = chars
@@ -3862,7 +3963,7 @@ impl<'a> EditorState<'a> {
                                 ]);
                             }
                         }
-                        
+
                         // Text after selection
                         if sel_col_end < line_len {
                             let after: String = chars[sel_col_end..].iter().collect();
@@ -3871,7 +3972,7 @@ impl<'a> EditorState<'a> {
                                 Change::Text(after),
                             ]);
                         }
-                        
+
                         self.buf
                             .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
                     }
@@ -3906,10 +4007,10 @@ impl<'a> EditorState<'a> {
                 CursorShape::SteadyUnderline
             } else {
                 match self.mode {
-                EditorMode::Normal => CursorShape::SteadyBlock,
-                EditorMode::Insert => CursorShape::SteadyBar,
-                EditorMode::Search => CursorShape::SteadyUnderline,
-                EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
+                    EditorMode::Normal => CursorShape::SteadyBlock,
+                    EditorMode::Insert => CursorShape::SteadyBar,
+                    EditorMode::Search => CursorShape::SteadyUnderline,
+                    EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
                 }
             }),
         ]);
@@ -4003,7 +4104,7 @@ impl<'a> EditorState<'a> {
 
                 // Store in yank buffer
                 self.yank_buffer = deleted_text;
-                    self.yank_is_linewise = false;
+                self.yank_is_linewise = false;
 
                 // Join the kept parts
                 let new_line = format!("{}{}", end_prefix, start_suffix);
@@ -4221,7 +4322,7 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
         // For change operations (Insert mode), don't record yet - will be recorded when exiting insert
         if self.mode != EditorMode::Insert {
-        self.record_change();
+            self.record_change();
         }
     }
 
@@ -4369,8 +4470,8 @@ impl<'a> EditorState<'a> {
             }
             if start.1 < range_end {
                 self.yank_buffer = chars[start.1..range_end].iter().collect();
-        }
-        self.yank_is_linewise = false;
+            }
+            self.yank_is_linewise = false;
         }
     }
 
@@ -4419,7 +4520,7 @@ impl<'a> EditorState<'a> {
             } else {
                 // Multi-line: yank content between brackets
                 let mut yanked = String::new();
-                
+
                 // First line: from after open bracket (character-based)
                 // Only skip whitespace if there's NO content after open bracket on same line
                 let first_chars: Vec<char> = self.lines[open_row].chars().collect();
@@ -4430,7 +4531,7 @@ impl<'a> EditorState<'a> {
                     yanked.push_str(&after_open);
                 }
                 // If no content (only whitespace), skip it entirely
-                
+
                 // Middle lines
                 for row in (open_row + 1)..close_row {
                     // Add leading newline if there's content before, or if open bracket is alone
@@ -4439,7 +4540,7 @@ impl<'a> EditorState<'a> {
                     }
                     yanked.push_str(&self.lines[row]);
                 }
-                
+
                 // Last line: up to close bracket (character-based)
                 // Only skip whitespace if there's NO content before close bracket on same line
                 if close_row > open_row {
@@ -4455,7 +4556,7 @@ impl<'a> EditorState<'a> {
                     }
                     // If no content (only whitespace), skip it entirely
                 }
-                
+
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
             }
@@ -4645,7 +4746,7 @@ impl<'a> EditorState<'a> {
             } else {
                 self.cursor.1 + 1
             };
-            
+
             // Split current line at insert position
             let before: String = current_line_chars[..insert_pos.min(current_line_chars.len())]
                 .iter()
@@ -4653,16 +4754,16 @@ impl<'a> EditorState<'a> {
             let after: String = current_line_chars[insert_pos.min(current_line_chars.len())..]
                 .iter()
                 .collect();
-            
+
             // First part: before + first paste line
             self.lines[self.cursor.0] = before + paste_lines[0];
-            
+
             // Middle lines
             for (i, paste_line) in paste_lines[1..paste_lines.len() - 1].iter().enumerate() {
                 self.lines
                     .insert(self.cursor.0 + 1 + i, paste_line.to_string());
             }
-            
+
             // Last part: last paste line + after
             if paste_lines.len() > 1 {
                 let last_paste_line = paste_lines[paste_lines.len() - 1];
@@ -4671,7 +4772,7 @@ impl<'a> EditorState<'a> {
                     last_paste_line.to_string() + &after,
                 );
             }
-            
+
             // Move cursor to end of pasted text (last character of last paste line)
             self.cursor.0 += paste_lines.len() - 1;
             let last_paste_chars = paste_lines[paste_lines.len() - 1].chars().count();
@@ -4689,13 +4790,13 @@ impl<'a> EditorState<'a> {
                 (self.cursor.1 + 1).min(chars.len())
             };
             let paste_chars: Vec<char> = self.yank_buffer.chars().collect();
-            
+
             // Insert paste characters
             for (i, c) in paste_chars.iter().enumerate() {
                 chars.insert(insert_pos + i, *c);
             }
             self.lines[self.cursor.0] = chars.into_iter().collect();
-            
+
             // Move cursor to last character of pasted text
             self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
         }
@@ -4723,20 +4824,20 @@ impl<'a> EditorState<'a> {
             let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = self.cursor.1.min(current_line_chars.len());
-            
+
             // Split current line at insert position
             let before: String = current_line_chars[..insert_pos].iter().collect();
             let after: String = current_line_chars[insert_pos..].iter().collect();
-            
+
             // First part: before + first paste line
             self.lines[self.cursor.0] = before + paste_lines[0];
-            
+
             // Middle lines
             for (i, paste_line) in paste_lines[1..paste_lines.len() - 1].iter().enumerate() {
                 self.lines
                     .insert(self.cursor.0 + 1 + i, paste_line.to_string());
             }
-            
+
             // Last part: last paste line + after
             if paste_lines.len() > 1 {
                 let last_paste_line = paste_lines[paste_lines.len() - 1];
@@ -4745,7 +4846,7 @@ impl<'a> EditorState<'a> {
                     last_paste_line.to_string() + &after,
                 );
             }
-            
+
             // Move cursor to end of pasted text
             self.cursor.0 += paste_lines.len() - 1;
             let last_paste_chars = paste_lines[paste_lines.len() - 1].chars().count();
@@ -4759,13 +4860,13 @@ impl<'a> EditorState<'a> {
             let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = self.cursor.1.min(chars.len());
             let paste_chars: Vec<char> = self.yank_buffer.chars().collect();
-            
+
             // Insert paste characters
             for (i, c) in paste_chars.iter().enumerate() {
                 chars.insert(insert_pos + i, *c);
             }
             self.lines[self.cursor.0] = chars.into_iter().collect();
-            
+
             // Move cursor to last character of pasted text
             self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
         }
@@ -4884,7 +4985,7 @@ impl<'a> EditorState<'a> {
 
         // Wrap around to end
         for row in (start_row..self.lines.len()).rev() {
-            let search_start = if row == start_row { 
+            let search_start = if row == start_row {
                 // Get byte offset for start_col
                 let chars: Vec<char> = self.lines[row].chars().collect();
                 if start_col < chars.len() {
@@ -4892,8 +4993,8 @@ impl<'a> EditorState<'a> {
                 } else {
                     0
                 }
-            } else { 
-                0 
+            } else {
+                0
             };
             let search_str = &self.lines[row][search_start..];
             if let Some(pos) = search_str.rfind(pattern) {
@@ -4943,7 +5044,7 @@ impl<'a> EditorState<'a> {
     fn delete_visual_selection(&mut self) {
         self.save_undo_state();
         let (start, end) = self.get_visual_selection();
-        
+
         if self.mode == EditorMode::VisualLine {
             // Delete entire lines
             let yanked: Vec<&str> = self.lines[start.0..=end.0]
@@ -4952,7 +5053,7 @@ impl<'a> EditorState<'a> {
                 .collect();
             self.yank_buffer = yanked.join("\n");
             self.yank_is_linewise = true;
-            
+
             self.lines_version += 1;
             for _ in start.0..=end.0 {
                 if self.lines.len() > 1 {
@@ -4975,7 +5076,7 @@ impl<'a> EditorState<'a> {
                 let sel_end = (end.1 + 1).min(chars.len());
                 self.yank_buffer = chars[start.1..sel_end].iter().collect();
                 self.yank_is_linewise = false;
-                
+
                 self.lines_version += 1;
                 let new_line: String = chars[..start.1].iter().chain(&chars[sel_end..]).collect();
                 self.lines[start.0] = new_line;
@@ -4995,7 +5096,7 @@ impl<'a> EditorState<'a> {
                 yanked.extend(&last_chars[..sel_end]);
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
-                
+
                 self.lines_version += 1;
                 let first_part: String = first_chars[..start.1].iter().collect();
                 let first_part_len = first_part.chars().count();
@@ -5025,7 +5126,7 @@ impl<'a> EditorState<'a> {
 
     fn yank_visual_selection(&mut self) {
         let (start, end) = self.get_visual_selection();
-        
+
         if self.mode == EditorMode::VisualLine {
             // Yank entire lines
             let yanked: Vec<&str> = self.lines[start.0..=end.0]
@@ -5125,7 +5226,10 @@ impl<'a> EditorState<'a> {
                                     );
                                     self.last_change = LastChange::ChangeWordEndBackward;
                                 } else if op == 'y' {
-                                    self.perform_yank_motion(|s| s.get_word_end_backward_pos(WordType::Word), true);
+                                    self.perform_yank_motion(
+                                        |s| s.get_word_end_backward_pos(WordType::Word),
+                                        true,
+                                    );
                                 } else {
                                     self.perform_delete_motion(
                                         |s| s.get_word_end_backward_pos(WordType::Word),
@@ -5148,7 +5252,10 @@ impl<'a> EditorState<'a> {
                                     );
                                     self.last_change = LastChange::ChangeLongWordEndBackward;
                                 } else if op == 'y' {
-                                    self.perform_yank_motion(|s| s.get_word_end_backward_pos(WordType::LongWord), true);
+                                    self.perform_yank_motion(
+                                        |s| s.get_word_end_backward_pos(WordType::LongWord),
+                                        true,
+                                    );
                                 } else {
                                     self.perform_delete_motion(
                                         |s| s.get_word_end_backward_pos(WordType::LongWord),
@@ -5443,12 +5550,12 @@ impl<'a> EditorState<'a> {
                                                 false,
                                             );
                                         } else {
-                                        self.perform_delete_motion(
-                                            |s| s.get_word_end_pos(WordType::LongWord),
-                                            true,
-                                            false,
-                                            false,
-                                        );
+                                            self.perform_delete_motion(
+                                                |s| s.get_word_end_pos(WordType::LongWord),
+                                                true,
+                                                false,
+                                                false,
+                                            );
                                         }
                                         self.last_change = LastChange::ChangeLongWord;
                                     }
@@ -5647,18 +5754,18 @@ impl<'a> EditorState<'a> {
                                     }
                                     'b' => {
                                         self.perform_delete_motion(
-                                        |s| s.get_word_backward_pos(WordType::Word),
-                                        false,
-                                        true,
+                                            |s| s.get_word_backward_pos(WordType::Word),
+                                            false,
+                                            true,
                                             false,
                                         );
                                         self.last_change = LastChange::DeleteWordBackward;
                                     }
                                     'B' => {
                                         self.perform_delete_motion(
-                                        |s| s.get_word_backward_pos(WordType::LongWord),
-                                        false,
-                                        true,
+                                            |s| s.get_word_backward_pos(WordType::LongWord),
+                                            false,
+                                            true,
                                             false,
                                         );
                                         self.last_change = LastChange::DeleteLongWordBackward;
@@ -5742,17 +5849,26 @@ impl<'a> EditorState<'a> {
                             } else if op == 'y' {
                                 match c {
                                     'y' => self.yank_line(),
-                                    'w' => self
-                                        .perform_yank_motion(|s| s.get_word_forward_pos(WordType::Word), false),
+                                    'w' => self.perform_yank_motion(
+                                        |s| s.get_word_forward_pos(WordType::Word),
+                                        false,
+                                    ),
                                     'W' => self.perform_yank_motion(
                                         |s| s.get_word_forward_pos(WordType::LongWord),
                                         false,
                                     ),
-                                    'e' => self.perform_yank_motion(|s| s.get_word_end_pos(WordType::Word), true),
-                                    'E' => self
-                                        .perform_yank_motion(|s| s.get_word_end_pos(WordType::LongWord), true),
-                                    'b' => self
-                                        .perform_yank_motion(|s| s.get_word_backward_pos(WordType::Word), false),
+                                    'e' => self.perform_yank_motion(
+                                        |s| s.get_word_end_pos(WordType::Word),
+                                        true,
+                                    ),
+                                    'E' => self.perform_yank_motion(
+                                        |s| s.get_word_end_pos(WordType::LongWord),
+                                        true,
+                                    ),
+                                    'b' => self.perform_yank_motion(
+                                        |s| s.get_word_backward_pos(WordType::Word),
+                                        false,
+                                    ),
                                     'B' => self.perform_yank_motion(
                                         |s| s.get_word_backward_pos(WordType::LongWord),
                                         false,
@@ -6545,42 +6661,42 @@ impl<'a> EditorState<'a> {
                         } else {
                             // No pending key - handle as normal keys
                             match c {
-                        // Movement keys extend selection
-                        'h' => self.move_cursor(0, -1),
-                        'j' => self.move_cursor(1, 0),
-                        'k' => self.move_cursor(-1, 0),
-                        'l' => self.move_cursor(0, 1),
-                        'w' => self.move_word_forward(WordType::Word),
-                        'W' => self.move_word_forward(WordType::LongWord),
-                        'b' => self.move_word_backward(WordType::Word),
-                        'B' => self.move_word_backward(WordType::LongWord),
-                        'e' => self.move_to_word_end(WordType::Word),
-                        'E' => self.move_to_word_end(WordType::LongWord),
-                        '0' => {
-                            self.cursor.1 = 0;
-                            self.update_desired_col();
-                        }
-                        '^' => self.move_to_first_non_blank(),
-                        '$' => {
+                                // Movement keys extend selection
+                                'h' => self.move_cursor(0, -1),
+                                'j' => self.move_cursor(1, 0),
+                                'k' => self.move_cursor(-1, 0),
+                                'l' => self.move_cursor(0, 1),
+                                'w' => self.move_word_forward(WordType::Word),
+                                'W' => self.move_word_forward(WordType::LongWord),
+                                'b' => self.move_word_backward(WordType::Word),
+                                'B' => self.move_word_backward(WordType::LongWord),
+                                'e' => self.move_to_word_end(WordType::Word),
+                                'E' => self.move_to_word_end(WordType::LongWord),
+                                '0' => {
+                                    self.cursor.1 = 0;
+                                    self.update_desired_col();
+                                }
+                                '^' => self.move_to_first_non_blank(),
+                                '$' => {
                                     self.cursor.1 =
                                         self.lines[self.cursor.0].chars().count().saturating_sub(1);
-                            self.update_desired_col();
-                        }
-                        'G' => {
-                            self.cursor.0 = self.lines.len() - 1;
-                            // Use desired_col like vertical movement
-                            let line_len = self.lines[self.cursor.0].chars().count();
-                            let max_col = if self.mode == EditorMode::Insert {
-                                line_len
-                            } else {
-                                line_len.saturating_sub(1)
-                            };
-                            self.cursor.1 = self.desired_col.min(max_col);
-                        }
-                        '%' => {
-                            self.jump_to_matching_bracket();
-                            self.update_desired_col();
-                        }
+                                    self.update_desired_col();
+                                }
+                                'G' => {
+                                    self.cursor.0 = self.lines.len() - 1;
+                                    // Use desired_col like vertical movement
+                                    let line_len = self.lines[self.cursor.0].chars().count();
+                                    let max_col = if self.mode == EditorMode::Insert {
+                                        line_len
+                                    } else {
+                                        line_len.saturating_sub(1)
+                                    };
+                                    self.cursor.1 = self.desired_col.min(max_col);
+                                }
+                                '%' => {
+                                    self.jump_to_matching_bracket();
+                                    self.update_desired_col();
+                                }
                                 '{' => {
                                     self.move_paragraph_backward();
                                 }
@@ -6592,28 +6708,28 @@ impl<'a> EditorState<'a> {
                                 }
                                 ')' => {
                                     self.move_sentence_forward();
-                        }
-                        // Operations on selection
-                        'd' | 'x' => {
-                            self.delete_visual_selection();
-                            self.mode = EditorMode::Normal;
-                        }
-                        'y' => {
-                            self.yank_visual_selection();
-                            self.mode = EditorMode::Normal;
-                        }
-                        'c' => {
-                            self.delete_visual_selection();
-                            self.mode = EditorMode::Insert;
-                            self.insert_buffer.clear();
-                        }
-                        // Toggle case
-                        '~' => {
-                            let (start, end) = self.get_visual_selection();
+                                }
+                                // Operations on selection
+                                'd' | 'x' => {
+                                    self.delete_visual_selection();
+                                    self.mode = EditorMode::Normal;
+                                }
+                                'y' => {
+                                    self.yank_visual_selection();
+                                    self.mode = EditorMode::Normal;
+                                }
+                                'c' => {
+                                    self.delete_visual_selection();
+                                    self.mode = EditorMode::Insert;
+                                    self.insert_buffer.clear();
+                                }
+                                // Toggle case
+                                '~' => {
+                                    let (start, end) = self.get_visual_selection();
                                     self.save_undo_state();
                                     self.lines_version += 1;
-                            if self.mode == EditorMode::VisualLine {
-                                for row in start.0..=end.0 {
+                                    if self.mode == EditorMode::VisualLine {
+                                        for row in start.0..=end.0 {
                                             let toggled: String = self.lines[row]
                                                 .chars()
                                                 .map(|c| {
@@ -6624,11 +6740,11 @@ impl<'a> EditorState<'a> {
                                                     }
                                                 })
                                                 .collect();
-                                    self.lines[row] = toggled;
-                                }
-                            } else {
-                                // Character-wise toggle
-                                for row in start.0..=end.0 {
+                                            self.lines[row] = toggled;
+                                        }
+                                    } else {
+                                        // Character-wise toggle
+                                        for row in start.0..=end.0 {
                                             let chars: Vec<char> =
                                                 self.lines[row].chars().collect();
                                             let col_start =
@@ -6642,7 +6758,7 @@ impl<'a> EditorState<'a> {
                                                 .iter()
                                                 .enumerate()
                                                 .map(|(i, &c)| {
-                                        if i >= col_start && i < col_end {
+                                                    if i >= col_start && i < col_end {
                                                         if c.is_uppercase() {
                                                             c.to_lowercase().next().unwrap_or(c)
                                                         } else {
@@ -6653,45 +6769,45 @@ impl<'a> EditorState<'a> {
                                                     }
                                                 })
                                                 .collect();
-                                    self.lines[row] = toggled;
+                                            self.lines[row] = toggled;
+                                        }
+                                    }
+                                    self.cursor = start;
+                                    self.record_change();
+                                    self.mode = EditorMode::Normal;
                                 }
-                            }
-                            self.cursor = start;
-                            self.record_change();
-                            self.mode = EditorMode::Normal;
-                        }
-                        // Switch visual modes
-                        'v' => {
-                            if self.mode == EditorMode::Visual {
-                                self.mode = EditorMode::Normal;
-                            } else {
-                                self.mode = EditorMode::Visual;
-                            }
-                        }
-                        'V' => {
-                            if self.mode == EditorMode::VisualLine {
-                                self.mode = EditorMode::Normal;
-                            } else {
-                                self.mode = EditorMode::VisualLine;
-                            }
-                        }
-                        // Swap anchor and cursor
-                        'o' => {
-                            std::mem::swap(&mut self.cursor, &mut self.visual_start);
-                            self.update_desired_col();
-                        }
-                        // Text object selection - 'i' for inner, 'a' for around
-                        'i' | 'a' => {
-                            self.pending_keys.push(KeyCode::Char(c));
-                        }
+                                // Switch visual modes
+                                'v' => {
+                                    if self.mode == EditorMode::Visual {
+                                        self.mode = EditorMode::Normal;
+                                    } else {
+                                        self.mode = EditorMode::Visual;
+                                    }
+                                }
+                                'V' => {
+                                    if self.mode == EditorMode::VisualLine {
+                                        self.mode = EditorMode::Normal;
+                                    } else {
+                                        self.mode = EditorMode::VisualLine;
+                                    }
+                                }
+                                // Swap anchor and cursor
+                                'o' => {
+                                    std::mem::swap(&mut self.cursor, &mut self.visual_start);
+                                    self.update_desired_col();
+                                }
+                                // Text object selection - 'i' for inner, 'a' for around
+                                'i' | 'a' => {
+                                    self.pending_keys.push(KeyCode::Char(c));
+                                }
                                 // 'g' prefix for gg command
                                 'g' => {
                                     self.pending_keys.push(KeyCode::Char('g'));
-                        }
-                        _ => {
-                            // Clear pending keys on unrecognized input
-                            self.pending_keys.clear();
-                        }
+                                }
+                                _ => {
+                                    // Clear pending keys on unrecognized input
+                                    self.pending_keys.clear();
+                                }
                             } // close match c
                         } // close else
                     } // close => for Char(c)
@@ -7157,8 +7273,8 @@ mod tests {
                 self.clamp_cursor();
                 // For change operations (Insert mode), don't record yet
                 if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
+                    self.record_change();
+                }
             }
         }
 
@@ -7675,17 +7791,17 @@ mod tests {
         // This tests the fix for the panic when doing di( on multi-line, undo, redo
         let mut editor = TestEditor::new("(\ntesting1\n)");
         editor.cursor = (1, 3); // On "testing1"
-        
+
         // Simulate di( - delete inner content
         editor.delete_inner_pair('(');
         // After delete, we should have 2 lines: "(" and ")"
         assert_eq!(editor.lines.len(), 2);
-        
+
         // Undo
         editor.undo();
         assert_eq!(editor.lines.len(), 3);
         assert_eq!(editor.text(), "(\ntesting1\n)");
-        
+
         // Redo - this should not panic even if cursor was on line 1
         editor.cursor = (1, 5); // Position that might be invalid after redo
         editor.redo();
@@ -7698,22 +7814,22 @@ mod tests {
     fn test_redo_clamps_row_when_lines_deleted() {
         let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5");
         editor.cursor = (2, 0);
-        
+
         // Delete multiple lines
         editor.delete_line(2);
         editor.delete_line(2);
         editor.delete_line(2);
         editor.record_change();
-        
+
         assert_eq!(editor.text(), "line1\nline2");
-        
+
         editor.undo();
         assert_eq!(editor.text(), "line1\nline2\nline3\nline4\nline5");
-        
+
         // Set cursor to a line that won't exist after redo
         editor.cursor = (4, 0);
         editor.redo();
-        
+
         // Should not panic, cursor should be clamped
         assert!(editor.cursor.0 < editor.lines.len());
     }
@@ -7793,7 +7909,7 @@ mod tests {
     #[test]
     fn test_multiple_undo_redo_cycles() {
         let mut editor = TestEditor::new("start");
-        
+
         // Make several changes
         editor.insert_char('1');
         editor.record_change();
@@ -7801,9 +7917,9 @@ mod tests {
         editor.record_change();
         editor.insert_char('3');
         editor.record_change();
-        
+
         assert_eq!(editor.text(), "123start");
-        
+
         // Undo all
         editor.undo();
         assert_eq!(editor.text(), "12start");
@@ -7811,7 +7927,7 @@ mod tests {
         assert_eq!(editor.text(), "1start");
         editor.undo();
         assert_eq!(editor.text(), "start");
-        
+
         // Redo all
         editor.redo();
         assert_eq!(editor.text(), "1start");
@@ -7824,21 +7940,21 @@ mod tests {
     #[test]
     fn test_new_change_after_undo_truncates_history() {
         let mut editor = TestEditor::new("start");
-        
+
         editor.insert_char('A');
         editor.record_change();
         editor.insert_char('B');
         editor.record_change();
-        
+
         // Undo one change
         editor.undo();
         assert_eq!(editor.text(), "Astart");
-        
+
         // Make a new change - should truncate redo history
         editor.insert_char('X');
         editor.record_change();
         assert_eq!(editor.text(), "AXstart");
-        
+
         // Redo should do nothing (history truncated)
         editor.redo();
         assert_eq!(editor.text(), "AXstart");
@@ -7984,4 +8100,3 @@ mod tests {
         assert_eq!(editor.history.len(), history_len_before);
     }
 }
-
