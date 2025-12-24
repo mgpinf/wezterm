@@ -1298,6 +1298,82 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Yank a character-wise range (potentially multi-line) into the yank buffer.
+    /// Returns the yanked text. end_col is inclusive.
+    fn yank_char_range(
+        &self,
+        start_row: usize,
+        start_col: usize,
+        end_row: usize,
+        end_col: usize,
+    ) -> String {
+        let mut yanked = String::new();
+        for row in start_row..=end_row {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start = if row == start_row { start_col } else { 0 };
+            let end = if row == end_row {
+                (end_col + 1).min(chars.len())
+            } else {
+                chars.len()
+            };
+            if start < end {
+                yanked.push_str(&chars[start..end].iter().collect::<String>());
+            }
+            if row < end_row {
+                yanked.push('\n');
+            }
+        }
+        yanked
+    }
+
+    /// Delete a character-wise range (potentially multi-line).
+    /// end_col is inclusive. Returns after deletion with cursor positioned at start.
+    fn delete_char_range(
+        &mut self,
+        start_row: usize,
+        start_col: usize,
+        end_row: usize,
+        end_col: usize,
+    ) {
+        if start_row == end_row {
+            // Single line deletion
+            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
+            let delete_end = (end_col + 1).min(chars.len());
+            if start_col < delete_end {
+                chars.drain(start_col..delete_end);
+                self.lines[start_row] = chars.into_iter().collect();
+            }
+        } else {
+            // Multi-line deletion
+            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
+
+            let before: String = start_chars[..start_col.min(start_chars.len())]
+                .iter()
+                .collect();
+            let after: String = if end_col + 1 < end_chars.len() {
+                end_chars[end_col + 1..].iter().collect()
+            } else {
+                String::new()
+            };
+
+            // Remove lines between start and end
+            for _ in start_row + 1..=end_row {
+                if start_row + 1 < self.lines.len() {
+                    self.lines.remove(start_row + 1);
+                }
+            }
+
+            // Combine remaining parts
+            self.lines[start_row] = before + &after;
+        }
+
+        // Ensure at least one line exists
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+    }
+
     fn delete_inner_word(&mut self) {
         let (start, end) = self.get_inner_word_bounds();
         self.delete_text_object_on_line(start, end);
@@ -1769,67 +1845,16 @@ impl<'a> EditorState<'a> {
         let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
 
         // Yank the sentence
-        let mut yanked = String::new();
-        for row in start_row..=end_row {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            let start = if row == start_row { start_col } else { 0 };
-            let end = if row == end_row {
-                end_col + 1
-            } else {
-                chars.len()
-            };
-            yanked.push_str(
-                &chars[start..end.min(chars.len())]
-                    .iter()
-                    .collect::<String>(),
-            );
-            if row < end_row {
-                yanked.push('\n');
-            }
-        }
-        self.yank_buffer = yanked;
+        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
         self.yank_is_linewise = false;
 
         // Delete the sentence
-        if start_row == end_row {
-            // Single line deletion
-            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
-            let delete_end = (end_col + 1).min(chars.len());
-            chars.drain(start_col..delete_end);
-            self.lines[start_row] = chars.into_iter().collect();
-        } else {
-            // Multi-line deletion
-            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
-            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
-
-            let before: String = start_chars[..start_col].iter().collect();
-            let after: String = if end_col + 1 < end_chars.len() {
-                end_chars[end_col + 1..].iter().collect()
-            } else {
-                String::new()
-            };
-
-            // Remove lines between start and end
-            for _ in start_row + 1..=end_row {
-                self.lines.remove(start_row + 1);
-            }
-
-            // Combine remaining parts
-            self.lines[start_row] = before + &after;
-        }
-
-        // Ensure at least one line exists
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
+        self.delete_char_range(start_row, start_col, end_row, end_col);
 
         self.cursor = (start_row.min(self.lines.len() - 1), start_col);
         self.clamp_cursor();
         self.update_desired_col();
-        // For change operations (Insert mode), don't record yet
-        if self.mode != EditorMode::Insert {
-            self.record_change();
-        }
+        self.maybe_record_change();
     }
 
     fn delete_a_sentence(&mut self) {
@@ -1839,54 +1864,11 @@ impl<'a> EditorState<'a> {
         let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
 
         // Yank the sentence
-        let mut yanked = String::new();
-        for row in start_row..=end_row {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            let start = if row == start_row { start_col } else { 0 };
-            let end = if row == end_row {
-                end_col + 1
-            } else {
-                chars.len()
-            };
-            yanked.push_str(
-                &chars[start..end.min(chars.len())]
-                    .iter()
-                    .collect::<String>(),
-            );
-            if row < end_row {
-                yanked.push('\n');
-            }
-        }
-        self.yank_buffer = yanked;
+        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
         self.yank_is_linewise = false;
 
         // Delete the sentence
-        if start_row == end_row {
-            // Single line deletion
-            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
-            let delete_end = (end_col + 1).min(chars.len());
-            chars.drain(start_col..delete_end);
-            self.lines[start_row] = chars.into_iter().collect();
-        } else {
-            // Multi-line deletion
-            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
-            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
-
-            let before: String = start_chars[..start_col].iter().collect();
-            let after: String = if end_col + 1 < end_chars.len() {
-                end_chars[end_col + 1..].iter().collect()
-            } else {
-                String::new()
-            };
-
-            // Remove lines between start and end
-            for _ in start_row + 1..=end_row {
-                self.lines.remove(start_row + 1);
-            }
-
-            // Combine remaining parts
-            self.lines[start_row] = before + &after;
-        }
+        self.delete_char_range(start_row, start_col, end_row, end_col);
 
         // If the line became empty after deletion and there's a line after it,
         // remove the empty line (like Neovim does for das)
@@ -1902,17 +1884,9 @@ impl<'a> EditorState<'a> {
             self.cursor = (start_row.min(self.lines.len() - 1), start_col);
         }
 
-        // Ensure at least one line exists
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
-
         self.clamp_cursor();
         self.update_desired_col();
-        // For change operations (Insert mode), don't record yet
-        if self.mode != EditorMode::Insert {
-            self.record_change();
-        }
+        self.maybe_record_change();
     }
 
     fn change_inner_sentence(&mut self) {
@@ -1921,61 +1895,15 @@ impl<'a> EditorState<'a> {
 
         let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
 
-        // Yank the sentence
-        let mut yanked = String::new();
-        for row in start_row..=end_row {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            let start = if row == start_row { start_col } else { 0 };
-            let end = if row == end_row {
-                end_col + 1
-            } else {
-                chars.len()
-            };
-            yanked.push_str(
-                &chars[start..end.min(chars.len())]
-                    .iter()
-                    .collect::<String>(),
-            );
-            if row < end_row {
-                yanked.push('\n');
-            }
-        }
-        self.yank_buffer = yanked;
+        // Yank and delete the sentence
+        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
         self.yank_is_linewise = false;
-
-        // Delete the sentence
-        if start_row == end_row {
-            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
-            let delete_end = (end_col + 1).min(chars.len());
-            chars.drain(start_col..delete_end);
-            self.lines[start_row] = chars.into_iter().collect();
-        } else {
-            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
-            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
-
-            let before: String = start_chars[..start_col].iter().collect();
-            let after: String = if end_col + 1 < end_chars.len() {
-                end_chars[end_col + 1..].iter().collect()
-            } else {
-                String::new()
-            };
-
-            for _ in start_row + 1..=end_row {
-                self.lines.remove(start_row + 1);
-            }
-
-            self.lines[start_row] = before + &after;
-        }
-
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
+        self.delete_char_range(start_row, start_col, end_row, end_col);
 
         self.cursor = (start_row.min(self.lines.len() - 1), start_col);
         self.clamp_cursor();
         self.update_desired_col();
         self.mode = EditorMode::Insert;
-        // Don't call record_change() here - it will be called when exiting insert mode
     }
 
     fn change_a_sentence(&mut self) {
@@ -1984,85 +1912,21 @@ impl<'a> EditorState<'a> {
 
         let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
 
-        // Yank the sentence
-        let mut yanked = String::new();
-        for row in start_row..=end_row {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            let start = if row == start_row { start_col } else { 0 };
-            let end = if row == end_row {
-                end_col + 1
-            } else {
-                chars.len()
-            };
-            yanked.push_str(
-                &chars[start..end.min(chars.len())]
-                    .iter()
-                    .collect::<String>(),
-            );
-            if row < end_row {
-                yanked.push('\n');
-            }
-        }
-        self.yank_buffer = yanked;
+        // Yank and delete the sentence
+        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
         self.yank_is_linewise = false;
-
-        // Delete the sentence
-        if start_row == end_row {
-            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
-            let delete_end = (end_col + 1).min(chars.len());
-            chars.drain(start_col..delete_end);
-            self.lines[start_row] = chars.into_iter().collect();
-        } else {
-            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
-            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
-
-            let before: String = start_chars[..start_col].iter().collect();
-            let after: String = if end_col + 1 < end_chars.len() {
-                end_chars[end_col + 1..].iter().collect()
-            } else {
-                String::new()
-            };
-
-            for _ in start_row + 1..=end_row {
-                self.lines.remove(start_row + 1);
-            }
-
-            self.lines[start_row] = before + &after;
-        }
-
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
+        self.delete_char_range(start_row, start_col, end_row, end_col);
 
         self.cursor = (start_row.min(self.lines.len() - 1), start_col);
         self.clamp_cursor();
         self.update_desired_col();
         self.mode = EditorMode::Insert;
-        // Don't call record_change() here - it will be called when exiting insert mode
     }
 
     fn yank_inner_sentence(&mut self) {
         let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
 
-        let mut yanked = String::new();
-        for row in start_row..=end_row {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            let start = if row == start_row { start_col } else { 0 };
-            let end = if row == end_row {
-                end_col + 1
-            } else {
-                chars.len()
-            };
-            yanked.push_str(
-                &chars[start..end.min(chars.len())]
-                    .iter()
-                    .collect::<String>(),
-            );
-            if row < end_row {
-                yanked.push('\n');
-            }
-        }
-        self.yank_buffer = yanked;
+        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
         self.yank_is_linewise = false;
 
         // Move cursor to start of sentence
@@ -2074,33 +1938,13 @@ impl<'a> EditorState<'a> {
     fn yank_a_sentence(&mut self) {
         let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
 
-        let mut yanked = String::new();
-        for row in start_row..=end_row {
-            let chars: Vec<char> = self.lines[row].chars().collect();
-            let start = if row == start_row { start_col } else { 0 };
-            let end = if row == end_row {
-                end_col + 1
-            } else {
-                chars.len()
-            };
-            yanked.push_str(
-                &chars[start..end.min(chars.len())]
-                    .iter()
-                    .collect::<String>(),
-            );
-            if row < end_row {
-                yanked.push('\n');
-            }
-        }
+        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
 
         // If sentence spans entire line (starts at col 0, ends at line end) and there's a next line,
         // treat as linewise. Last line of file is character-wise (no trailing newline).
         let end_line_len = self.lines[end_row].chars().count();
-        let is_linewise =
+        self.yank_is_linewise =
             start_col == 0 && end_col + 1 >= end_line_len && end_row < self.lines.len() - 1;
-
-        self.yank_buffer = yanked;
-        self.yank_is_linewise = is_linewise;
 
         // Move cursor to start of sentence
         self.cursor = (start_row, start_col);
