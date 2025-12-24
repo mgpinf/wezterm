@@ -99,10 +99,8 @@ enum LastChange {
     DeleteWordEnd(WordType),         // de, dE
     DeleteWordEndBackward(WordType), // dge, dgE
     DeleteToEndOfLine,               // D
-    DeleteInnerWord,                 // diw
-    DeleteAWord,                     // daw
-    DeleteInnerLongWord,             // diW
-    DeleteALongWord,                 // daW
+    DeleteInnerWord(WordType),       // diw, diW
+    DeleteAWord(WordType),           // daw, daW
     DeleteInnerPair(char),           // di( di{ etc.
     DeleteAroundPair(char),          // da( da{ etc.
     DeleteInnerParagraph,            // dip
@@ -118,10 +116,8 @@ enum LastChange {
     ChangeWordBackward(WordType),    // cb, cB
     ChangeWordEnd(WordType),         // ce, cE
     ChangeWordEndBackward(WordType), // cge, cgE
-    ChangeInnerWord,                 // ciw
-    ChangeAWord,                     // caw
-    ChangeInnerLongWord,             // ciW
-    ChangeALongWord,                 // caW
+    ChangeInnerWord(WordType),       // ciw, ciW
+    ChangeAWord(WordType),           // caw, caW
     ChangeInnerPair(char),           // ci( ci{ etc.
     ChangeAroundPair(char),          // ca( ca{ etc.
     ChangeInnerParagraph,            // cip
@@ -3127,10 +3123,14 @@ impl<'a> EditorState<'a> {
                 self.perform_delete_motion(|s| s.get_word_end_backward_pos(wt), true, true, false);
             }
             LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
-            LastChange::DeleteInnerWord => self.delete_inner_word(),
-            LastChange::DeleteAWord => self.delete_a_word(),
-            LastChange::DeleteInnerLongWord => self.delete_inner_long_word(),
-            LastChange::DeleteALongWord => self.delete_a_long_word(),
+            LastChange::DeleteInnerWord(wt) => match wt {
+                WordType::Word => self.delete_inner_word(),
+                WordType::LongWord => self.delete_inner_long_word(),
+            },
+            LastChange::DeleteAWord(wt) => match wt {
+                WordType::Word => self.delete_a_word(),
+                WordType::LongWord => self.delete_a_long_word(),
+            },
             LastChange::DeleteInnerPair(c) => self.delete_inner_pair(c),
             LastChange::DeleteAroundPair(c) => self.delete_around_pair(c),
             LastChange::DeleteInnerParagraph => self.delete_inner_paragraph(),
@@ -3173,24 +3173,20 @@ impl<'a> EditorState<'a> {
                 self.perform_delete_motion(|s| s.get_word_end_backward_pos(wt), true, false, false);
                 self.insert_saved_text();
             }
-            LastChange::ChangeInnerWord => {
+            LastChange::ChangeInnerWord(wt) => {
                 self.mode = EditorMode::Insert;
-                self.delete_inner_word();
+                match wt {
+                    WordType::Word => self.delete_inner_word(),
+                    WordType::LongWord => self.delete_inner_long_word(),
+                }
                 self.insert_saved_text();
             }
-            LastChange::ChangeAWord => {
+            LastChange::ChangeAWord(wt) => {
                 self.mode = EditorMode::Insert;
-                self.delete_a_word();
-                self.insert_saved_text();
-            }
-            LastChange::ChangeInnerLongWord => {
-                self.mode = EditorMode::Insert;
-                self.delete_inner_long_word();
-                self.insert_saved_text();
-            }
-            LastChange::ChangeALongWord => {
-                self.mode = EditorMode::Insert;
-                self.delete_a_long_word();
+                match wt {
+                    WordType::Word => self.delete_a_word(),
+                    WordType::LongWord => self.delete_a_long_word(),
+                }
                 self.insert_saved_text();
             }
             LastChange::ChangeInnerPair(c) => {
@@ -5132,12 +5128,12 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeInnerWord;
+                                    self.last_change = LastChange::ChangeInnerWord(WordType::Word);
                                     self.delete_inner_word();
                                 } else if op == 'y' {
                                     self.yank_inner_word();
                                 } else {
-                                    self.last_change = LastChange::DeleteInnerWord;
+                                    self.last_change = LastChange::DeleteInnerWord(WordType::Word);
                                     self.delete_inner_word();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'w' {
@@ -5145,12 +5141,12 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeAWord;
+                                    self.last_change = LastChange::ChangeAWord(WordType::Word);
                                     self.delete_a_word();
                                 } else if op == 'y' {
                                     self.yank_a_word();
                                 } else {
-                                    self.last_change = LastChange::DeleteAWord;
+                                    self.last_change = LastChange::DeleteAWord(WordType::Word);
                                     self.delete_a_word();
                                 }
                             } else if first == KeyCode::Char('i') && c == 'W' {
@@ -5158,12 +5154,12 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeInnerLongWord;
+                                    self.last_change = LastChange::ChangeInnerWord(WordType::LongWord);
                                     self.delete_inner_long_word();
                                 } else if op == 'y' {
                                     self.yank_inner_long_word();
                                 } else {
-                                    self.last_change = LastChange::DeleteInnerLongWord;
+                                    self.last_change = LastChange::DeleteInnerWord(WordType::LongWord);
                                     self.delete_inner_long_word();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'W' {
@@ -5171,12 +5167,12 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::ChangeALongWord;
+                                    self.last_change = LastChange::ChangeAWord(WordType::LongWord);
                                     self.delete_a_long_word();
                                 } else if op == 'y' {
                                     self.yank_a_long_word();
                                 } else {
-                                    self.last_change = LastChange::DeleteALongWord;
+                                    self.last_change = LastChange::DeleteAWord(WordType::LongWord);
                                     self.delete_a_long_word();
                                 }
                             } else if first == KeyCode::Char('i')
@@ -6138,10 +6134,8 @@ impl<'a> EditorState<'a> {
                                 | LastChange::ChangeWordBackward(_)
                                 | LastChange::ChangeWordEnd(_)
                                 | LastChange::ChangeWordEndBackward(_)
-                                | LastChange::ChangeInnerWord
-                                | LastChange::ChangeAWord
-                                | LastChange::ChangeInnerLongWord
-                                | LastChange::ChangeALongWord
+                                | LastChange::ChangeInnerWord(_)
+                                | LastChange::ChangeAWord(_)
                                 | LastChange::ChangeInnerPair(_)
                                 | LastChange::ChangeAroundPair(_)
                                 | LastChange::ChangeInnerParagraph
