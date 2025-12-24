@@ -1238,31 +1238,41 @@ impl<'a> EditorState<'a> {
 
     fn delete_inner_word(&mut self) {
         let (start, end) = self.get_inner_word_bounds();
-        let line = &mut self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
+        let line_len = self.lines[self.cursor.0].len();
+        if start < end && end <= line_len {
+            self.save_undo_state();
+            self.lines_version += 1;
             // Store deleted text in yank buffer
-            self.yank_buffer = line[start..end].to_string();
+            self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
             self.yank_is_linewise = false;
-            line.replace_range(start..end, "");
+            self.lines[self.cursor.0].replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
             self.update_desired_col();
-            self.record_change();
+            // For change operations (Insert mode), don't record yet
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
         }
     }
 
     fn delete_a_word(&mut self) {
         let (start, end) = self.get_a_word_bounds();
-        let line = &mut self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
+        let line_len = self.lines[self.cursor.0].len();
+        if start < end && end <= line_len {
+            self.save_undo_state();
+            self.lines_version += 1;
             // Store deleted text in yank buffer
-            self.yank_buffer = line[start..end].to_string();
+            self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
             self.yank_is_linewise = false;
-            line.replace_range(start..end, "");
+            self.lines[self.cursor.0].replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
             self.update_desired_col();
-            self.record_change();
+            // For change operations (Insert mode), don't record yet
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
         }
     }
 
@@ -1332,31 +1342,41 @@ impl<'a> EditorState<'a> {
 
     fn delete_inner_long_word(&mut self) {
         let (start, end) = self.get_inner_long_word_bounds();
-        let line = &mut self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
+        let line_len = self.lines[self.cursor.0].len();
+        if start < end && end <= line_len {
+            self.save_undo_state();
+            self.lines_version += 1;
             // Store deleted text in yank buffer
-            self.yank_buffer = line[start..end].to_string();
+            self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
             self.yank_is_linewise = false;
-            line.replace_range(start..end, "");
+            self.lines[self.cursor.0].replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
             self.update_desired_col();
-            self.record_change();
+            // For change operations (Insert mode), don't record yet
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
         }
     }
 
     fn delete_a_long_word(&mut self) {
         let (start, end) = self.get_a_long_word_bounds();
-        let line = &mut self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
+        let line_len = self.lines[self.cursor.0].len();
+        if start < end && end <= line_len {
+            self.save_undo_state();
+            self.lines_version += 1;
             // Store deleted text in yank buffer
-            self.yank_buffer = line[start..end].to_string();
+            self.yank_buffer = self.lines[self.cursor.0][start..end].to_string();
             self.yank_is_linewise = false;
-            line.replace_range(start..end, "");
+            self.lines[self.cursor.0].replace_range(start..end, "");
             self.cursor.1 = start;
             self.clamp_cursor();
             self.update_desired_col();
-            self.record_change();
+            // For change operations (Insert mode), don't record yet
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
         }
     }
 
@@ -1467,7 +1487,10 @@ impl<'a> EditorState<'a> {
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         self.clamp_cursor();
         self.update_desired_col();
-        self.record_change();
+        // For change operations (Insert mode), don't record yet
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
     }
 
     fn delete_a_paragraph(&mut self) {
@@ -1499,7 +1522,10 @@ impl<'a> EditorState<'a> {
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         self.clamp_cursor();
         self.update_desired_col();
-        self.record_change();
+        // For change operations (Insert mode), don't record yet
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
     }
 
     fn yank_inner_paragraph(&mut self) {
@@ -1767,7 +1793,10 @@ impl<'a> EditorState<'a> {
         self.cursor = (start_row.min(self.lines.len() - 1), start_col);
         self.clamp_cursor();
         self.update_desired_col();
-        self.record_change();
+        // For change operations (Insert mode), don't record yet
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
     }
 
     fn delete_a_sentence(&mut self) {
@@ -1839,7 +1868,10 @@ impl<'a> EditorState<'a> {
         
         self.clamp_cursor();
         self.update_desired_col();
-        self.record_change();
+        // For change operations (Insert mode), don't record yet
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
     }
 
     fn change_inner_sentence(&mut self) {
@@ -1894,7 +1926,7 @@ impl<'a> EditorState<'a> {
         self.clamp_cursor();
         self.update_desired_col();
         self.mode = EditorMode::Insert;
-        self.record_change();
+        // Don't call record_change() here - it will be called when exiting insert mode
     }
 
     fn change_a_sentence(&mut self) {
@@ -1949,7 +1981,7 @@ impl<'a> EditorState<'a> {
         self.clamp_cursor();
         self.update_desired_col();
         self.mode = EditorMode::Insert;
-        self.record_change();
+        // Don't call record_change() here - it will be called when exiting insert mode
     }
 
     fn yank_inner_sentence(&mut self) {
@@ -2200,7 +2232,10 @@ impl<'a> EditorState<'a> {
             }
             self.clamp_cursor();
             self.update_desired_col();
-            self.record_change();
+            // For change operations (Insert mode), don't record yet
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
         }
     }
 
@@ -2237,7 +2272,10 @@ impl<'a> EditorState<'a> {
             }
             self.clamp_cursor();
             self.update_desired_col();
-            self.record_change();
+            // For change operations (Insert mode), don't record yet
+            if self.mode != EditorMode::Insert {
+                self.record_change();
+            }
         }
     }
 
@@ -3153,10 +3191,10 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteChar => self.delete_char(),
             LastChange::DeleteLine => self.delete_line(),
             LastChange::DeleteWord => {
-                self.perform_delete_motion(|s| s.get_word_forward_pos(), false, true);
+                self.perform_delete_motion(|s| s.get_word_forward_pos(), false, true, false);
             }
             LastChange::DeleteLongWord => {
-                self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, true);
+                self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, true, false);
             }
             LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
             LastChange::DeleteInnerWord => self.delete_inner_word(),
@@ -3324,13 +3362,29 @@ impl<'a> EditorState<'a> {
     }
 
     fn change_to_end_of_line(&mut self) {
-        self.delete_to_end_of_line();
+        // Save undo state ONCE (for the entire change operation)
+        self.save_undo_state();
+        self.lines_version += 1;
+        
+        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        if self.cursor.1 < chars.len() {
+            // Store deleted text in yank buffer
+            self.yank_buffer = chars[self.cursor.1..].iter().collect();
+            self.yank_is_linewise = false;
+            self.lines[self.cursor.0] = chars[..self.cursor.1].iter().collect();
+        }
+        
+        // Don't call record_change() here - it will be called when exiting insert mode
         self.mode = EditorMode::Insert;
         let line_len = self.lines[self.cursor.0].len();
         self.cursor.1 = line_len;
     }
 
     fn substitute_line(&mut self) {
+        // Save undo state ONCE (for the entire change operation)
+        self.save_undo_state();
+        self.lines_version += 1;
+        
         let line = &mut self.lines[self.cursor.0];
         let mut indent = String::new();
         for ch in line.chars() {
@@ -3344,15 +3398,18 @@ impl<'a> EditorState<'a> {
         *line = indent;
         self.cursor.1 = line.len();
         self.mode = EditorMode::Insert;
-        self.record_change();
+        // Don't call record_change() here - it will be called when exiting insert mode
     }
 
     fn substitute_char(&mut self) {
-        let line = &mut self.lines[self.cursor.0];
-        if !line.is_empty() && self.cursor.1 < line.len() {
-            line.remove(self.cursor.1);
+        let line_len = self.lines[self.cursor.0].len();
+        if line_len > 0 && self.cursor.1 < line_len {
+            // Save undo state ONCE (for the entire change operation)
+            self.save_undo_state();
+            self.lines_version += 1;
+            self.lines[self.cursor.0].remove(self.cursor.1);
             self.mode = EditorMode::Insert;
-            self.record_change();
+            // Don't call record_change() here - it will be called when exiting insert mode
         }
     }
 
@@ -3424,43 +3481,44 @@ impl<'a> EditorState<'a> {
         ]);
 
         // Status bar
-        let status_text = match self.mode {
-            EditorMode::Normal => {
-                format!(
-                    " -- NORMAL --  {}:{}",
-                    self.cursor.0 + 1,
-                    self.cursor.1 + 1
-                )
+        let mode_text = match self.mode {
+            EditorMode::Normal => " -- NORMAL --",
+            EditorMode::Insert => " -- INSERT --",
+            EditorMode::Search => "",
+            EditorMode::Visual => " -- VISUAL --",
+            EditorMode::VisualLine => " -- VISUAL LINE --",
+        };
+        
+        // Build pending keys string (shown on the right like Neovim)
+        let mut pending_str = String::new();
+        if let Some(op) = self.pending_operator {
+            pending_str.push(op);
+        }
+        for key in &self.pending_keys {
+            if let KeyCode::Char(c) = key {
+                pending_str.push(*c);
             }
-            EditorMode::Insert => {
-                format!(
-                    " -- INSERT --  {}:{}",
-                    self.cursor.0 + 1,
-                    self.cursor.1 + 1
-                )
-            }
-            EditorMode::Search => {
-                let prompt = match self.search_direction {
-                    SearchDirection::Forward => "/",
-                    SearchDirection::Backward => "?",
-                };
-                format!("{}{}", prompt, self.search_input)
-            }
-            EditorMode::Visual => {
-                format!(
-                    " -- VISUAL --  {}:{}",
-                    self.cursor.0 + 1,
-                    self.cursor.1 + 1
-                )
-            }
-            EditorMode::VisualLine => {
-                format!(
-                    " -- VISUAL LINE --  {}:{}",
-                    self.cursor.0 + 1,
-                    self.cursor.1 + 1
-                )
+        }
+        
+        let status_text = if self.mode == EditorMode::Search {
+            let prompt = match self.search_direction {
+                SearchDirection::Forward => "/",
+                SearchDirection::Backward => "?",
+            };
+            format!("{}{}", prompt, self.search_input)
+        } else {
+            let position = format!("{}:{}", self.cursor.0 + 1, self.cursor.1 + 1);
+            if pending_str.is_empty() {
+                format!("{}  {}", mode_text, position)
+            } else {
+                // Calculate spacing: mode on left, pending keys on right
+                let left_part = format!("{}  {}", mode_text, position);
+                let right_part = &pending_str;
+                let padding = cols.saturating_sub(left_part.len() + right_part.len() + 1);
+                format!("{}{:>width$}{}", left_part, "", right_part, width = padding)
             }
         };
+        
         self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
@@ -3613,11 +3671,16 @@ impl<'a> EditorState<'a> {
                 y: Position::Absolute(cursor_screen_y),
             },
             Change::CursorVisibility(CursorVisibility::Visible),
-            Change::CursorShape(match self.mode {
-                EditorMode::Normal => CursorShape::SteadyBlock,
-                EditorMode::Insert => CursorShape::SteadyBar,
-                EditorMode::Search => CursorShape::SteadyUnderline,
-                EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
+            Change::CursorShape(if self.pending_operator.is_some() {
+                // Operator-pending mode (d, c, y waiting for motion)
+                CursorShape::SteadyUnderline
+            } else {
+                match self.mode {
+                    EditorMode::Normal => CursorShape::SteadyBlock,
+                    EditorMode::Insert => CursorShape::SteadyBar,
+                    EditorMode::Search => CursorShape::SteadyUnderline,
+                    EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
+                }
             }),
         ]);
 
@@ -3628,7 +3691,8 @@ impl<'a> EditorState<'a> {
 
     // Helper to perform delete action based on a motion
     // delete_empty_lines: if true, delete the entire line when backward motion would empty it
-    fn perform_delete_motion<F>(&mut self, motion: F, is_inclusive: bool, delete_empty_lines: bool)
+    // allow_linewise: if true, allow linewise deletion when cursor is at start of line (for sentence/paragraph motions)
+    fn perform_delete_motion<F>(&mut self, motion: F, is_inclusive: bool, delete_empty_lines: bool, allow_linewise: bool)
     where
         F: Fn(&EditorState) -> (usize, usize),
     {
@@ -3740,11 +3804,12 @@ impl<'a> EditorState<'a> {
             let mut deleted_text = String::new();
 
             // Check if cursor position qualifies for linewise delete
+            // Only applies to sentence/paragraph motions (allow_linewise = true)
             // First line of paragraph: cursor at or before first non-whitespace
             // Other lines: cursor at first non-whitespace only
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
             let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
-            let cursor_qualifies_for_linewise = if is_first_line_of_para {
+            let cursor_qualifies_for_linewise = allow_linewise && if is_first_line_of_para {
                 start.1 <= first_non_blank  // At or before first non-whitespace
             } else {
                 start.1 == first_non_blank  // Exactly at first non-whitespace
@@ -3910,7 +3975,10 @@ impl<'a> EditorState<'a> {
         }
         self.clamp_cursor();
         self.update_desired_col();
-        self.record_change();
+        // For change operations (Insert mode), don't record yet - will be recorded when exiting insert
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
     }
 
     // Helper to perform yank action based on a motion
@@ -4972,9 +5040,9 @@ impl<'a> EditorState<'a> {
                                         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
                                         let on_whitespace = self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
                                         if on_whitespace {
-                                            self.perform_delete_motion(|s| s.get_word_forward_pos(), false, false);
+                                            self.perform_delete_motion(|s| s.get_word_forward_pos(), false, false, false);
                                         } else {
-                                            self.perform_delete_motion(|s| s.get_word_end_pos(), true, false);
+                                            self.perform_delete_motion(|s| s.get_word_end_pos(), true, false, false);
                                         }
                                     }
                                     'W' => {
@@ -4983,20 +5051,21 @@ impl<'a> EditorState<'a> {
                                         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
                                         let on_whitespace = self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
                                         if on_whitespace {
-                                            self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, false);
+                                            self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, false, false);
                                         } else {
-                                            self.perform_delete_motion(|s| s.get_long_word_end_pos(), true, false);
+                                            self.perform_delete_motion(|s| s.get_long_word_end_pos(), true, false, false);
                                         }
                                     }
                                     'e' => {
                                         self.mode = EditorMode::Insert;
-                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, false);
+                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, false, false);
                                     }
                                     'E' => {
                                         self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_long_word_end_pos(),
                                             true,
+                                            false,
                                             false,
                                         );
                                     }
@@ -5006,12 +5075,14 @@ impl<'a> EditorState<'a> {
                                             |s| s.get_word_backward_pos(),
                                             false,
                                             false,
+                                            false,
                                         );
                                     }
                                     'B' => {
                                         self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_long_word_backward_pos(),
+                                            false,
                                             false,
                                             false,
                                         );
@@ -5023,12 +5094,14 @@ impl<'a> EditorState<'a> {
                                             |s| s.get_first_non_blank_pos(),
                                             false,
                                             false,
+                                            false,
                                         );
                                     }
                                     '0' => {
                                         self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_line_start_pos(),
+                                            false,
                                             false,
                                             false,
                                         );
@@ -5039,12 +5112,14 @@ impl<'a> EditorState<'a> {
                                             |s| s.get_char_left_pos(),
                                             false,
                                             false,
+                                            false,
                                         );
                                     }
                                     'l' => {
                                         self.mode = EditorMode::Insert;
                                         self.perform_delete_motion(
                                             |s| s.get_char_right_pos(),
+                                            false,
                                             false,
                                             false,
                                         );
@@ -5060,12 +5135,14 @@ impl<'a> EditorState<'a> {
                                         // Wait for second 'g' to complete 'cgg'
                                         self.pending_keys.push(KeyCode::Char('g'));
                                         self.pending_operator = Some('c');
+                                        self.render()?;
                                         continue;
                                     }
                                     'i' | 'a' => {
                                         // Wait for text object (e.g., 'w' for ciw/caw)
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('c');
+                                        self.render()?;
                                         continue;
                                     }
                                     '%' => {
@@ -5078,6 +5155,7 @@ impl<'a> EditorState<'a> {
                                             |s| s.get_sentence_backward_pos(),
                                             false,
                                             false,
+                                            true,
                                         );
                                     }
                                     ')' => {
@@ -5086,6 +5164,7 @@ impl<'a> EditorState<'a> {
                                             |s| s.get_sentence_forward_pos(),
                                             false,
                                             false,
+                                            true,
                                         );
                                     }
                                     '{' => {
@@ -5094,6 +5173,7 @@ impl<'a> EditorState<'a> {
                                             |s| s.get_paragraph_backward_pos(),
                                             false,
                                             false,
+                                            true,
                                         );
                                     }
                                     '}' => {
@@ -5102,12 +5182,14 @@ impl<'a> EditorState<'a> {
                                             |s| s.get_paragraph_forward_pos(),
                                             false,
                                             false,
+                                            true,
                                         );
                                     }
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('c');
+                                        self.render()?;
                                         continue;
                                     }
                                     _ => { /* Ignore other motions for now */ }
@@ -5119,48 +5201,54 @@ impl<'a> EditorState<'a> {
                                         self.last_change = LastChange::DeleteLine;
                                     }
                                     'w' => {
-                                        self.perform_delete_motion(|s| s.get_word_forward_pos(), false, true);
+                                        self.perform_delete_motion(|s| s.get_word_forward_pos(), false, true, false);
                                         self.last_change = LastChange::DeleteWord;
                                     }
                                     'W' => {
-                                        self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, true);
+                                        self.perform_delete_motion(|s| s.get_long_word_forward_pos(), false, true, false);
                                         self.last_change = LastChange::DeleteLongWord;
                                     }
                                     'e' => {
-                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, true)
+                                        self.perform_delete_motion(|s| s.get_word_end_pos(), true, true, false)
                                     }
                                     'E' => self
-                                        .perform_delete_motion(|s| s.get_long_word_end_pos(), true, true),
+                                        .perform_delete_motion(|s| s.get_long_word_end_pos(), true, true, false),
                                     'b' => self.perform_delete_motion(
                                         |s| s.get_word_backward_pos(),
                                         false,
                                         true,
+                                        false,
                                     ),
                                     'B' => self.perform_delete_motion(
                                         |s| s.get_long_word_backward_pos(),
                                         false,
                                         true,
+                                        false,
                                     ),
                                     '$' => self.delete_to_end_of_line(),
                                     '^' => self.perform_delete_motion(
                                         |s| s.get_first_non_blank_pos(),
                                         false,
                                         true,
+                                        false,
                                     ),
                                     '0' => self.perform_delete_motion(
                                         |s| s.get_line_start_pos(),
                                         false,
                                         true,
+                                        false,
                                     ),
                                     'h' => self.perform_delete_motion(
                                         |s| s.get_char_left_pos(),
                                         false,
                                         true,
+                                        false,
                                     ),
                                     'l' => self.perform_delete_motion(
                                         |s| s.get_char_right_pos(),
                                         false,
                                         true,
+                                        false,
                                     ),
                                     'j' => self.delete_line_and_below(),
                                     'k' => self.delete_line_and_above(),
@@ -5169,12 +5257,14 @@ impl<'a> EditorState<'a> {
                                         // Wait for second 'g' to complete 'dgg'
                                         self.pending_keys.push(KeyCode::Char('g'));
                                         self.pending_operator = Some('d');
+                                        self.render()?;
                                         continue;
                                     }
                                     'i' | 'a' => {
                                         // Wait for text object (e.g., 'w' for diw/daw)
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('d');
+                                        self.render()?;
                                         continue;
                                     }
                                     '%' => self.delete_to_matching_bracket(),
@@ -5182,26 +5272,31 @@ impl<'a> EditorState<'a> {
                                         |s| s.get_sentence_backward_pos(),
                                         false,
                                         true,
+                                        true,
                                     ),
                                     ')' => self.perform_delete_motion(
                                         |s| s.get_sentence_forward_pos(),
                                         false,
+                                        true,
                                         true,
                                     ),
                                     '{' => self.perform_delete_motion(
                                         |s| s.get_paragraph_backward_pos(),
                                         false,
                                         true,
+                                        true,
                                     ),
                                     '}' => self.perform_delete_motion(
                                         |s| s.get_paragraph_forward_pos(),
                                         false,
+                                        true,
                                         true,
                                     ),
                                     '[' | ']' | 'f' | 'F' | 't' | 'T' => {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('d');
+                                        self.render()?;
                                         continue;
                                     }
                                     _ => {}
@@ -5227,12 +5322,14 @@ impl<'a> EditorState<'a> {
                                         // Wait for second 'g' to complete 'ygg'
                                         self.pending_keys.push(KeyCode::Char('g'));
                                         self.pending_operator = Some('y');
+                                        self.render()?;
                                         continue;
                                     }
                                     'i' | 'a' => {
                                         // Wait for text object (e.g., 'w' for yiw/yaw)
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('y');
+                                        self.render()?;
                                         continue;
                                     }
                                     '%' => self.yank_to_matching_bracket(),
@@ -5256,6 +5353,7 @@ impl<'a> EditorState<'a> {
                                         // Wait for target char/bracket
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('y');
+                                        self.render()?;
                                         continue;
                                     }
                                     _ => {}
@@ -5336,11 +5434,13 @@ impl<'a> EditorState<'a> {
                             || c == 'r'
                         {
                             self.pending_keys.push(KeyCode::Char(c));
+                            self.render()?;
                             continue;
                         }
 
                         if c == 'c' || c == 'd' || c == 'y' {
                             self.pending_operator = Some(c);
+                            self.render()?;
                             continue;
                         }
 
@@ -6505,7 +6605,10 @@ mod tests {
                 }
 
                 self.clamp_cursor();
-                self.record_change();
+                // For change operations (Insert mode), don't record yet
+                if self.mode != EditorMode::Insert {
+                    self.record_change();
+                }
             }
         }
     }
