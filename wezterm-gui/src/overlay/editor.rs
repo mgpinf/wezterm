@@ -94,6 +94,8 @@ enum LastChange {
     DeleteAroundPair(char),               // da( da{ etc.
     DeleteInnerParagraph,                 // dip
     DeleteAParagraph,                     // dap
+    DeleteInnerSentence,                  // dis
+    DeleteASentence,                      // das
     DeleteToChar(char, bool),             // df{char}, dt{char} (inclusive flag)
     DeleteBackToChar(char, bool),         // dF{char}, dT{char} (inclusive flag)
     SubstituteLine,                       // S, cc
@@ -107,6 +109,8 @@ enum LastChange {
     ChangeAroundPair(char),               // ca( ca{ etc.
     ChangeInnerParagraph,                 // cip
     ChangeAParagraph,                     // cap
+    ChangeInnerSentence,                  // cis
+    ChangeASentence,                      // cas
     ChangeToChar(char, bool),             // cf{char}, ct{char}
     ChangeBackToChar(char, bool),         // cF{char}, cT{char}
     InsertText(String, InsertStyle),      // Text inserted in insert mode
@@ -1576,6 +1580,422 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
+    /// Get the bounds of the current sentence (for `is` text object).
+    /// Returns (start_row, start_col, end_row, end_col) where end is inclusive.
+    fn get_inner_sentence_bounds(&self) -> (usize, usize, usize, usize) {
+        // First, find the start of the current paragraph (don't cross blank lines)
+        let para_start = {
+            let mut row = self.cursor.0;
+            while row > 0 && !self.lines[row - 1].trim().is_empty() {
+                row -= 1;
+            }
+            row
+        };
+        
+        // Find the start of the current sentence within the current paragraph
+        let (mut start_row, mut start_col) = self.find_sentence_start_for_end(self.cursor.0, self.cursor.1);
+        
+        // Ensure start doesn't go before the paragraph boundary
+        if start_row < para_start {
+            start_row = para_start;
+            start_col = self.find_line_start(start_row);
+        }
+        
+        // If the found start is on a blank line, adjust to first non-blank line after it
+        while start_row < self.lines.len() && self.lines[start_row].trim().is_empty() {
+            start_row += 1;
+            start_col = 0;
+        }
+        // Find first non-whitespace character on the start line
+        if start_row < self.lines.len() {
+            let chars: Vec<char> = self.lines[start_row].chars().collect();
+            while start_col < chars.len() && chars[start_col].is_whitespace() {
+                start_col += 1;
+            }
+        }
+        
+        // Find the end of the current sentence
+        // Search forward from cursor for sentence-ending punctuation
+        let mut end_row = self.cursor.0;
+        let mut end_col = self.cursor.1;
+        
+        loop {
+            let chars: Vec<char> = self.lines[end_row].chars().collect();
+            
+            while end_col < chars.len() {
+                if Self::is_valid_sentence_end(&chars, end_col) {
+                    // Found sentence end - include closing chars after punctuation
+                    let mut final_col = end_col;
+                    while final_col + 1 < chars.len() && Self::is_sentence_closing_char(chars[final_col + 1]) {
+                        final_col += 1;
+                    }
+                    return (start_row, start_col, end_row, final_col);
+                }
+                end_col += 1;
+            }
+            
+            // Move to next line
+            if end_row < self.lines.len() - 1 {
+                // Check if next line is blank (paragraph boundary)
+                if self.lines[end_row + 1].trim().is_empty() {
+                    // End of paragraph - sentence ends at end of current line
+                    let line_end = chars.len().saturating_sub(1);
+                    return (start_row, start_col, end_row, line_end);
+                }
+                end_row += 1;
+                end_col = 0;
+            } else {
+                // End of file - sentence ends at end of file
+                let line_end = chars.len().saturating_sub(1);
+                return (start_row, start_col, end_row, line_end);
+            }
+        }
+    }
+
+    /// Get the bounds of "a sentence" (for `as` text object).
+    /// Like inner sentence but includes trailing whitespace (or leading if at end of paragraph).
+    fn get_a_sentence_bounds(&self) -> (usize, usize, usize, usize) {
+        let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
+        
+        // Try to include trailing whitespace first
+        let mut new_end_row = end_row;
+        let mut new_end_col = end_col;
+        
+        let chars: Vec<char> = self.lines[new_end_row].chars().collect();
+        let mut next_col = new_end_col + 1;
+        
+        // Skip any trailing whitespace on the same line
+        while next_col < chars.len() && chars[next_col].is_whitespace() {
+            new_end_col = next_col;
+            next_col += 1;
+        }
+        
+        // If we found trailing whitespace or non-whitespace content after, return
+        if new_end_col > end_col || next_col < chars.len() {
+            return (start_row, start_col, new_end_row, new_end_col);
+        }
+        
+        // Check next line for leading whitespace of next sentence
+        if new_end_row < self.lines.len() - 1 && !self.lines[new_end_row + 1].trim().is_empty() {
+            let next_chars: Vec<char> = self.lines[new_end_row + 1].chars().collect();
+            if !next_chars.is_empty() && next_chars[0].is_whitespace() {
+                // Include this line's whitespace
+                new_end_row += 1;
+                new_end_col = 0;
+                while new_end_col + 1 < next_chars.len() && next_chars[new_end_col + 1].is_whitespace() {
+                    new_end_col += 1;
+                }
+                return (start_row, start_col, new_end_row, new_end_col);
+            }
+        }
+        
+        // No trailing whitespace, try including leading whitespace instead
+        if start_col > 0 {
+            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let mut new_start_col = start_col;
+            while new_start_col > 0 && start_chars[new_start_col - 1].is_whitespace() {
+                new_start_col -= 1;
+            }
+            if new_start_col < start_col {
+                return (start_row, new_start_col, end_row, end_col);
+            }
+        }
+        
+        // No whitespace to include, return inner bounds
+        (start_row, start_col, end_row, end_col)
+    }
+
+    fn delete_inner_sentence(&mut self) {
+        self.save_undo_state();
+        self.lines_version += 1;
+        
+        let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
+        
+        // Yank the sentence
+        let mut yanked = String::new();
+        for row in start_row..=end_row {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start = if row == start_row { start_col } else { 0 };
+            let end = if row == end_row { end_col + 1 } else { chars.len() };
+            yanked.push_str(&chars[start..end.min(chars.len())].iter().collect::<String>());
+            if row < end_row {
+                yanked.push('\n');
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        
+        // Delete the sentence
+        if start_row == end_row {
+            // Single line deletion
+            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
+            let delete_end = (end_col + 1).min(chars.len());
+            chars.drain(start_col..delete_end);
+            self.lines[start_row] = chars.into_iter().collect();
+        } else {
+            // Multi-line deletion
+            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
+            
+            let before: String = start_chars[..start_col].iter().collect();
+            let after: String = if end_col + 1 < end_chars.len() {
+                end_chars[end_col + 1..].iter().collect()
+            } else {
+                String::new()
+            };
+            
+            // Remove lines between start and end
+            for _ in start_row + 1..=end_row {
+                self.lines.remove(start_row + 1);
+            }
+            
+            // Combine remaining parts
+            self.lines[start_row] = before + &after;
+        }
+        
+        // Ensure at least one line exists
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        
+        self.cursor = (start_row.min(self.lines.len() - 1), start_col);
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    fn delete_a_sentence(&mut self) {
+        self.save_undo_state();
+        self.lines_version += 1;
+        
+        let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
+        
+        // Yank the sentence
+        let mut yanked = String::new();
+        for row in start_row..=end_row {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start = if row == start_row { start_col } else { 0 };
+            let end = if row == end_row { end_col + 1 } else { chars.len() };
+            yanked.push_str(&chars[start..end.min(chars.len())].iter().collect::<String>());
+            if row < end_row {
+                yanked.push('\n');
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        
+        // Delete the sentence
+        if start_row == end_row {
+            // Single line deletion
+            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
+            let delete_end = (end_col + 1).min(chars.len());
+            chars.drain(start_col..delete_end);
+            self.lines[start_row] = chars.into_iter().collect();
+        } else {
+            // Multi-line deletion
+            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
+            
+            let before: String = start_chars[..start_col].iter().collect();
+            let after: String = if end_col + 1 < end_chars.len() {
+                end_chars[end_col + 1..].iter().collect()
+            } else {
+                String::new()
+            };
+            
+            // Remove lines between start and end
+            for _ in start_row + 1..=end_row {
+                self.lines.remove(start_row + 1);
+            }
+            
+            // Combine remaining parts
+            self.lines[start_row] = before + &after;
+        }
+        
+        // If the line became empty after deletion and there's a line after it,
+        // remove the empty line (like Neovim does for das)
+        // But keep the empty line if it's the last line (Neovim behavior)
+        if self.lines[start_row].is_empty() && start_row < self.lines.len() - 1 {
+            self.lines.remove(start_row);
+            // Cursor stays at start_row (now pointing to what was the next line)
+            self.cursor = (start_row.min(self.lines.len() - 1), 0);
+            // Find first non-whitespace on the new line
+            let first_non_blank = self.get_first_non_blank_in_line(self.cursor.0);
+            self.cursor.1 = first_non_blank;
+        } else {
+            self.cursor = (start_row.min(self.lines.len() - 1), start_col);
+        }
+        
+        // Ensure at least one line exists
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    fn change_inner_sentence(&mut self) {
+        self.save_undo_state();
+        self.lines_version += 1;
+        
+        let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
+        
+        // Yank the sentence
+        let mut yanked = String::new();
+        for row in start_row..=end_row {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start = if row == start_row { start_col } else { 0 };
+            let end = if row == end_row { end_col + 1 } else { chars.len() };
+            yanked.push_str(&chars[start..end.min(chars.len())].iter().collect::<String>());
+            if row < end_row {
+                yanked.push('\n');
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        
+        // Delete the sentence
+        if start_row == end_row {
+            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
+            let delete_end = (end_col + 1).min(chars.len());
+            chars.drain(start_col..delete_end);
+            self.lines[start_row] = chars.into_iter().collect();
+        } else {
+            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
+            
+            let before: String = start_chars[..start_col].iter().collect();
+            let after: String = if end_col + 1 < end_chars.len() {
+                end_chars[end_col + 1..].iter().collect()
+            } else {
+                String::new()
+            };
+            
+            for _ in start_row + 1..=end_row {
+                self.lines.remove(start_row + 1);
+            }
+            
+            self.lines[start_row] = before + &after;
+        }
+        
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        
+        self.cursor = (start_row.min(self.lines.len() - 1), start_col);
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.mode = EditorMode::Insert;
+        self.record_change();
+    }
+
+    fn change_a_sentence(&mut self) {
+        self.save_undo_state();
+        self.lines_version += 1;
+        
+        let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
+        
+        // Yank the sentence
+        let mut yanked = String::new();
+        for row in start_row..=end_row {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start = if row == start_row { start_col } else { 0 };
+            let end = if row == end_row { end_col + 1 } else { chars.len() };
+            yanked.push_str(&chars[start..end.min(chars.len())].iter().collect::<String>());
+            if row < end_row {
+                yanked.push('\n');
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        
+        // Delete the sentence
+        if start_row == end_row {
+            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
+            let delete_end = (end_col + 1).min(chars.len());
+            chars.drain(start_col..delete_end);
+            self.lines[start_row] = chars.into_iter().collect();
+        } else {
+            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
+            
+            let before: String = start_chars[..start_col].iter().collect();
+            let after: String = if end_col + 1 < end_chars.len() {
+                end_chars[end_col + 1..].iter().collect()
+            } else {
+                String::new()
+            };
+            
+            for _ in start_row + 1..=end_row {
+                self.lines.remove(start_row + 1);
+            }
+            
+            self.lines[start_row] = before + &after;
+        }
+        
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        
+        self.cursor = (start_row.min(self.lines.len() - 1), start_col);
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.mode = EditorMode::Insert;
+        self.record_change();
+    }
+
+    fn yank_inner_sentence(&mut self) {
+        let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
+        
+        let mut yanked = String::new();
+        for row in start_row..=end_row {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start = if row == start_row { start_col } else { 0 };
+            let end = if row == end_row { end_col + 1 } else { chars.len() };
+            yanked.push_str(&chars[start..end.min(chars.len())].iter().collect::<String>());
+            if row < end_row {
+                yanked.push('\n');
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        
+        // Move cursor to start of sentence
+        self.cursor = (start_row, start_col);
+        self.clamp_cursor();
+        self.update_desired_col();
+    }
+
+    fn yank_a_sentence(&mut self) {
+        let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
+        
+        let mut yanked = String::new();
+        for row in start_row..=end_row {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let start = if row == start_row { start_col } else { 0 };
+            let end = if row == end_row { end_col + 1 } else { chars.len() };
+            yanked.push_str(&chars[start..end.min(chars.len())].iter().collect::<String>());
+            if row < end_row {
+                yanked.push('\n');
+            }
+        }
+        
+        // If sentence spans entire line (starts at col 0, ends at line end) and there's a next line,
+        // treat as linewise. Last line of file is character-wise (no trailing newline).
+        let end_line_len = self.lines[end_row].chars().count();
+        let is_linewise = start_col == 0 && end_col + 1 >= end_line_len && end_row < self.lines.len() - 1;
+        
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = is_linewise;
+        
+        // Move cursor to start of sentence
+        self.cursor = (start_row, start_col);
+        self.clamp_cursor();
+        self.update_desired_col();
+    }
+
     fn get_matching_pair(open: char) -> Option<char> {
         match open {
             '(' => Some(')'),
@@ -2981,6 +3401,8 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteAroundPair(c) => self.delete_around_pair(c),
             LastChange::DeleteInnerParagraph => self.delete_inner_paragraph(),
             LastChange::DeleteAParagraph => self.delete_a_paragraph(),
+            LastChange::DeleteInnerSentence => self.delete_inner_sentence(),
+            LastChange::DeleteASentence => self.delete_a_sentence(),
             LastChange::DeleteToChar(c, inclusive) => self.delete_to_char_forward(c, inclusive),
             LastChange::DeleteBackToChar(c, inclusive) => self.delete_to_char_backward(c, inclusive),
             LastChange::SubstituteLine => self.substitute_line(),
@@ -3022,6 +3444,14 @@ impl<'a> EditorState<'a> {
             }
             LastChange::ChangeAParagraph => {
                 self.change_a_paragraph();
+                self.insert_saved_text();
+            }
+            LastChange::ChangeInnerSentence => {
+                self.change_inner_sentence();
+                self.insert_saved_text();
+            }
+            LastChange::ChangeASentence => {
+                self.change_a_sentence();
                 self.insert_saved_text();
             }
             LastChange::ChangeToChar(c, inclusive) => {
@@ -4541,6 +4971,30 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::DeleteAParagraph;
                                     self.delete_a_paragraph();
                                 }
+                            } else if first == KeyCode::Char('i') && c == 's' {
+                                // dis / cis / yis - delete/change/yank inner sentence
+                                if op == 'c' {
+                                    self.insert_buffer.clear();
+                                    self.last_change = LastChange::ChangeInnerSentence;
+                                    self.change_inner_sentence();
+                                } else if op == 'y' {
+                                    self.yank_inner_sentence();
+                                } else {
+                                    self.last_change = LastChange::DeleteInnerSentence;
+                                    self.delete_inner_sentence();
+                                }
+                            } else if first == KeyCode::Char('a') && c == 's' {
+                                // das / cas / yas - delete/change/yank a sentence
+                                if op == 'c' {
+                                    self.insert_buffer.clear();
+                                    self.last_change = LastChange::ChangeASentence;
+                                    self.change_a_sentence();
+                                } else if op == 'y' {
+                                    self.yank_a_sentence();
+                                } else {
+                                    self.last_change = LastChange::DeleteASentence;
+                                    self.delete_a_sentence();
+                                }
                             } else if first == KeyCode::Char('[') && (c == '(' || c == '{') {
                                 // d[( d[{ c[( c[{ y[( y[{ - delete/change/yank to previous unmatched bracket
                                 let (open, close) = if c == '(' { ('(', ')') } else { ('{', '}') };
@@ -5539,6 +5993,24 @@ impl<'a> EditorState<'a> {
                                         // Switch to linewise visual mode for paragraph selection
                                         self.mode = EditorMode::VisualLine;
                                     }
+                                    true
+                                }
+                                ('i', 's') => {
+                                    // is - inner sentence
+                                    let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
+                                    self.visual_start = (start_row, start_col);
+                                    self.cursor = (end_row, end_col);
+                                    // Keep in character visual mode for sentence selection
+                                    self.mode = EditorMode::Visual;
+                                    true
+                                }
+                                ('a', 's') => {
+                                    // as - a sentence (includes trailing whitespace)
+                                    let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
+                                    self.visual_start = (start_row, start_col);
+                                    self.cursor = (end_row, end_col);
+                                    // Keep in character visual mode for sentence selection
+                                    self.mode = EditorMode::Visual;
                                     true
                                 }
                                 _ => false,
