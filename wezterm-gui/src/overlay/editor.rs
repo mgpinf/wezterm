@@ -89,49 +89,52 @@ enum InsertStyle {
     NewLineAbove, // O - open new line above
 }
 
+/// Direction for word motions (distinct from SearchDirection)
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MotionDirection {
+    Forward,
+    Backward,
+}
+
 #[derive(Clone, Debug)]
 enum LastChange {
     None,
-    DeleteChar,                      // x
-    DeleteLine,                      // dd
-    DeleteWordMotion(WordType),      // dw, dW
-    DeleteWordBackward(WordType),    // db, dB
-    DeleteWordEnd(WordType),         // de, dE
-    DeleteWordEndBackward(WordType), // dge, dgE
-    DeleteToEndOfLine,               // D
-    DeleteInnerWord(WordType),       // diw, diW
-    DeleteAWord(WordType),           // daw, daW
-    DeleteInnerPair(char),           // di( di{ etc.
-    DeleteAroundPair(char),          // da( da{ etc.
-    DeleteInnerParagraph,            // dip
-    DeleteAParagraph,                // dap
-    DeleteInnerSentence,             // dis
-    DeleteASentence,                 // das
-    DeleteToChar(char, bool),        // df{char}, dt{char} (inclusive flag)
-    DeleteBackToChar(char, bool),    // dF{char}, dT{char} (inclusive flag)
-    SubstituteLine,                  // S, cc
-    SubstituteChar,                  // s
-    ChangeToEndOfLine,               // C
-    ChangeWordMotion(WordType),      // cw, cW
-    ChangeWordBackward(WordType),    // cb, cB
-    ChangeWordEnd(WordType),         // ce, cE
-    ChangeWordEndBackward(WordType), // cge, cgE
-    ChangeInnerWord(WordType),       // ciw, ciW
-    ChangeAWord(WordType),           // caw, caW
-    ChangeInnerPair(char),           // ci( ci{ etc.
-    ChangeAroundPair(char),          // ca( ca{ etc.
-    ChangeInnerParagraph,            // cip
-    ChangeAParagraph,                // cap
-    ChangeInnerSentence,             // cis
-    ChangeASentence,                 // cas
-    ChangeToChar(char, bool),        // cf{char}, ct{char}
-    ChangeBackToChar(char, bool),    // cF{char}, cT{char}
-    InsertText(String, InsertStyle), // Text inserted in insert mode
-    ToggleCase,                      // ~
-    JoinLines,                       // J
-    ReplaceChar(char),               // r{char}
-    IncrementNumber,                 // Ctrl-A
-    DecrementNumber,                 // Ctrl-X
+    DeleteChar,                                           // x
+    DeleteLine,                                           // dd
+    DeleteWordStart(WordType, MotionDirection),           // dw, dW, db, dB
+    DeleteWordEnd(WordType, MotionDirection),             // de, dE, dge, dgE
+    DeleteToEndOfLine,                                    // D
+    DeleteInnerWord(WordType),                            // diw, diW
+    DeleteAWord(WordType),                                // daw, daW
+    DeleteInnerPair(char),                                // di( di{ etc.
+    DeleteAroundPair(char),                               // da( da{ etc.
+    DeleteInnerParagraph,                                 // dip
+    DeleteAParagraph,                                     // dap
+    DeleteInnerSentence,                                  // dis
+    DeleteASentence,                                      // das
+    DeleteToChar(char, bool),                             // df{char}, dt{char} (inclusive flag)
+    DeleteBackToChar(char, bool),                         // dF{char}, dT{char} (inclusive flag)
+    SubstituteLine,                                       // S, cc
+    SubstituteChar,                                       // s
+    ChangeToEndOfLine,                                    // C
+    ChangeWordStart(WordType, MotionDirection),           // cw, cW, cb, cB
+    ChangeWordEnd(WordType, MotionDirection),             // ce, cE, cge, cgE
+    ChangeInnerWord(WordType),                            // ciw, ciW
+    ChangeAWord(WordType),                                // caw, caW
+    ChangeInnerPair(char),                                // ci( ci{ etc.
+    ChangeAroundPair(char),                               // ca( ca{ etc.
+    ChangeInnerParagraph,                                 // cip
+    ChangeAParagraph,                                     // cap
+    ChangeInnerSentence,                                  // cis
+    ChangeASentence,                                      // cas
+    ChangeToChar(char, bool),                             // cf{char}, ct{char}
+    ChangeBackToChar(char, bool),                         // cF{char}, cT{char}
+    InsertText(String, InsertStyle),                      // Text inserted in insert mode
+    ToggleCase,                                           // ~
+    JoinLines,                                            // J
+    ReplaceChar(char),                                    // r{char}
+    IncrementNumber,                                      // Ctrl-A
+    DecrementNumber,                                      // Ctrl-X
 }
 
 /// Information about a number found at cursor position
@@ -3110,18 +3113,22 @@ impl<'a> EditorState<'a> {
             LastChange::None => {}
             LastChange::DeleteChar => self.delete_char(),
             LastChange::DeleteLine => self.delete_line(),
-            LastChange::DeleteWordMotion(wt) => {
-                self.perform_delete_motion(|s| s.get_word_forward_pos(wt), false, true, false);
-            }
-            LastChange::DeleteWordBackward(wt) => {
-                self.perform_delete_motion(|s| s.get_word_backward_pos(wt), false, true, false);
-            }
-            LastChange::DeleteWordEnd(wt) => {
-                self.perform_delete_motion(|s| s.get_word_end_pos(wt), true, true, false);
-            }
-            LastChange::DeleteWordEndBackward(wt) => {
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(wt), true, true, false);
-            }
+            LastChange::DeleteWordStart(wt, dir) => match dir {
+                MotionDirection::Forward => {
+                    self.perform_delete_motion(|s| s.get_word_forward_pos(wt), false, true, false);
+                }
+                MotionDirection::Backward => {
+                    self.perform_delete_motion(|s| s.get_word_backward_pos(wt), false, true, false);
+                }
+            },
+            LastChange::DeleteWordEnd(wt, dir) => match dir {
+                MotionDirection::Forward => {
+                    self.perform_delete_motion(|s| s.get_word_end_pos(wt), true, true, false);
+                }
+                MotionDirection::Backward => {
+                    self.perform_delete_motion(|s| s.get_word_end_backward_pos(wt), true, true, false);
+                }
+            },
             LastChange::DeleteToEndOfLine => self.delete_to_end_of_line(),
             LastChange::DeleteInnerWord(wt) => match wt {
                 WordType::Word => self.delete_inner_word(),
@@ -3144,33 +3151,37 @@ impl<'a> EditorState<'a> {
             LastChange::SubstituteLine => self.substitute_line(),
             LastChange::SubstituteChar => self.substitute_char(),
             LastChange::ChangeToEndOfLine => self.change_to_end_of_line(),
-            LastChange::ChangeWordMotion(wt) => {
+            LastChange::ChangeWordStart(wt, dir) => {
                 self.mode = EditorMode::Insert;
-                // cw behaves like ce when on a word
-                let line = &self.lines[self.cursor.0];
-                let chars: Vec<char> = line.chars().collect();
-                let on_whitespace =
-                    self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
-                if on_whitespace {
-                    self.perform_delete_motion(|s| s.get_word_forward_pos(wt), false, false, false);
-                } else {
-                    self.perform_delete_motion(|s| s.get_word_end_pos(wt), true, false, false);
+                match dir {
+                    MotionDirection::Forward => {
+                        // cw behaves like ce when on a word
+                        let line = &self.lines[self.cursor.0];
+                        let chars: Vec<char> = line.chars().collect();
+                        let on_whitespace =
+                            self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
+                        if on_whitespace {
+                            self.perform_delete_motion(|s| s.get_word_forward_pos(wt), false, false, false);
+                        } else {
+                            self.perform_delete_motion(|s| s.get_word_end_pos(wt), true, false, false);
+                        }
+                    }
+                    MotionDirection::Backward => {
+                        self.perform_delete_motion(|s| s.get_word_backward_pos(wt), false, false, false);
+                    }
                 }
                 self.insert_saved_text();
             }
-            LastChange::ChangeWordBackward(wt) => {
+            LastChange::ChangeWordEnd(wt, dir) => {
                 self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_backward_pos(wt), false, false, false);
-                self.insert_saved_text();
-            }
-            LastChange::ChangeWordEnd(wt) => {
-                self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_end_pos(wt), true, false, false);
-                self.insert_saved_text();
-            }
-            LastChange::ChangeWordEndBackward(wt) => {
-                self.mode = EditorMode::Insert;
-                self.perform_delete_motion(|s| s.get_word_end_backward_pos(wt), true, false, false);
+                match dir {
+                    MotionDirection::Forward => {
+                        self.perform_delete_motion(|s| s.get_word_end_pos(wt), true, false, false);
+                    }
+                    MotionDirection::Backward => {
+                        self.perform_delete_motion(|s| s.get_word_end_backward_pos(wt), true, false, false);
+                    }
+                }
                 self.insert_saved_text();
             }
             LastChange::ChangeInnerWord(wt) => {
@@ -5082,7 +5093,7 @@ impl<'a> EditorState<'a> {
                                         false,
                                         false,
                                     );
-                                    self.last_change = LastChange::ChangeWordEndBackward(WordType::Word);
+                                    self.last_change = LastChange::ChangeWordEnd(WordType::Word, MotionDirection::Backward);
                                 } else if op == 'y' {
                                     self.perform_yank_motion(
                                         |s| s.get_word_end_backward_pos(WordType::Word),
@@ -5095,7 +5106,7 @@ impl<'a> EditorState<'a> {
                                         true,
                                         false,
                                     );
-                                    self.last_change = LastChange::DeleteWordEndBackward(WordType::Word);
+                                    self.last_change = LastChange::DeleteWordEnd(WordType::Word, MotionDirection::Backward);
                                 }
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // dgE / cgE / ygE - delete/change/yank backward to end of previous WORD
@@ -5108,7 +5119,7 @@ impl<'a> EditorState<'a> {
                                         false,
                                         false,
                                     );
-                                    self.last_change = LastChange::ChangeWordEndBackward(WordType::LongWord);
+                                    self.last_change = LastChange::ChangeWordEnd(WordType::LongWord, MotionDirection::Backward);
                                 } else if op == 'y' {
                                     self.perform_yank_motion(
                                         |s| s.get_word_end_backward_pos(WordType::LongWord),
@@ -5121,7 +5132,7 @@ impl<'a> EditorState<'a> {
                                         true,
                                         false,
                                     );
-                                    self.last_change = LastChange::DeleteWordEndBackward(WordType::LongWord);
+                                    self.last_change = LastChange::DeleteWordEnd(WordType::LongWord, MotionDirection::Backward);
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
                                 // diw / ciw / yiw - delete/change/yank inner word
@@ -5390,7 +5401,7 @@ impl<'a> EditorState<'a> {
                                                 false,
                                             );
                                         }
-                                        self.last_change = LastChange::ChangeWordMotion(WordType::Word);
+                                        self.last_change = LastChange::ChangeWordStart(WordType::Word, MotionDirection::Forward);
                                     }
                                     'W' => {
                                         // cW behavior: like cw but for WORD
@@ -5415,7 +5426,7 @@ impl<'a> EditorState<'a> {
                                                 false,
                                             );
                                         }
-                                        self.last_change = LastChange::ChangeWordMotion(WordType::LongWord);
+                                        self.last_change = LastChange::ChangeWordStart(WordType::LongWord, MotionDirection::Forward);
                                     }
                                     'e' => {
                                         self.insert_buffer.clear();
@@ -5426,7 +5437,7 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change = LastChange::ChangeWordEnd(WordType::Word);
+                                        self.last_change = LastChange::ChangeWordEnd(WordType::Word, MotionDirection::Forward);
                                     }
                                     'E' => {
                                         self.insert_buffer.clear();
@@ -5437,7 +5448,7 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change = LastChange::ChangeWordEnd(WordType::LongWord);
+                                        self.last_change = LastChange::ChangeWordEnd(WordType::LongWord, MotionDirection::Forward);
                                     }
                                     'b' => {
                                         self.insert_buffer.clear();
@@ -5448,7 +5459,7 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change = LastChange::ChangeWordBackward(WordType::Word);
+                                        self.last_change = LastChange::ChangeWordStart(WordType::Word, MotionDirection::Backward);
                                     }
                                     'B' => {
                                         self.insert_buffer.clear();
@@ -5459,7 +5470,7 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change = LastChange::ChangeWordBackward(WordType::LongWord);
+                                        self.last_change = LastChange::ChangeWordStart(WordType::LongWord, MotionDirection::Backward);
                                     }
                                     '$' => self.change_to_end_of_line(),
                                     '^' => {
@@ -5581,7 +5592,7 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::DeleteWordMotion(WordType::Word);
+                                        self.last_change = LastChange::DeleteWordStart(WordType::Word, MotionDirection::Forward);
                                     }
                                     'W' => {
                                         self.perform_delete_motion(
@@ -5590,7 +5601,7 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::DeleteWordMotion(WordType::LongWord);
+                                        self.last_change = LastChange::DeleteWordStart(WordType::LongWord, MotionDirection::Forward);
                                     }
                                     'e' => {
                                         self.perform_delete_motion(
@@ -5599,7 +5610,7 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::DeleteWordEnd(WordType::Word);
+                                        self.last_change = LastChange::DeleteWordEnd(WordType::Word, MotionDirection::Forward);
                                     }
                                     'E' => {
                                         self.perform_delete_motion(
@@ -5608,7 +5619,7 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::DeleteWordEnd(WordType::LongWord);
+                                        self.last_change = LastChange::DeleteWordEnd(WordType::LongWord, MotionDirection::Forward);
                                     }
                                     'b' => {
                                         self.perform_delete_motion(
@@ -5617,7 +5628,7 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::DeleteWordBackward(WordType::Word);
+                                        self.last_change = LastChange::DeleteWordStart(WordType::Word, MotionDirection::Backward);
                                     }
                                     'B' => {
                                         self.perform_delete_motion(
@@ -5626,7 +5637,7 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::DeleteWordBackward(WordType::LongWord);
+                                        self.last_change = LastChange::DeleteWordStart(WordType::LongWord, MotionDirection::Backward);
                                     }
                                     '$' => self.delete_to_end_of_line(),
                                     '^' => self.perform_delete_motion(
@@ -6130,10 +6141,8 @@ impl<'a> EditorState<'a> {
                         // Save insert buffer as last change if we have text and it's not a change operation
                         if !self.insert_buffer.is_empty() {
                             match &self.last_change {
-                                LastChange::ChangeWordMotion(_)
-                                | LastChange::ChangeWordBackward(_)
-                                | LastChange::ChangeWordEnd(_)
-                                | LastChange::ChangeWordEndBackward(_)
+                                LastChange::ChangeWordStart(_, _)
+                                | LastChange::ChangeWordEnd(_, _)
                                 | LastChange::ChangeInnerWord(_)
                                 | LastChange::ChangeAWord(_)
                                 | LastChange::ChangeInnerPair(_)
