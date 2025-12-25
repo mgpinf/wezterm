@@ -96,43 +96,52 @@ enum MotionDirection {
     Backward,
 }
 
+/// Type of character search motion
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CharSearchType {
+    /// f/F - find character (inclusive, lands on the character)
+    Find,
+    /// t/T - to/till character (exclusive, lands before/after the character)
+    To,
+}
+
 #[derive(Clone, Debug)]
 enum LastChange {
     None,
-    DeleteChar,                                 // x
-    DeleteLine,                                 // dd
-    DeleteWordStart(WordType, MotionDirection), // dw, dW, db, dB
-    DeleteWordEnd(WordType, MotionDirection),   // de, dE, dge, dgE
-    DeleteToEndOfLine,                          // D
-    DeleteInnerWord(WordType),                  // diw, diW
-    DeleteAWord(WordType),                      // daw, daW
-    DeleteInnerPair(char),                      // di( di{ etc.
-    DeleteAroundPair(char),                     // da( da{ etc.
-    DeleteInnerParagraph,                       // dip
-    DeleteAParagraph,                           // dap
-    DeleteInnerSentence,                        // dis
-    DeleteASentence,                            // das
-    DeleteToChar(char, bool, MotionDirection),  // df{char}, dt{char}, dF{char}, dT{char}
-    SubstituteLine,                             // S, cc
-    SubstituteChar,                             // s
-    ChangeToEndOfLine,                          // C
-    ChangeWordStart(WordType, MotionDirection), // cw, cW, cb, cB
-    ChangeWordEnd(WordType, MotionDirection),   // ce, cE, cge, cgE
-    ChangeInnerWord(WordType),                  // ciw, ciW
-    ChangeAWord(WordType),                      // caw, caW
-    ChangeInnerPair(char),                      // ci( ci{ etc.
-    ChangeAroundPair(char),                     // ca( ca{ etc.
-    ChangeInnerParagraph,                       // cip
-    ChangeAParagraph,                           // cap
-    ChangeInnerSentence,                        // cis
-    ChangeASentence,                            // cas
-    ChangeToChar(char, bool, MotionDirection),  // cf{char}, ct{char}, cF{char}, cT{char}
-    InsertText(String, InsertStyle),            // Text inserted in insert mode
-    ToggleCase,                                 // ~
-    JoinLines,                                  // J
-    ReplaceChar(char),                          // r{char}
-    IncrementNumber,                            // Ctrl-A
-    DecrementNumber,                            // Ctrl-X
+    DeleteChar,                                          // x
+    DeleteLine,                                          // dd
+    DeleteWordStart(WordType, MotionDirection),          // dw, dW, db, dB
+    DeleteWordEnd(WordType, MotionDirection),            // de, dE, dge, dgE
+    DeleteToEndOfLine,                                   // D
+    DeleteInnerWord(WordType),                           // diw, diW
+    DeleteAWord(WordType),                               // daw, daW
+    DeleteInnerPair(char),                               // di( di{ etc.
+    DeleteAroundPair(char),                              // da( da{ etc.
+    DeleteInnerParagraph,                                // dip
+    DeleteAParagraph,                                    // dap
+    DeleteInnerSentence,                                 // dis
+    DeleteASentence,                                     // das
+    DeleteToChar(char, CharSearchType, MotionDirection), // df{char}, dt{char}, dF{char}, dT{char}
+    SubstituteLine,                                      // S, cc
+    SubstituteChar,                                      // s
+    ChangeToEndOfLine,                                   // C
+    ChangeWordStart(WordType, MotionDirection),          // cw, cW, cb, cB
+    ChangeWordEnd(WordType, MotionDirection),            // ce, cE, cge, cgE
+    ChangeInnerWord(WordType),                           // ciw, ciW
+    ChangeAWord(WordType),                               // caw, caW
+    ChangeInnerPair(char),                               // ci( ci{ etc.
+    ChangeAroundPair(char),                              // ca( ca{ etc.
+    ChangeInnerParagraph,                                // cip
+    ChangeAParagraph,                                    // cap
+    ChangeInnerSentence,                                 // cis
+    ChangeASentence,                                     // cas
+    ChangeToChar(char, CharSearchType, MotionDirection), // cf{char}, ct{char}, cF{char}, cT{char}
+    InsertText(String, InsertStyle),                     // Text inserted in insert mode
+    ToggleCase,                                          // ~
+    JoinLines,                                           // J
+    ReplaceChar(char),                                   // r{char}
+    IncrementNumber,                                     // Ctrl-A
+    DecrementNumber,                                     // Ctrl-X
 }
 
 /// Information about a number found at cursor position
@@ -3147,10 +3156,13 @@ impl<'a> EditorState<'a> {
             LastChange::DeleteAParagraph => self.delete_a_paragraph(),
             LastChange::DeleteInnerSentence => self.delete_inner_sentence(),
             LastChange::DeleteASentence => self.delete_a_sentence(),
-            LastChange::DeleteToChar(c, inclusive, dir) => match dir {
-                MotionDirection::Forward => self.delete_to_char_forward(c, inclusive),
-                MotionDirection::Backward => self.delete_to_char_backward(c, inclusive),
-            },
+            LastChange::DeleteToChar(c, search_type, dir) => {
+                let inclusive = search_type == CharSearchType::Find;
+                match dir {
+                    MotionDirection::Forward => self.delete_to_char_forward(c, inclusive),
+                    MotionDirection::Backward => self.delete_to_char_backward(c, inclusive),
+                }
+            }
             LastChange::SubstituteLine => self.substitute_line(),
             LastChange::SubstituteChar => self.substitute_char(),
             LastChange::ChangeToEndOfLine => self.change_to_end_of_line(),
@@ -3249,8 +3261,9 @@ impl<'a> EditorState<'a> {
                 self.change_a_sentence();
                 self.insert_saved_text();
             }
-            LastChange::ChangeToChar(c, inclusive, dir) => {
+            LastChange::ChangeToChar(c, search_type, dir) => {
                 self.mode = EditorMode::Insert;
+                let inclusive = search_type == CharSearchType::Find;
                 match dir {
                     MotionDirection::Forward => self.delete_to_char_forward(c, inclusive),
                     MotionDirection::Backward => self.delete_to_char_backward(c, inclusive),
@@ -5350,14 +5363,20 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change =
-                                        LastChange::ChangeToChar(c, true, MotionDirection::Forward);
+                                    self.last_change = LastChange::ChangeToChar(
+                                        c,
+                                        CharSearchType::Find,
+                                        MotionDirection::Forward,
+                                    );
                                     self.delete_to_char_forward(c, true);
                                 } else if op == 'y' {
                                     self.yank_to_char_forward(c, true);
                                 } else {
-                                    self.last_change =
-                                        LastChange::DeleteToChar(c, true, MotionDirection::Forward);
+                                    self.last_change = LastChange::DeleteToChar(
+                                        c,
+                                        CharSearchType::Find,
+                                        MotionDirection::Forward,
+                                    );
                                     self.delete_to_char_forward(c, true);
                                 }
                             } else if first == KeyCode::Char('F') {
@@ -5367,7 +5386,7 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeToChar(
                                         c,
-                                        true,
+                                        CharSearchType::Find,
                                         MotionDirection::Backward,
                                     );
                                     self.delete_to_char_backward(c, true);
@@ -5376,7 +5395,7 @@ impl<'a> EditorState<'a> {
                                 } else {
                                     self.last_change = LastChange::DeleteToChar(
                                         c,
-                                        true,
+                                        CharSearchType::Find,
                                         MotionDirection::Backward,
                                     );
                                     self.delete_to_char_backward(c, true);
@@ -5388,7 +5407,7 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeToChar(
                                         c,
-                                        false,
+                                        CharSearchType::To,
                                         MotionDirection::Forward,
                                     );
                                     self.delete_to_char_forward(c, false);
@@ -5397,7 +5416,7 @@ impl<'a> EditorState<'a> {
                                 } else {
                                     self.last_change = LastChange::DeleteToChar(
                                         c,
-                                        false,
+                                        CharSearchType::To,
                                         MotionDirection::Forward,
                                     );
                                     self.delete_to_char_forward(c, false);
@@ -5409,7 +5428,7 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::ChangeToChar(
                                         c,
-                                        false,
+                                        CharSearchType::To,
                                         MotionDirection::Backward,
                                     );
                                     self.delete_to_char_backward(c, false);
@@ -5418,7 +5437,7 @@ impl<'a> EditorState<'a> {
                                 } else {
                                     self.last_change = LastChange::DeleteToChar(
                                         c,
-                                        false,
+                                        CharSearchType::To,
                                         MotionDirection::Backward,
                                     );
                                     self.delete_to_char_backward(c, false);
