@@ -105,6 +105,15 @@ enum CharSearchType {
     To,
 }
 
+/// Text object for inner/around operations (i{obj} / a{obj})
+#[derive(Clone, Debug)]
+enum TextObject {
+    Word(WordType), // iw, iW, aw, aW
+    Pair(char),     // i(, i{, a(, a{ etc.
+    Paragraph,      // ip, ap
+    Sentence,       // is, as
+}
+
 /// Target of a delete or change operation
 #[derive(Clone, Debug)]
 enum EditTarget {
@@ -113,14 +122,8 @@ enum EditTarget {
     WordStart(WordType, MotionDirection),          // dw, dW, db, dB / cw, cW, cb, cB
     WordEnd(WordType, MotionDirection),            // de, dE, dge, dgE / ce, cE, cge, cgE
     ToEndOfLine,                                   // D / C
-    InnerWord(WordType),                           // diw, diW / ciw, ciW
-    AWord(WordType),                               // daw, daW / caw, caW
-    InnerPair(char),                               // di( di{ etc. / ci( ci{ etc.
-    AroundPair(char),                              // da( da{ etc. / ca( ca{ etc.
-    InnerParagraph,                                // dip / cip
-    AParagraph,                                    // dap / cap
-    InnerSentence,                                 // dis / cis
-    ASentence,                                     // das / cas
+    Inner(TextObject),                             // di{obj} / ci{obj}
+    Around(TextObject),                            // da{obj} / ca{obj}
     ToChar(char, CharSearchType, MotionDirection), // df{char}, dt{char}, etc. / cf{char}, ct{char}, etc.
 }
 
@@ -3216,20 +3219,24 @@ impl<'a> EditorState<'a> {
                 }
             },
             EditTarget::ToEndOfLine => self.delete_to_end_of_line(),
-            EditTarget::InnerWord(wt) => match wt {
-                WordType::Word => self.delete_inner_word(),
-                WordType::LongWord => self.delete_inner_long_word(),
+            EditTarget::Inner(obj) => match obj {
+                TextObject::Word(wt) => match wt {
+                    WordType::Word => self.delete_inner_word(),
+                    WordType::LongWord => self.delete_inner_long_word(),
+                },
+                TextObject::Pair(c) => self.delete_inner_pair(*c),
+                TextObject::Paragraph => self.delete_inner_paragraph(),
+                TextObject::Sentence => self.delete_inner_sentence(),
             },
-            EditTarget::AWord(wt) => match wt {
-                WordType::Word => self.delete_a_word(),
-                WordType::LongWord => self.delete_a_long_word(),
+            EditTarget::Around(obj) => match obj {
+                TextObject::Word(wt) => match wt {
+                    WordType::Word => self.delete_a_word(),
+                    WordType::LongWord => self.delete_a_long_word(),
+                },
+                TextObject::Pair(c) => self.delete_around_pair(*c),
+                TextObject::Paragraph => self.delete_a_paragraph(),
+                TextObject::Sentence => self.delete_a_sentence(),
             },
-            EditTarget::InnerPair(c) => self.delete_inner_pair(*c),
-            EditTarget::AroundPair(c) => self.delete_around_pair(*c),
-            EditTarget::InnerParagraph => self.delete_inner_paragraph(),
-            EditTarget::AParagraph => self.delete_a_paragraph(),
-            EditTarget::InnerSentence => self.delete_inner_sentence(),
-            EditTarget::ASentence => self.delete_a_sentence(),
             EditTarget::ToChar(c, search_type, dir) => {
                 let inclusive = *search_type == CharSearchType::Find;
                 match dir {
@@ -3303,40 +3310,44 @@ impl<'a> EditorState<'a> {
             EditTarget::ToEndOfLine => {
                 self.change_to_end_of_line();
             }
-            EditTarget::InnerWord(wt) => {
-                self.mode = EditorMode::Insert;
-                match wt {
-                    WordType::Word => self.delete_inner_word(),
-                    WordType::LongWord => self.delete_inner_long_word(),
+            EditTarget::Inner(obj) => match obj {
+                TextObject::Word(wt) => {
+                    self.mode = EditorMode::Insert;
+                    match wt {
+                        WordType::Word => self.delete_inner_word(),
+                        WordType::LongWord => self.delete_inner_long_word(),
+                    }
                 }
-            }
-            EditTarget::AWord(wt) => {
-                self.mode = EditorMode::Insert;
-                match wt {
-                    WordType::Word => self.delete_a_word(),
-                    WordType::LongWord => self.delete_a_long_word(),
+                TextObject::Pair(c) => {
+                    self.mode = EditorMode::Insert;
+                    self.delete_inner_pair(*c);
                 }
-            }
-            EditTarget::InnerPair(c) => {
-                self.mode = EditorMode::Insert;
-                self.delete_inner_pair(*c);
-            }
-            EditTarget::AroundPair(c) => {
-                self.mode = EditorMode::Insert;
-                self.delete_around_pair(*c);
-            }
-            EditTarget::InnerParagraph => {
-                self.change_inner_paragraph();
-            }
-            EditTarget::AParagraph => {
-                self.change_a_paragraph();
-            }
-            EditTarget::InnerSentence => {
-                self.change_inner_sentence();
-            }
-            EditTarget::ASentence => {
-                self.change_a_sentence();
-            }
+                TextObject::Paragraph => {
+                    self.change_inner_paragraph();
+                }
+                TextObject::Sentence => {
+                    self.change_inner_sentence();
+                }
+            },
+            EditTarget::Around(obj) => match obj {
+                TextObject::Word(wt) => {
+                    self.mode = EditorMode::Insert;
+                    match wt {
+                        WordType::Word => self.delete_a_word(),
+                        WordType::LongWord => self.delete_a_long_word(),
+                    }
+                }
+                TextObject::Pair(c) => {
+                    self.mode = EditorMode::Insert;
+                    self.delete_around_pair(*c);
+                }
+                TextObject::Paragraph => {
+                    self.change_a_paragraph();
+                }
+                TextObject::Sentence => {
+                    self.change_a_sentence();
+                }
+            },
             EditTarget::ToChar(c, search_type, dir) => {
                 self.mode = EditorMode::Insert;
                 let inclusive = *search_type == CharSearchType::Find;
@@ -5195,14 +5206,16 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change =
-                                        LastChange::Change(EditTarget::InnerWord(WordType::Word));
+                                    self.last_change = LastChange::Change(EditTarget::Inner(
+                                        TextObject::Word(WordType::Word),
+                                    ));
                                     self.delete_inner_word();
                                 } else if op == 'y' {
                                     self.yank_inner_word();
                                 } else {
-                                    self.last_change =
-                                        LastChange::Delete(EditTarget::InnerWord(WordType::Word));
+                                    self.last_change = LastChange::Delete(EditTarget::Inner(
+                                        TextObject::Word(WordType::Word),
+                                    ));
                                     self.delete_inner_word();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'w' {
@@ -5210,14 +5223,16 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change =
-                                        LastChange::Change(EditTarget::AWord(WordType::Word));
+                                    self.last_change = LastChange::Change(EditTarget::Around(
+                                        TextObject::Word(WordType::Word),
+                                    ));
                                     self.delete_a_word();
                                 } else if op == 'y' {
                                     self.yank_a_word();
                                 } else {
-                                    self.last_change =
-                                        LastChange::Delete(EditTarget::AWord(WordType::Word));
+                                    self.last_change = LastChange::Delete(EditTarget::Around(
+                                        TextObject::Word(WordType::Word),
+                                    ));
                                     self.delete_a_word();
                                 }
                             } else if first == KeyCode::Char('i') && c == 'W' {
@@ -5225,15 +5240,15 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::Change(EditTarget::InnerWord(
-                                        WordType::LongWord,
+                                    self.last_change = LastChange::Change(EditTarget::Inner(
+                                        TextObject::Word(WordType::LongWord),
                                     ));
                                     self.delete_inner_long_word();
                                 } else if op == 'y' {
                                     self.yank_inner_long_word();
                                 } else {
-                                    self.last_change = LastChange::Delete(EditTarget::InnerWord(
-                                        WordType::LongWord,
+                                    self.last_change = LastChange::Delete(EditTarget::Inner(
+                                        TextObject::Word(WordType::LongWord),
                                     ));
                                     self.delete_inner_long_word();
                                 }
@@ -5242,14 +5257,16 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change =
-                                        LastChange::Change(EditTarget::AWord(WordType::LongWord));
+                                    self.last_change = LastChange::Change(EditTarget::Around(
+                                        TextObject::Word(WordType::LongWord),
+                                    ));
                                     self.delete_a_long_word();
                                 } else if op == 'y' {
                                     self.yank_a_long_word();
                                 } else {
-                                    self.last_change =
-                                        LastChange::Delete(EditTarget::AWord(WordType::LongWord));
+                                    self.last_change = LastChange::Delete(EditTarget::Around(
+                                        TextObject::Word(WordType::LongWord),
+                                    ));
                                     self.delete_a_long_word();
                                 }
                             } else if first == KeyCode::Char('i')
@@ -5271,12 +5288,14 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.last_change = LastChange::Change(EditTarget::InnerPair(c));
+                                    self.last_change =
+                                        LastChange::Change(EditTarget::Inner(TextObject::Pair(c)));
                                     self.delete_inner_pair(c);
                                 } else if op == 'y' {
                                     self.yank_inner_pair(c);
                                 } else {
-                                    self.last_change = LastChange::Delete(EditTarget::InnerPair(c));
+                                    self.last_change =
+                                        LastChange::Delete(EditTarget::Inner(TextObject::Pair(c)));
                                     self.delete_inner_pair(c);
                                 }
                             } else if first == KeyCode::Char('a')
@@ -5299,39 +5318,45 @@ impl<'a> EditorState<'a> {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change =
-                                        LastChange::Change(EditTarget::AroundPair(c));
+                                        LastChange::Change(EditTarget::Around(TextObject::Pair(c)));
                                     self.delete_around_pair(c);
                                 } else if op == 'y' {
                                     self.yank_around_pair(c);
                                 } else {
                                     self.last_change =
-                                        LastChange::Delete(EditTarget::AroundPair(c));
+                                        LastChange::Delete(EditTarget::Around(TextObject::Pair(c)));
                                     self.delete_around_pair(c);
                                 }
                             } else if first == KeyCode::Char('i') && c == 'p' {
                                 // dip / cip / yip - delete/change/yank inner paragraph
                                 if op == 'c' {
                                     self.insert_buffer.clear();
-                                    self.last_change =
-                                        LastChange::Change(EditTarget::InnerParagraph);
+                                    self.last_change = LastChange::Change(EditTarget::Inner(
+                                        TextObject::Paragraph,
+                                    ));
                                     self.change_inner_paragraph();
                                 } else if op == 'y' {
                                     self.yank_inner_paragraph();
                                 } else {
-                                    self.last_change =
-                                        LastChange::Delete(EditTarget::InnerParagraph);
+                                    self.last_change = LastChange::Delete(EditTarget::Inner(
+                                        TextObject::Paragraph,
+                                    ));
                                     self.delete_inner_paragraph();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'p' {
                                 // dap / cap / yap - delete/change/yank a paragraph
                                 if op == 'c' {
                                     self.insert_buffer.clear();
-                                    self.last_change = LastChange::Change(EditTarget::AParagraph);
+                                    self.last_change = LastChange::Change(EditTarget::Around(
+                                        TextObject::Paragraph,
+                                    ));
                                     self.change_a_paragraph();
                                 } else if op == 'y' {
                                     self.yank_a_paragraph();
                                 } else {
-                                    self.last_change = LastChange::Delete(EditTarget::AParagraph);
+                                    self.last_change = LastChange::Delete(EditTarget::Around(
+                                        TextObject::Paragraph,
+                                    ));
                                     self.delete_a_paragraph();
                                 }
                             } else if first == KeyCode::Char('i') && c == 's' {
@@ -5339,25 +5364,29 @@ impl<'a> EditorState<'a> {
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.last_change =
-                                        LastChange::Change(EditTarget::InnerSentence);
+                                        LastChange::Change(EditTarget::Inner(TextObject::Sentence));
                                     self.change_inner_sentence();
                                 } else if op == 'y' {
                                     self.yank_inner_sentence();
                                 } else {
                                     self.last_change =
-                                        LastChange::Delete(EditTarget::InnerSentence);
+                                        LastChange::Delete(EditTarget::Inner(TextObject::Sentence));
                                     self.delete_inner_sentence();
                                 }
                             } else if first == KeyCode::Char('a') && c == 's' {
                                 // das / cas / yas - delete/change/yank a sentence
                                 if op == 'c' {
                                     self.insert_buffer.clear();
-                                    self.last_change = LastChange::Change(EditTarget::ASentence);
+                                    self.last_change = LastChange::Change(EditTarget::Around(
+                                        TextObject::Sentence,
+                                    ));
                                     self.change_a_sentence();
                                 } else if op == 'y' {
                                     self.yank_a_sentence();
                                 } else {
-                                    self.last_change = LastChange::Delete(EditTarget::ASentence);
+                                    self.last_change = LastChange::Delete(EditTarget::Around(
+                                        TextObject::Sentence,
+                                    ));
                                     self.delete_a_sentence();
                                 }
                             } else if first == KeyCode::Char('[') && (c == '(' || c == '{') {
