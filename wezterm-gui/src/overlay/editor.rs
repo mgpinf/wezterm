@@ -64,8 +64,9 @@ enum EditorMode {
     VisualLine, // Line-wise visual selection (V)
 }
 
+/// Direction for search and motion operations
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum SearchDirection {
+enum Direction {
     Forward,
     Backward,
 }
@@ -89,13 +90,6 @@ enum InsertStyle {
     NewLineAbove, // O - open new line above
 }
 
-/// Direction for word motions (distinct from SearchDirection)
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum MotionDirection {
-    Forward,
-    Backward,
-}
-
 /// Type of character search motion
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum CharSearchType {
@@ -117,14 +111,14 @@ enum TextObject {
 /// Target of a delete or change operation
 #[derive(Clone, Debug)]
 enum EditTarget {
-    Char,                                          // x / s
-    Line,                                          // dd / cc (S)
-    WordStart(WordType, MotionDirection),          // dw, dW, db, dB / cw, cW, cb, cB
-    WordEnd(WordType, MotionDirection),            // de, dE, dge, dgE / ce, cE, cge, cgE
-    ToEndOfLine,                                   // D / C
-    Inner(TextObject),                             // di{obj} / ci{obj}
-    Around(TextObject),                            // da{obj} / ca{obj}
-    ToChar(char, CharSearchType, MotionDirection), // df{char}, dt{char}, etc. / cf{char}, ct{char}, etc.
+    Char,                                    // x / s
+    Line,                                    // dd / cc (S)
+    WordStart(WordType, Direction),          // dw, dW, db, dB / cw, cW, cb, cB
+    WordEnd(WordType, Direction),            // de, dE, dge, dgE / ce, cE, cge, cgE
+    ToEndOfLine,                             // D / C
+    Inner(TextObject),                       // di{obj} / ci{obj}
+    Around(TextObject),                      // da{obj} / ca{obj}
+    ToChar(char, CharSearchType, Direction), // df{char}, dt{char}, etc. / cf{char}, ct{char}, etc.
 }
 
 #[derive(Clone, Debug)]
@@ -178,7 +172,7 @@ struct EditorState<'a> {
     yank_buffer: String,       // Buffer to store yanked text
     yank_is_linewise: bool,    // Whether the yank was linewise (yy, dG, etc.)
     search_pattern: String,    // Current search pattern
-    search_direction: SearchDirection, // Current search direction
+    search_direction: Direction, // Current search direction
     search_input: String,      // Input buffer for search mode
     visual_start: (usize, usize), // Anchor point for visual selection (row, col)
 }
@@ -222,7 +216,7 @@ impl<'a> EditorState<'a> {
             yank_buffer: String::new(),
             yank_is_linewise: false,
             search_pattern: String::new(),
-            search_direction: SearchDirection::Forward,
+            search_direction: Direction::Forward,
             search_input: String::new(),
             visual_start: (0, 0),
         }
@@ -3193,10 +3187,10 @@ impl<'a> EditorState<'a> {
             EditTarget::Char => self.delete_char(),
             EditTarget::Line => self.delete_line(),
             EditTarget::WordStart(wt, dir) => match dir {
-                MotionDirection::Forward => {
+                Direction::Forward => {
                     self.perform_delete_motion(|s| s.get_word_forward_pos(*wt), false, true, false);
                 }
-                MotionDirection::Backward => {
+                Direction::Backward => {
                     self.perform_delete_motion(
                         |s| s.get_word_backward_pos(*wt),
                         false,
@@ -3206,10 +3200,10 @@ impl<'a> EditorState<'a> {
                 }
             },
             EditTarget::WordEnd(wt, dir) => match dir {
-                MotionDirection::Forward => {
+                Direction::Forward => {
                     self.perform_delete_motion(|s| s.get_word_end_pos(*wt), true, true, false);
                 }
-                MotionDirection::Backward => {
+                Direction::Backward => {
                     self.perform_delete_motion(
                         |s| s.get_word_end_backward_pos(*wt),
                         true,
@@ -3240,8 +3234,8 @@ impl<'a> EditorState<'a> {
             EditTarget::ToChar(c, search_type, dir) => {
                 let inclusive = *search_type == CharSearchType::Find;
                 match dir {
-                    MotionDirection::Forward => self.delete_to_char_forward(*c, inclusive),
-                    MotionDirection::Backward => self.delete_to_char_backward(*c, inclusive),
+                    Direction::Forward => self.delete_to_char_forward(*c, inclusive),
+                    Direction::Backward => self.delete_to_char_backward(*c, inclusive),
                 }
             }
         }
@@ -3259,7 +3253,7 @@ impl<'a> EditorState<'a> {
             EditTarget::WordStart(wt, dir) => {
                 self.mode = EditorMode::Insert;
                 match dir {
-                    MotionDirection::Forward => {
+                    Direction::Forward => {
                         // cw behaves like ce when on a word
                         let line = &self.lines[self.cursor.0];
                         let chars: Vec<char> = line.chars().collect();
@@ -3281,7 +3275,7 @@ impl<'a> EditorState<'a> {
                             );
                         }
                     }
-                    MotionDirection::Backward => {
+                    Direction::Backward => {
                         self.perform_delete_motion(
                             |s| s.get_word_backward_pos(*wt),
                             false,
@@ -3294,10 +3288,10 @@ impl<'a> EditorState<'a> {
             EditTarget::WordEnd(wt, dir) => {
                 self.mode = EditorMode::Insert;
                 match dir {
-                    MotionDirection::Forward => {
+                    Direction::Forward => {
                         self.perform_delete_motion(|s| s.get_word_end_pos(*wt), true, false, false);
                     }
-                    MotionDirection::Backward => {
+                    Direction::Backward => {
                         self.perform_delete_motion(
                             |s| s.get_word_end_backward_pos(*wt),
                             true,
@@ -3352,8 +3346,8 @@ impl<'a> EditorState<'a> {
                 self.mode = EditorMode::Insert;
                 let inclusive = *search_type == CharSearchType::Find;
                 match dir {
-                    MotionDirection::Forward => self.delete_to_char_forward(*c, inclusive),
-                    MotionDirection::Backward => self.delete_to_char_backward(*c, inclusive),
+                    Direction::Forward => self.delete_to_char_forward(*c, inclusive),
+                    Direction::Backward => self.delete_to_char_backward(*c, inclusive),
                 }
             }
         }
@@ -3732,8 +3726,8 @@ impl<'a> EditorState<'a> {
 
         let status_text = if self.mode == EditorMode::Search {
             let prompt = match self.search_direction {
-                SearchDirection::Forward => "/",
-                SearchDirection::Backward => "?",
+                Direction::Forward => "/",
+                Direction::Backward => "?",
             };
             format!("{}{}", prompt, self.search_input)
         } else {
@@ -4809,8 +4803,8 @@ impl<'a> EditorState<'a> {
             return;
         }
         match self.search_direction {
-            SearchDirection::Forward => self.search_forward_from_cursor(),
-            SearchDirection::Backward => self.search_backward_from_cursor(),
+            Direction::Forward => self.search_forward_from_cursor(),
+            Direction::Backward => self.search_backward_from_cursor(),
         }
     }
 
@@ -4820,8 +4814,8 @@ impl<'a> EditorState<'a> {
         }
         // Search in opposite direction
         match self.search_direction {
-            SearchDirection::Forward => self.search_backward_from_cursor(),
-            SearchDirection::Backward => self.search_forward_from_cursor(),
+            Direction::Forward => self.search_backward_from_cursor(),
+            Direction::Backward => self.search_forward_from_cursor(),
         }
     }
 
@@ -4940,9 +4934,9 @@ impl<'a> EditorState<'a> {
             // Use word boundaries for exact word match
             self.search_pattern = word.to_string();
             self.search_direction = if forward {
-                SearchDirection::Forward
+                Direction::Forward
             } else {
-                SearchDirection::Backward
+                Direction::Backward
             };
             // Move to next/previous occurrence
             if forward {
@@ -5150,7 +5144,7 @@ impl<'a> EditorState<'a> {
                                     );
                                     self.last_change = LastChange::Change(EditTarget::WordEnd(
                                         WordType::Word,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                 } else if op == 'y' {
                                     self.perform_yank_motion(
@@ -5166,7 +5160,7 @@ impl<'a> EditorState<'a> {
                                     );
                                     self.last_change = LastChange::Delete(EditTarget::WordEnd(
                                         WordType::Word,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                 }
                             } else if first == KeyCode::Char('g') && c == 'E' {
@@ -5182,7 +5176,7 @@ impl<'a> EditorState<'a> {
                                     );
                                     self.last_change = LastChange::Change(EditTarget::WordEnd(
                                         WordType::LongWord,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                 } else if op == 'y' {
                                     self.perform_yank_motion(
@@ -5198,7 +5192,7 @@ impl<'a> EditorState<'a> {
                                     );
                                     self.last_change = LastChange::Delete(EditTarget::WordEnd(
                                         WordType::LongWord,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
@@ -5419,7 +5413,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Change(EditTarget::ToChar(
                                         c,
                                         CharSearchType::Find,
-                                        MotionDirection::Forward,
+                                        Direction::Forward,
                                     ));
                                     self.delete_to_char_forward(c, true);
                                 } else if op == 'y' {
@@ -5428,7 +5422,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
                                         CharSearchType::Find,
-                                        MotionDirection::Forward,
+                                        Direction::Forward,
                                     ));
                                     self.delete_to_char_forward(c, true);
                                 }
@@ -5440,7 +5434,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Change(EditTarget::ToChar(
                                         c,
                                         CharSearchType::Find,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                     self.delete_to_char_backward(c, true);
                                 } else if op == 'y' {
@@ -5449,7 +5443,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
                                         CharSearchType::Find,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                     self.delete_to_char_backward(c, true);
                                 }
@@ -5461,7 +5455,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Change(EditTarget::ToChar(
                                         c,
                                         CharSearchType::To,
-                                        MotionDirection::Forward,
+                                        Direction::Forward,
                                     ));
                                     self.delete_to_char_forward(c, false);
                                 } else if op == 'y' {
@@ -5470,7 +5464,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
                                         CharSearchType::To,
-                                        MotionDirection::Forward,
+                                        Direction::Forward,
                                     ));
                                     self.delete_to_char_forward(c, false);
                                 }
@@ -5482,7 +5476,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Change(EditTarget::ToChar(
                                         c,
                                         CharSearchType::To,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                     self.delete_to_char_backward(c, false);
                                 } else if op == 'y' {
@@ -5491,7 +5485,7 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
                                         CharSearchType::To,
-                                        MotionDirection::Backward,
+                                        Direction::Backward,
                                     ));
                                     self.delete_to_char_backward(c, false);
                                 }
@@ -5537,7 +5531,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::Word,
-                                                MotionDirection::Forward,
+                                                Direction::Forward,
                                             ));
                                     }
                                     'W' => {
@@ -5566,7 +5560,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::LongWord,
-                                                MotionDirection::Forward,
+                                                Direction::Forward,
                                             ));
                                     }
                                     'e' => {
@@ -5580,7 +5574,7 @@ impl<'a> EditorState<'a> {
                                         );
                                         self.last_change = LastChange::Change(EditTarget::WordEnd(
                                             WordType::Word,
-                                            MotionDirection::Forward,
+                                            Direction::Forward,
                                         ));
                                     }
                                     'E' => {
@@ -5594,7 +5588,7 @@ impl<'a> EditorState<'a> {
                                         );
                                         self.last_change = LastChange::Change(EditTarget::WordEnd(
                                             WordType::LongWord,
-                                            MotionDirection::Forward,
+                                            Direction::Forward,
                                         ));
                                     }
                                     'b' => {
@@ -5609,7 +5603,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::Word,
-                                                MotionDirection::Backward,
+                                                Direction::Backward,
                                             ));
                                     }
                                     'B' => {
@@ -5624,7 +5618,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::LongWord,
-                                                MotionDirection::Backward,
+                                                Direction::Backward,
                                             ));
                                     }
                                     '$' => self.change_to_end_of_line(),
@@ -5750,7 +5744,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::Word,
-                                                MotionDirection::Forward,
+                                                Direction::Forward,
                                             ));
                                     }
                                     'W' => {
@@ -5763,7 +5757,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::LongWord,
-                                                MotionDirection::Forward,
+                                                Direction::Forward,
                                             ));
                                     }
                                     'e' => {
@@ -5775,7 +5769,7 @@ impl<'a> EditorState<'a> {
                                         );
                                         self.last_change = LastChange::Delete(EditTarget::WordEnd(
                                             WordType::Word,
-                                            MotionDirection::Forward,
+                                            Direction::Forward,
                                         ));
                                     }
                                     'E' => {
@@ -5787,7 +5781,7 @@ impl<'a> EditorState<'a> {
                                         );
                                         self.last_change = LastChange::Delete(EditTarget::WordEnd(
                                             WordType::LongWord,
-                                            MotionDirection::Forward,
+                                            Direction::Forward,
                                         ));
                                     }
                                     'b' => {
@@ -5800,7 +5794,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::Word,
-                                                MotionDirection::Backward,
+                                                Direction::Backward,
                                             ));
                                     }
                                     'B' => {
@@ -5813,7 +5807,7 @@ impl<'a> EditorState<'a> {
                                         self.last_change =
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::LongWord,
-                                                MotionDirection::Backward,
+                                                Direction::Backward,
                                             ));
                                     }
                                     '$' => self.delete_to_end_of_line(),
@@ -6245,13 +6239,13 @@ impl<'a> EditorState<'a> {
                             '/' => {
                                 // Enter forward search mode
                                 self.mode = EditorMode::Search;
-                                self.search_direction = SearchDirection::Forward;
+                                self.search_direction = Direction::Forward;
                                 self.search_input.clear();
                             }
                             '?' => {
                                 // Enter backward search mode
                                 self.mode = EditorMode::Search;
-                                self.search_direction = SearchDirection::Backward;
+                                self.search_direction = Direction::Backward;
                                 self.search_input.clear();
                             }
                             'n' => {
@@ -6385,8 +6379,8 @@ impl<'a> EditorState<'a> {
                         self.search_input.clear();
                         // Perform the search
                         match self.search_direction {
-                            SearchDirection::Forward => self.search_forward_from_cursor(),
-                            SearchDirection::Backward => self.search_backward_from_cursor(),
+                            Direction::Forward => self.search_forward_from_cursor(),
+                            Direction::Backward => self.search_backward_from_cursor(),
                         }
                         self.update_desired_col();
                     }
