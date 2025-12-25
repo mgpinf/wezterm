@@ -99,6 +99,13 @@ enum CharSearchType {
     To,
 }
 
+/// Kind of text object selection (inner vs around)
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TextObjectKind {
+    Inner,  // i - inside, excludes delimiters/whitespace
+    Around, // a - around, includes delimiters/whitespace
+}
+
 /// Text object for inner/around operations (i{obj} / a{obj})
 #[derive(Clone, Debug)]
 enum TextObject {
@@ -1416,7 +1423,14 @@ impl<'a> EditorState<'a> {
         self.delete_text_object_on_line(start, end);
     }
 
-    fn get_inner_paragraph_bounds(&self) -> (usize, usize) {
+    fn get_paragraph_bounds(&self, kind: TextObjectKind) -> Option<(usize, usize)> {
+        match kind {
+            TextObjectKind::Inner => Some(self.get_inner_paragraph_bounds_impl()),
+            TextObjectKind::Around => self.get_around_paragraph_bounds_impl(),
+        }
+    }
+
+    fn get_inner_paragraph_bounds_impl(&self) -> (usize, usize) {
         // Find the bounds of the current paragraph (lines between blank lines)
         let mut start_row = self.cursor.0;
         let mut end_row = self.cursor.0;
@@ -1447,7 +1461,7 @@ impl<'a> EditorState<'a> {
         (start_row, end_row)
     }
 
-    fn get_a_paragraph_bounds(&self) -> Option<(usize, usize)> {
+    fn get_around_paragraph_bounds_impl(&self) -> Option<(usize, usize)> {
         // Like inner paragraph, but includes blank lines
         // Vim behavior: include trailing blank lines if they exist,
         // otherwise include leading blank lines (for last paragraph)
@@ -1480,7 +1494,7 @@ impl<'a> EditorState<'a> {
             return Some((start_row, end_row));
         }
 
-        let (mut start_row, mut end_row) = self.get_inner_paragraph_bounds();
+        let (mut start_row, mut end_row) = self.get_inner_paragraph_bounds_impl();
 
         // First, try to include trailing blank lines
         let original_end = end_row;
@@ -1498,44 +1512,9 @@ impl<'a> EditorState<'a> {
         Some((start_row, end_row))
     }
 
-    fn delete_inner_paragraph(&mut self) {
-        self.save_undo_state();
-        self.lines_version += 1;
-        let (start_row, end_row) = self.get_inner_paragraph_bounds();
-
-        // Store deleted lines in yank buffer
-        let yanked: Vec<&str> = self.lines[start_row..=end_row]
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        self.yank_buffer = yanked.join("\n");
-        self.yank_is_linewise = true;
-
-        // Remove the lines
-        for _ in start_row..=end_row {
-            self.lines.remove(start_row);
-        }
-
-        // Ensure at least one line exists
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
-
-        // Position cursor
-        self.cursor.0 = start_row.min(self.lines.len() - 1);
-        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
-        self.clamp_cursor();
-        self.update_desired_col();
-        // For change operations (Insert mode), don't record yet
-        if self.mode != EditorMode::Insert {
-            self.record_change();
-        }
-    }
-
-    fn delete_a_paragraph(&mut self) {
-        // Get bounds - returns None if on blank line with no following paragraph
-        let Some((start_row, end_row)) = self.get_a_paragraph_bounds() else {
-            return; // Do nothing
+    fn delete_paragraph(&mut self, kind: TextObjectKind) {
+        let Some((start_row, end_row)) = self.get_paragraph_bounds(kind) else {
+            return; // Do nothing for Around when no valid bounds
         };
 
         self.save_undo_state();
@@ -1570,25 +1549,9 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn yank_inner_paragraph(&mut self) {
-        let (start_row, end_row) = self.get_inner_paragraph_bounds();
-        let yanked: Vec<&str> = self.lines[start_row..=end_row]
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        self.yank_buffer = yanked.join("\n");
-        self.yank_is_linewise = true;
-        // Move cursor to start of paragraph (like Neovim)
-        self.cursor.0 = start_row;
-        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
-        self.clamp_cursor();
-        self.update_desired_col();
-    }
-
-    fn yank_a_paragraph(&mut self) {
-        // Get bounds - returns None if on blank line with no following paragraph
-        let Some((start_row, end_row)) = self.get_a_paragraph_bounds() else {
-            return; // Do nothing
+    fn yank_paragraph(&mut self, kind: TextObjectKind) {
+        let Some((start_row, end_row)) = self.get_paragraph_bounds(kind) else {
+            return; // Do nothing for Around when no valid bounds
         };
 
         let yanked: Vec<&str> = self.lines[start_row..=end_row]
@@ -1604,39 +1567,9 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
     }
 
-    fn change_inner_paragraph(&mut self) {
-        self.save_undo_state();
-        self.lines_version += 1;
-        let (start_row, end_row) = self.get_inner_paragraph_bounds();
-
-        // Store deleted lines in yank buffer
-        let yanked: Vec<&str> = self.lines[start_row..=end_row]
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        self.yank_buffer = yanked.join("\n");
-        self.yank_is_linewise = true;
-
-        // Remove the lines
-        for _ in start_row..=end_row {
-            self.lines.remove(start_row);
-        }
-
-        // Insert a blank line for typing
-        self.lines.insert(start_row, String::new());
-
-        // Position cursor on the blank line
-        self.cursor.0 = start_row;
-        self.cursor.1 = 0;
-        self.update_desired_col();
-        self.mode = EditorMode::Insert;
-        self.record_change();
-    }
-
-    fn change_a_paragraph(&mut self) {
-        // Get bounds - returns None if on blank line with no following paragraph
-        let Some((start_row, end_row)) = self.get_a_paragraph_bounds() else {
-            return; // Do nothing
+    fn change_paragraph(&mut self, kind: TextObjectKind) {
+        let Some((start_row, end_row)) = self.get_paragraph_bounds(kind) else {
+            return; // Do nothing for Around when no valid bounds
         };
 
         self.save_undo_state();
@@ -1796,30 +1729,18 @@ impl<'a> EditorState<'a> {
         (start_row, start_col, end_row, end_col)
     }
 
-    fn delete_inner_sentence(&mut self) {
-        self.save_undo_state();
-        self.lines_version += 1;
-
-        let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
-
-        // Yank the sentence
-        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
-        self.yank_is_linewise = false;
-
-        // Delete the sentence
-        self.delete_char_range(start_row, start_col, end_row, end_col);
-
-        self.cursor = (start_row.min(self.lines.len() - 1), start_col);
-        self.clamp_cursor();
-        self.update_desired_col();
-        self.maybe_record_change();
+    fn get_sentence_bounds(&self, kind: TextObjectKind) -> (usize, usize, usize, usize) {
+        match kind {
+            TextObjectKind::Inner => self.get_inner_sentence_bounds(),
+            TextObjectKind::Around => self.get_a_sentence_bounds(),
+        }
     }
 
-    fn delete_a_sentence(&mut self) {
+    fn delete_sentence(&mut self, kind: TextObjectKind) {
         self.save_undo_state();
         self.lines_version += 1;
 
-        let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
+        let (start_row, start_col, end_row, end_col) = self.get_sentence_bounds(kind);
 
         // Yank the sentence
         self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
@@ -1828,14 +1749,14 @@ impl<'a> EditorState<'a> {
         // Delete the sentence
         self.delete_char_range(start_row, start_col, end_row, end_col);
 
-        // If the line became empty after deletion and there's a line after it,
+        // For Around: if the line became empty after deletion and there's a line after it,
         // remove the empty line (like Neovim does for das)
-        // But keep the empty line if it's the last line (Neovim behavior)
-        if self.lines[start_row].is_empty() && start_row < self.lines.len() - 1 {
+        if kind == TextObjectKind::Around
+            && self.lines[start_row].is_empty()
+            && start_row < self.lines.len() - 1
+        {
             self.lines.remove(start_row);
-            // Cursor stays at start_row (now pointing to what was the next line)
             self.cursor = (start_row.min(self.lines.len() - 1), 0);
-            // Find first non-whitespace on the new line
             let first_non_blank = self.get_first_non_blank_in_line(self.cursor.0);
             self.cursor.1 = first_non_blank;
         } else {
@@ -1847,11 +1768,11 @@ impl<'a> EditorState<'a> {
         self.maybe_record_change();
     }
 
-    fn change_inner_sentence(&mut self) {
+    fn change_sentence(&mut self, kind: TextObjectKind) {
         self.save_undo_state();
         self.lines_version += 1;
 
-        let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
+        let (start_row, start_col, end_row, end_col) = self.get_sentence_bounds(kind);
 
         // Yank and delete the sentence
         self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
@@ -1864,45 +1785,19 @@ impl<'a> EditorState<'a> {
         self.mode = EditorMode::Insert;
     }
 
-    fn change_a_sentence(&mut self) {
-        self.save_undo_state();
-        self.lines_version += 1;
-
-        let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
-
-        // Yank and delete the sentence
-        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
-        self.yank_is_linewise = false;
-        self.delete_char_range(start_row, start_col, end_row, end_col);
-
-        self.cursor = (start_row.min(self.lines.len() - 1), start_col);
-        self.clamp_cursor();
-        self.update_desired_col();
-        self.mode = EditorMode::Insert;
-    }
-
-    fn yank_inner_sentence(&mut self) {
-        let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
-
-        self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
-        self.yank_is_linewise = false;
-
-        // Move cursor to start of sentence
-        self.cursor = (start_row, start_col);
-        self.clamp_cursor();
-        self.update_desired_col();
-    }
-
-    fn yank_a_sentence(&mut self) {
-        let (start_row, start_col, end_row, end_col) = self.get_a_sentence_bounds();
+    fn yank_sentence(&mut self, kind: TextObjectKind) {
+        let (start_row, start_col, end_row, end_col) = self.get_sentence_bounds(kind);
 
         self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
 
-        // If sentence spans entire line (starts at col 0, ends at line end) and there's a next line,
-        // treat as linewise. Last line of file is character-wise (no trailing newline).
-        let end_line_len = self.lines[end_row].chars().count();
-        self.yank_is_linewise =
-            start_col == 0 && end_col + 1 >= end_line_len && end_row < self.lines.len() - 1;
+        // For Around: if sentence spans entire line, treat as linewise
+        if kind == TextObjectKind::Around {
+            let end_line_len = self.lines[end_row].chars().count();
+            self.yank_is_linewise =
+                start_col == 0 && end_col + 1 >= end_line_len && end_row < self.lines.len() - 1;
+        } else {
+            self.yank_is_linewise = false;
+        }
 
         // Move cursor to start of sentence
         self.cursor = (start_row, start_col);
@@ -3219,8 +3114,8 @@ impl<'a> EditorState<'a> {
                     WordType::LongWord => self.delete_inner_long_word(),
                 },
                 TextObject::Pair(c) => self.delete_inner_pair(*c),
-                TextObject::Paragraph => self.delete_inner_paragraph(),
-                TextObject::Sentence => self.delete_inner_sentence(),
+                TextObject::Paragraph => self.delete_paragraph(TextObjectKind::Inner),
+                TextObject::Sentence => self.delete_sentence(TextObjectKind::Inner),
             },
             EditTarget::Around(obj) => match obj {
                 TextObject::Word(wt) => match wt {
@@ -3228,8 +3123,8 @@ impl<'a> EditorState<'a> {
                     WordType::LongWord => self.delete_a_long_word(),
                 },
                 TextObject::Pair(c) => self.delete_around_pair(*c),
-                TextObject::Paragraph => self.delete_a_paragraph(),
-                TextObject::Sentence => self.delete_a_sentence(),
+                TextObject::Paragraph => self.delete_paragraph(TextObjectKind::Around),
+                TextObject::Sentence => self.delete_sentence(TextObjectKind::Around),
             },
             EditTarget::ToChar(c, search_type, dir) => {
                 let inclusive = *search_type == CharSearchType::Find;
@@ -3317,10 +3212,10 @@ impl<'a> EditorState<'a> {
                     self.delete_inner_pair(*c);
                 }
                 TextObject::Paragraph => {
-                    self.change_inner_paragraph();
+                    self.change_paragraph(TextObjectKind::Inner);
                 }
                 TextObject::Sentence => {
-                    self.change_inner_sentence();
+                    self.change_sentence(TextObjectKind::Inner);
                 }
             },
             EditTarget::Around(obj) => match obj {
@@ -3336,10 +3231,10 @@ impl<'a> EditorState<'a> {
                     self.delete_around_pair(*c);
                 }
                 TextObject::Paragraph => {
-                    self.change_a_paragraph();
+                    self.change_paragraph(TextObjectKind::Around);
                 }
                 TextObject::Sentence => {
-                    self.change_a_sentence();
+                    self.change_sentence(TextObjectKind::Around);
                 }
             },
             EditTarget::ToChar(c, search_type, dir) => {
@@ -5328,14 +5223,14 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Change(EditTarget::Inner(
                                         TextObject::Paragraph,
                                     ));
-                                    self.change_inner_paragraph();
+                                    self.change_paragraph(TextObjectKind::Inner);
                                 } else if op == 'y' {
-                                    self.yank_inner_paragraph();
+                                    self.yank_paragraph(TextObjectKind::Inner);
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Paragraph,
                                     ));
-                                    self.delete_inner_paragraph();
+                                    self.delete_paragraph(TextObjectKind::Inner);
                                 }
                             } else if first == KeyCode::Char('a') && c == 'p' {
                                 // dap / cap / yap - delete/change/yank a paragraph
@@ -5344,14 +5239,14 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Change(EditTarget::Around(
                                         TextObject::Paragraph,
                                     ));
-                                    self.change_a_paragraph();
+                                    self.change_paragraph(TextObjectKind::Around);
                                 } else if op == 'y' {
-                                    self.yank_a_paragraph();
+                                    self.yank_paragraph(TextObjectKind::Around);
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Paragraph,
                                     ));
-                                    self.delete_a_paragraph();
+                                    self.delete_paragraph(TextObjectKind::Around);
                                 }
                             } else if first == KeyCode::Char('i') && c == 's' {
                                 // dis / cis / yis - delete/change/yank inner sentence
@@ -5359,13 +5254,13 @@ impl<'a> EditorState<'a> {
                                     self.insert_buffer.clear();
                                     self.last_change =
                                         LastChange::Change(EditTarget::Inner(TextObject::Sentence));
-                                    self.change_inner_sentence();
+                                    self.change_sentence(TextObjectKind::Inner);
                                 } else if op == 'y' {
-                                    self.yank_inner_sentence();
+                                    self.yank_sentence(TextObjectKind::Inner);
                                 } else {
                                     self.last_change =
                                         LastChange::Delete(EditTarget::Inner(TextObject::Sentence));
-                                    self.delete_inner_sentence();
+                                    self.delete_sentence(TextObjectKind::Inner);
                                 }
                             } else if first == KeyCode::Char('a') && c == 's' {
                                 // das / cas / yas - delete/change/yank a sentence
@@ -5374,14 +5269,14 @@ impl<'a> EditorState<'a> {
                                     self.last_change = LastChange::Change(EditTarget::Around(
                                         TextObject::Sentence,
                                     ));
-                                    self.change_a_sentence();
+                                    self.change_sentence(TextObjectKind::Around);
                                 } else if op == 'y' {
-                                    self.yank_a_sentence();
+                                    self.yank_sentence(TextObjectKind::Around);
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Sentence,
                                     ));
-                                    self.delete_a_sentence();
+                                    self.delete_sentence(TextObjectKind::Around);
                                 }
                             } else if first == KeyCode::Char('[') && (c == '(' || c == '{') {
                                 // d[( d[{ c[( c[{ y[( y[{ - delete/change/yank to previous unmatched bracket
@@ -6625,19 +6520,22 @@ impl<'a> EditorState<'a> {
                                 }
                                 ('i', 'p') => {
                                     // ip - inner paragraph
-                                    let (start_row, end_row) = self.get_inner_paragraph_bounds();
-                                    self.visual_start = (start_row, 0);
-                                    let end_col =
-                                        self.lines[end_row].chars().count().saturating_sub(1);
-                                    self.cursor = (end_row, end_col);
-                                    // Switch to linewise visual mode for paragraph selection
-                                    self.mode = EditorMode::VisualLine;
+                                    if let Some((start_row, end_row)) =
+                                        self.get_paragraph_bounds(TextObjectKind::Inner)
+                                    {
+                                        self.visual_start = (start_row, 0);
+                                        let end_col =
+                                            self.lines[end_row].chars().count().saturating_sub(1);
+                                        self.cursor = (end_row, end_col);
+                                        // Switch to linewise visual mode for paragraph selection
+                                        self.mode = EditorMode::VisualLine;
+                                    }
                                     true
                                 }
                                 ('a', 'p') => {
                                     // ap - a paragraph (includes trailing/leading blank lines)
                                     if let Some((start_row, end_row)) =
-                                        self.get_a_paragraph_bounds()
+                                        self.get_paragraph_bounds(TextObjectKind::Around)
                                     {
                                         self.visual_start = (start_row, 0);
                                         let end_col =
@@ -6651,7 +6549,7 @@ impl<'a> EditorState<'a> {
                                 ('i', 's') => {
                                     // is - inner sentence
                                     let (start_row, start_col, end_row, end_col) =
-                                        self.get_inner_sentence_bounds();
+                                        self.get_sentence_bounds(TextObjectKind::Inner);
                                     self.visual_start = (start_row, start_col);
                                     self.cursor = (end_row, end_col);
                                     // Keep in character visual mode for sentence selection
@@ -6661,7 +6559,7 @@ impl<'a> EditorState<'a> {
                                 ('a', 's') => {
                                     // as - a sentence (includes trailing whitespace)
                                     let (start_row, start_col, end_row, end_col) =
-                                        self.get_a_sentence_bounds();
+                                        self.get_sentence_bounds(TextObjectKind::Around);
                                     self.visual_start = (start_row, start_col);
                                     self.cursor = (end_row, end_col);
                                     // Keep in character visual mode for sentence selection
