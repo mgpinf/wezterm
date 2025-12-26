@@ -5069,25 +5069,36 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn paste_after(&mut self) {
+    fn paste_after_count(&mut self, count: usize) {
         self.save_undo_state();
         self.lines_version += 1;
-        if self.yank_buffer.is_empty() {
+        if self.yank_buffer.is_empty() || count == 0 {
             return;
         }
+
         if self.yank_is_linewise {
+            // For linewise, repeat the lines `count` times
+            let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            let mut all_lines: Vec<String> = Vec::new();
+            for _ in 0..count {
+                for line in &base_lines {
+                    all_lines.push(line.to_string());
+                }
+            }
             // Insert yanked lines below current line
-            // Use split('\n') instead of lines() to preserve trailing blank lines
-            let new_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
-            for (i, line) in new_lines.iter().enumerate() {
-                self.lines.insert(self.cursor.0 + 1 + i, line.to_string());
+            for (i, line) in all_lines.iter().enumerate() {
+                self.lines.insert(self.cursor.0 + 1 + i, line.clone());
             }
             // Move cursor to first non-blank of first inserted line
             self.cursor.0 += 1;
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else if self.yank_buffer.contains('\n') {
-            // Multi-line characterwise paste (e.g., from yi( across lines)
-            let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            // Multi-line characterwise paste - repeat content `count` times
+            let repeated_buffer = std::iter::repeat(self.yank_buffer.as_str())
+                .take(count)
+                .collect::<Vec<_>>()
+                .join("");
+            let paste_lines: Vec<&str> = repeated_buffer.split('\n').collect();
             let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = if current_line_chars.is_empty() {
                 0
@@ -5130,14 +5141,15 @@ impl<'a> EditorState<'a> {
                 0
             };
         } else {
-            // Single line characterwise paste - use character-based insertion
+            // Single line characterwise paste - repeat content `count` times
+            let repeated_buffer: String = self.yank_buffer.repeat(count);
             let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = if chars.is_empty() {
                 0
             } else {
                 (self.cursor.1 + 1).min(chars.len())
             };
-            let paste_chars: Vec<char> = self.yank_buffer.chars().collect();
+            let paste_chars: Vec<char> = repeated_buffer.chars().collect();
 
             // Insert paste characters
             for (i, c) in paste_chars.iter().enumerate() {
@@ -5152,24 +5164,35 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    fn paste_before(&mut self) {
+    fn paste_before_count(&mut self, count: usize) {
         self.save_undo_state();
         self.lines_version += 1;
-        if self.yank_buffer.is_empty() {
+        if self.yank_buffer.is_empty() || count == 0 {
             return;
         }
+
         if self.yank_is_linewise {
+            // For linewise, repeat the lines `count` times
+            let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            let mut all_lines: Vec<String> = Vec::new();
+            for _ in 0..count {
+                for line in &base_lines {
+                    all_lines.push(line.to_string());
+                }
+            }
             // Insert yanked lines above current line
-            // Use split('\n') instead of lines() to preserve trailing blank lines
-            let new_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
-            for (i, line) in new_lines.iter().enumerate() {
-                self.lines.insert(self.cursor.0 + i, line.to_string());
+            for (i, line) in all_lines.iter().enumerate() {
+                self.lines.insert(self.cursor.0 + i, line.clone());
             }
             // Move cursor to first non-blank of first inserted line
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else if self.yank_buffer.contains('\n') {
-            // Multi-line characterwise paste
-            let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            // Multi-line characterwise paste - repeat content `count` times
+            let repeated_buffer = std::iter::repeat(self.yank_buffer.as_str())
+                .take(count)
+                .collect::<Vec<_>>()
+                .join("");
+            let paste_lines: Vec<&str> = repeated_buffer.split('\n').collect();
             let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = self.cursor.1.min(current_line_chars.len());
 
@@ -5204,10 +5227,11 @@ impl<'a> EditorState<'a> {
                 0
             };
         } else {
-            // Single line characterwise paste - use character-based insertion
+            // Single line characterwise paste - repeat content `count` times
+            let repeated_buffer: String = self.yank_buffer.repeat(count);
             let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = self.cursor.1.min(chars.len());
-            let paste_chars: Vec<char> = self.yank_buffer.chars().collect();
+            let paste_chars: Vec<char> = repeated_buffer.chars().collect();
 
             // Insert paste characters
             for (i, c) in paste_chars.iter().enumerate() {
@@ -6915,11 +6939,13 @@ impl<'a> EditorState<'a> {
                                 self.update_desired_col();
                             }
                             'p' => {
-                                self.paste_after();
+                                let count = self.take_count();
+                                self.paste_after_count(count);
                                 self.update_desired_col();
                             }
                             'P' => {
-                                self.paste_before();
+                                let count = self.take_count();
+                                self.paste_before_count(count);
                                 self.update_desired_col();
                             }
                             'Y' => self.yank_to_end_of_line(), // Y yanks to end of line (like y$)
