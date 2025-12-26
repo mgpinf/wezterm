@@ -3272,6 +3272,8 @@ impl<'a> EditorState<'a> {
             LastChange::ReplaceChar(c) => self.replace_char(c),
             LastChange::ReplaceMode(text) => {
                 self.save_undo_state();
+                // Temporarily set mode to Replace so insert_char/insert_newline batch changes
+                self.mode = EditorMode::Replace;
                 for c in text.chars() {
                     if c == '\n' {
                         self.insert_newline();
@@ -3279,6 +3281,7 @@ impl<'a> EditorState<'a> {
                         self.replace_char_at_cursor(c);
                     }
                 }
+                self.mode = EditorMode::Normal;
                 // Move cursor back like Escape does
                 if self.cursor.1 > 0 {
                     self.cursor.1 -= 1;
