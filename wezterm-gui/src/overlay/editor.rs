@@ -198,6 +198,8 @@ enum LastChange {
     ReplaceChar(char),  // r{char}
     IncrementNumber,    // Ctrl-A
     DecrementNumber,    // Ctrl-X
+    PasteAfter,         // p
+    PasteBefore,        // P
 }
 
 /// Information about a number found at cursor position
@@ -3191,6 +3193,14 @@ impl<'a> EditorState<'a> {
             LastChange::ReplaceChar(c) => self.replace_char(c),
             LastChange::IncrementNumber => self.increment_number(),
             LastChange::DecrementNumber => self.decrement_number(),
+            LastChange::PasteAfter => {
+                self.paste_after_count(use_count);
+                self.update_desired_col();
+            }
+            LastChange::PasteBefore => {
+                self.paste_before_count(use_count);
+                self.update_desired_col();
+            }
         }
     }
 
@@ -6941,11 +6951,15 @@ impl<'a> EditorState<'a> {
                             'p' => {
                                 let count = self.take_count();
                                 self.paste_after_count(count);
+                                self.last_change = LastChange::PasteAfter;
+                                self.last_count = count;
                                 self.update_desired_col();
                             }
                             'P' => {
                                 let count = self.take_count();
                                 self.paste_before_count(count);
+                                self.last_change = LastChange::PasteBefore;
+                                self.last_count = count;
                                 self.update_desired_col();
                             }
                             'Y' => self.yank_to_end_of_line(), // Y yanks to end of line (like y$)
