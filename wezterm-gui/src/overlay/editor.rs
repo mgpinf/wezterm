@@ -3701,27 +3701,35 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
 
-            // Render rest of status bar with position at the end
-            let position = format!("{}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
+            // Render middle section (pending keys if any) and position at the end
+            let position = format!(" {}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
             let mode_len = mode_text.len();
+            let position_len = position.len();
 
-            // Calculate the middle padding and right side content
-            let right_content = if pending_str.is_empty() {
-                position.clone()
+            // Calculate middle section width
+            let middle_width = cols.saturating_sub(mode_len + position_len);
+
+            // Render middle section with status bar colors
+            let middle_content = if pending_str.is_empty() {
+                format!("{:width$}", "", width = middle_width)
             } else {
-                format!("{}    {}", pending_str, position)
+                // Right-align pending keys in the middle section
+                format!("{:>width$}", pending_str, width = middle_width)
             };
-            let middle_padding = cols.saturating_sub(mode_len + right_content.len());
 
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
-                Change::Text(format!(
-                    "{:width$}{}",
-                    "",
-                    right_content,
-                    width = middle_padding
-                )),
+                Change::Text(middle_content),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+
+            // Render position with mode colors
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(mode_bg)),
+                Change::Attribute(AttributeChange::Foreground(mode_fg)),
+                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                Change::Text(position),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
