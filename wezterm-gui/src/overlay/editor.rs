@@ -5690,6 +5690,7 @@ impl<'a> EditorState<'a> {
                         // Handle digit prefix (1-9 start, 0 continues if already started)
                         if c.is_ascii_digit() && (c != '0' || self.count_prefix.is_some()) {
                             self.add_count_digit(c);
+                            self.render()?;
                             continue;
                         }
 
