@@ -3116,6 +3116,8 @@ impl<'a> EditorState<'a> {
         let has_explicit_count = self.count_prefix.is_some();
         let explicit_count = self.take_count(); // This returns 1 if no count was given
         let use_count = if has_explicit_count {
+            // Update last_count so future . commands use this count
+            self.last_count = explicit_count;
             explicit_count
         } else {
             self.last_count
