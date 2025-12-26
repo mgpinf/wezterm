@@ -231,7 +231,9 @@ struct EditorState<'a> {
     viewport_top: usize,
     pending_keys: Vec<KeyCode>,
     pending_operator: Option<char>, // 'd', 'c', 'y'
+    count_prefix: Option<usize>,    // Numeric prefix for commands (e.g., 5j, 3dd)
     last_change: LastChange,
+    last_count: usize, // Count used with last change (for . repeat)
     insert_buffer: String,     // Buffer to track text inserted in insert mode
     insert_style: InsertStyle, // Style of insert (i, a, I, A)
     last_char_search: Option<(char, char)>, // (search_type: f/F/t/T, character)
@@ -278,7 +280,9 @@ impl<'a> EditorState<'a> {
             viewport_top: 0,
             pending_keys: Vec::new(),
             pending_operator: None,
+            count_prefix: None,
             last_change: LastChange::None,
+            last_count: 1,
             insert_buffer: String::new(),
             insert_style: InsertStyle::Before,
             last_char_search: None,
@@ -292,6 +296,17 @@ impl<'a> EditorState<'a> {
             search_start_pos: (0, 0),
             visual_start: (0, 0),
         }
+    }
+
+    /// Get the count prefix (defaults to 1) and reset it
+    fn take_count(&mut self) -> usize {
+        self.count_prefix.take().unwrap_or(1)
+    }
+
+    /// Add a digit to the count prefix
+    fn add_count_digit(&mut self, digit: char) {
+        let d = digit.to_digit(10).unwrap_or(0) as usize;
+        self.count_prefix = Some(self.count_prefix.unwrap_or(0) * 10 + d);
     }
 
     fn record_change(&mut self) {
@@ -421,6 +436,15 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_char(&mut self) {
+        self.delete_char_no_undo();
+        // Only record change if not in insert mode (batch insert mode changes)
+        if self.mode != EditorMode::Insert {
+            self.record_change();
+        }
+    }
+
+    /// Delete character without recording undo state (for use in counted operations)
+    fn delete_char_no_undo(&mut self) {
         let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if !chars.is_empty() && self.cursor.1 < chars.len() {
             // Store deleted char in yank buffer
@@ -431,10 +455,6 @@ impl<'a> EditorState<'a> {
             self.clamp_cursor();
             self.update_desired_col();
             self.lines_version += 1;
-            // Only record change if not in insert mode (batch insert mode changes)
-            if self.mode != EditorMode::Insert {
-                self.record_change();
-            }
         }
     }
 
@@ -460,14 +480,31 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_line(&mut self) {
+        self.delete_lines(1);
+    }
+
+    /// Delete `count` lines starting from cursor
+    fn delete_lines(&mut self, count: usize) {
         // Save state before deletion for undo (preserves cursor position)
         self.save_undo_state();
         self.lines_version += 1;
-        // Store deleted line in yank buffer
-        self.yank_buffer = self.lines[self.cursor.0].clone();
+
+        // Calculate actual lines to delete (don't exceed available lines)
+        let end_row = (self.cursor.0 + count).min(self.lines.len());
+        let actual_count = end_row - self.cursor.0;
+
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[self.cursor.0..end_row]
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
-        if self.lines.len() > 1 {
-            self.lines.remove(self.cursor.0);
+
+        if self.lines.len() > actual_count {
+            for _ in 0..actual_count {
+                self.lines.remove(self.cursor.0);
+            }
             if self.cursor.0 >= self.lines.len() {
                 self.cursor.0 = self.lines.len() - 1;
             }
@@ -475,8 +512,10 @@ impl<'a> EditorState<'a> {
             self.update_desired_col();
             self.record_change();
         } else {
-            self.lines[0].clear();
-            self.cursor.1 = 0;
+            // Deleting all lines - leave one empty line
+            self.lines.clear();
+            self.lines.push(String::new());
+            self.cursor = (0, 0);
             self.update_desired_col();
             self.record_change();
         }
@@ -697,9 +736,14 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    fn yank_line(&mut self) {
-        // Yank current line (linewise)
-        self.yank_buffer = self.lines[self.cursor.0].clone();
+    /// Yank `count` lines starting from cursor (yy with count)
+    fn yank_lines(&mut self, count: usize) {
+        let end_row = (self.cursor.0 + count).min(self.lines.len());
+        let yanked: Vec<&str> = self.lines[self.cursor.0..end_row]
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
     }
 
@@ -3066,11 +3110,20 @@ impl<'a> EditorState<'a> {
     }
 
     fn repeat_last_change(&mut self) {
+        // Use provided count if given, otherwise use stored last_count
+        let has_explicit_count = self.count_prefix.is_some();
+        let explicit_count = self.take_count(); // This returns 1 if no count was given
+        let use_count = if has_explicit_count {
+            explicit_count
+        } else {
+            self.last_count
+        };
+
         match self.last_change.clone() {
             LastChange::None => {}
-            LastChange::Delete(target) => self.execute_delete_target(&target),
+            LastChange::Delete(target) => self.execute_delete_target(&target, use_count),
             LastChange::Change(target) => {
-                self.execute_change_target(&target);
+                self.execute_change_target(&target, use_count);
                 self.insert_saved_text();
             }
             LastChange::InsertText(text, style) => {
@@ -3141,18 +3194,31 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Execute a delete operation on the given target
-    fn execute_delete_target(&mut self, target: &EditTarget) {
+    /// Execute a delete operation on the given target with count
+    fn execute_delete_target(&mut self, target: &EditTarget, count: usize) {
         match target {
-            EditTarget::Char => self.delete_char(),
-            EditTarget::Line => self.delete_line(),
+            EditTarget::Char => {
+                self.save_undo_state();
+                for _ in 0..count {
+                    self.delete_char_no_undo();
+                }
+                self.record_change();
+            }
+            EditTarget::Line => self.delete_lines(count),
             EditTarget::WordStart(wt, dir) => match dir {
                 Direction::Forward => {
-                    self.perform_delete_motion(|s| s.get_word_forward_pos(*wt), false, true, false);
+                    self.perform_delete_motion_with_count(
+                        |s| s.get_word_forward_pos(*wt),
+                        count,
+                        false,
+                        true,
+                        false,
+                    );
                 }
                 Direction::Backward => {
-                    self.perform_delete_motion(
+                    self.perform_delete_motion_with_count(
                         |s| s.get_word_backward_pos(*wt),
+                        count,
                         false,
                         true,
                         false,
@@ -3161,11 +3227,18 @@ impl<'a> EditorState<'a> {
             },
             EditTarget::WordEnd(wt, dir) => match dir {
                 Direction::Forward => {
-                    self.perform_delete_motion(|s| s.get_word_end_pos(*wt), true, true, false);
+                    self.perform_delete_motion_with_count(
+                        |s| s.get_word_end_pos(*wt),
+                        count,
+                        true,
+                        true,
+                        false,
+                    );
                 }
                 Direction::Backward => {
-                    self.perform_delete_motion(
+                    self.perform_delete_motion_with_count(
                         |s| s.get_word_end_backward_pos(*wt),
+                        count,
                         true,
                         true,
                         false,
@@ -3201,14 +3274,14 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Execute a change operation on the given target
-    fn execute_change_target(&mut self, target: &EditTarget) {
+    /// Execute a change operation on the given target with count
+    fn execute_change_target(&mut self, target: &EditTarget, count: usize) {
         match target {
             EditTarget::Char => {
                 self.substitute_char();
             }
             EditTarget::Line => {
-                self.substitute_line();
+                self.substitute_lines(count);
             }
             EditTarget::WordStart(wt, dir) => {
                 self.mode = EditorMode::Insert;
@@ -3220,15 +3293,17 @@ impl<'a> EditorState<'a> {
                         let on_whitespace =
                             self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
                         if on_whitespace {
-                            self.perform_delete_motion(
+                            self.perform_delete_motion_with_count(
                                 |s| s.get_word_forward_pos(*wt),
+                                count,
                                 false,
                                 false,
                                 false,
                             );
                         } else {
-                            self.perform_delete_motion(
+                            self.perform_delete_motion_with_count(
                                 |s| s.get_word_end_pos(*wt),
+                                count,
                                 true,
                                 false,
                                 false,
@@ -3236,8 +3311,9 @@ impl<'a> EditorState<'a> {
                         }
                     }
                     Direction::Backward => {
-                        self.perform_delete_motion(
+                        self.perform_delete_motion_with_count(
                             |s| s.get_word_backward_pos(*wt),
+                            count,
                             false,
                             false,
                             false,
@@ -3249,11 +3325,18 @@ impl<'a> EditorState<'a> {
                 self.mode = EditorMode::Insert;
                 match dir {
                     Direction::Forward => {
-                        self.perform_delete_motion(|s| s.get_word_end_pos(*wt), true, false, false);
+                        self.perform_delete_motion_with_count(
+                            |s| s.get_word_end_pos(*wt),
+                            count,
+                            true,
+                            false,
+                            false,
+                        );
                     }
                     Direction::Backward => {
-                        self.perform_delete_motion(
+                        self.perform_delete_motion_with_count(
                             |s| s.get_word_end_backward_pos(*wt),
+                            count,
                             true,
                             false,
                             false,
@@ -3360,11 +3443,17 @@ impl<'a> EditorState<'a> {
     }
 
     fn substitute_line(&mut self) {
+        self.substitute_lines(1);
+    }
+
+    /// Substitute `count` lines (cc/S with count)
+    fn substitute_lines(&mut self, count: usize) {
         // Save undo state ONCE (for the entire change operation)
         self.save_undo_state();
         self.lines_version += 1;
 
-        let line = &mut self.lines[self.cursor.0];
+        // Get indentation from first line
+        let line = &self.lines[self.cursor.0];
         let mut indent = String::new();
         for ch in line.chars() {
             if ch.is_whitespace() {
@@ -3374,8 +3463,27 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        *line = indent;
-        self.cursor.1 = line.len();
+        // Calculate actual lines to delete
+        let end_row = (self.cursor.0 + count).min(self.lines.len());
+        let actual_count = end_row - self.cursor.0;
+
+        // Store deleted lines in yank buffer
+        let yanked: Vec<&str> = self.lines[self.cursor.0..end_row]
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+
+        // Remove lines and replace with indented empty line
+        for _ in 0..actual_count {
+            if self.cursor.0 < self.lines.len() {
+                self.lines.remove(self.cursor.0);
+            }
+        }
+        self.lines.insert(self.cursor.0, indent.clone());
+
+        self.cursor.1 = indent.len();
         self.mode = EditorMode::Insert;
         // Don't call record_change() here - it will be called when exiting insert mode
     }
@@ -3675,6 +3783,10 @@ impl<'a> EditorState<'a> {
 
         // Build pending keys string (shown on the right like Neovim)
         let mut pending_str = String::new();
+        // Show count prefix first
+        if let Some(count) = self.count_prefix {
+            pending_str.push_str(&count.to_string());
+        }
         if let Some(op) = self.pending_operator {
             pending_str.push(op);
         }
@@ -4037,6 +4149,35 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    // Helper to perform delete action based on a motion with count support
+    fn perform_delete_motion_with_count<F>(
+        &mut self,
+        motion: F,
+        count: usize,
+        is_inclusive: bool,
+        delete_empty_lines: bool,
+        allow_linewise: bool,
+    ) where
+        F: Fn(&EditorState) -> (usize, usize),
+    {
+        // Record state before deletion for undo (preserves cursor position)
+        self.save_undo_state();
+        self.lines_version += 1;
+        let start = self.cursor;
+
+        // Apply motion `count` times to get final position
+        let mut end = self.cursor;
+        for _ in 0..count {
+            // Temporarily move cursor to calculate next position
+            let old_cursor = self.cursor;
+            self.cursor = end;
+            end = motion(self);
+            self.cursor = old_cursor;
+        }
+
+        self.perform_delete_motion_inner(start, end, is_inclusive, delete_empty_lines, allow_linewise);
+    }
+
     // Helper to perform delete action based on a motion
     // delete_empty_lines: if true, delete the entire line when backward motion would empty it
     // allow_linewise: if true, allow linewise deletion when cursor is at start of line (for sentence/paragraph motions)
@@ -4054,6 +4195,17 @@ impl<'a> EditorState<'a> {
         self.lines_version += 1;
         let start = self.cursor;
         let end = motion(self);
+        self.perform_delete_motion_inner(start, end, is_inclusive, delete_empty_lines, allow_linewise);
+    }
+
+    fn perform_delete_motion_inner(
+        &mut self,
+        start: (usize, usize),
+        end: (usize, usize),
+        is_inclusive: bool,
+        delete_empty_lines: bool,
+        allow_linewise: bool,
+    ) {
 
         // Handle direction - use character-based operations
         if end.0 < start.0 {
@@ -4351,6 +4503,174 @@ impl<'a> EditorState<'a> {
         let start = self.cursor;
         let end = motion(self);
 
+        // Handle direction - use character-based operations
+        if end.0 < start.0 {
+            // Backward motion crossing to previous line - yank multi-line
+
+            // Determine if this is a linewise yank
+            // First line of paragraph: cursor at or before first non-whitespace
+            // Other lines: cursor at first non-whitespace only
+            let first_non_blank = self.get_first_non_blank_in_line(start.0);
+            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let cursor_qualifies_for_linewise = if is_first_line_of_para {
+                start.1 <= first_non_blank
+            } else {
+                start.1 == first_non_blank
+            };
+            let is_linewise = end.1 == 0 && cursor_qualifies_for_linewise;
+
+            let mut yanked_text = String::new();
+            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+
+            if is_linewise {
+                // Linewise yank: include entire lines
+                yanked_text.push_str(&end_chars.iter().collect::<String>());
+
+                // Intermediate lines
+                for row in (end.0 + 1)..start.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+
+                // Include entire start line
+                yanked_text.push('\n');
+                yanked_text.push_str(&start_chars.iter().collect::<String>());
+            } else {
+                // Character-wise yank
+                yanked_text.push_str(&end_chars[end.1..].iter().collect::<String>());
+
+                // Intermediate lines
+                for row in (end.0 + 1)..start.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+
+                // From start of start line to cursor
+                yanked_text.push('\n');
+                yanked_text.push_str(&start_chars[..start.1].iter().collect::<String>());
+            }
+
+            self.yank_buffer = yanked_text;
+            self.yank_is_linewise = is_linewise;
+
+            // Move cursor to start of yanked region (like Neovim)
+            self.cursor = end;
+            self.update_desired_col();
+        } else if end.0 == start.0 && end.1 < start.1 {
+            // Backward motion on same line (yb, yB, yge)
+            // For inclusive motions (yge), include the character at cursor position
+            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            let yank_end = if is_inclusive {
+                (start.1 + 1).min(chars.len())
+            } else {
+                start.1
+            };
+            if end.1 < yank_end && yank_end <= chars.len() {
+                self.yank_buffer = chars[end.1..yank_end].iter().collect();
+            }
+            self.yank_is_linewise = false;
+
+            // Move cursor to start of yanked region (like Neovim)
+            self.cursor.1 = end.1;
+            self.update_desired_col();
+        } else if end.0 > start.0 {
+            // Forward motion crossing to next line - yank multi-line
+            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            let end_col = if is_inclusive {
+                (end.1 + 1).min(end_chars.len())
+            } else {
+                end.1
+            };
+
+            // Determine if this is a linewise yank
+            // First line of paragraph: cursor at or before first non-whitespace
+            // Other lines: cursor at first non-whitespace only
+            let first_non_blank = self.get_first_non_blank_in_line(start.0);
+            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let cursor_qualifies_for_linewise = if is_first_line_of_para {
+                start.1 <= first_non_blank
+            } else {
+                start.1 == first_non_blank
+            };
+            let is_linewise = cursor_qualifies_for_linewise && end_col == 0;
+
+            let mut yanked_text = String::new();
+            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+
+            if is_linewise {
+                // Linewise yank: include entire line from column 0 (including leading whitespace)
+                yanked_text.push_str(&start_chars.iter().collect::<String>());
+
+                // Intermediate lines
+                for row in (start.0 + 1)..end.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+                // Don't add trailing newline for linewise
+            } else {
+                // Character-wise yank: from cursor position
+                yanked_text.push_str(&start_chars[start.1..].iter().collect::<String>());
+
+                // Intermediate lines
+                for row in (start.0 + 1)..end.0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&self.lines[row]);
+                }
+
+                // Add content from the end line if there's something to add
+                if end_col > 0 {
+                    yanked_text.push('\n');
+                    yanked_text.push_str(&end_chars[..end_col].iter().collect::<String>());
+                }
+            }
+
+            self.yank_buffer = yanked_text;
+            self.yank_is_linewise = is_linewise;
+        } else {
+            // Forward motion on same line (yw, ye)
+            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            let mut range_end = end.1;
+            if is_inclusive {
+                range_end += 1;
+            }
+            if range_end > chars.len() {
+                range_end = chars.len();
+            }
+            if start.1 < range_end {
+                self.yank_buffer = chars[start.1..range_end].iter().collect();
+            }
+            self.yank_is_linewise = false;
+        }
+    }
+
+    // Helper to perform yank action based on a motion with count support
+    fn perform_yank_motion_with_count<F>(&mut self, motion: F, count: usize, is_inclusive: bool)
+    where
+        F: Fn(&EditorState) -> (usize, usize),
+    {
+        let start = self.cursor;
+
+        // Apply motion `count` times to get final position
+        let mut end = self.cursor;
+        for _ in 0..count {
+            // Temporarily move cursor to calculate next position
+            let old_cursor = self.cursor;
+            self.cursor = end;
+            end = motion(self);
+            self.cursor = old_cursor;
+        }
+
+        // Use the same logic as perform_yank_motion but with custom start/end
+        self.perform_yank_motion_inner(start, end, is_inclusive);
+    }
+
+    fn perform_yank_motion_inner(
+        &mut self,
+        start: (usize, usize),
+        end: (usize, usize),
+        is_inclusive: bool,
+    ) {
         // Handle direction - use character-based operations
         if end.0 < start.0 {
             // Backward motion crossing to previous line - yank multi-line
@@ -5320,6 +5640,12 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char(c),
                         ..
                     }) => {
+                        // Handle digit prefix (1-9 start, 0 continues if already started)
+                        if c.is_ascii_digit() && (c != '0' || self.count_prefix.is_some()) {
+                            self.add_count_digit(c);
+                            continue;
+                        }
+
                         // Handle operator + pending keys first (e.g., dgg, cgg)
                         if self.pending_operator.is_some() && !self.pending_keys.is_empty() {
                             let op = self.pending_operator.unwrap();
@@ -5337,11 +5663,13 @@ impl<'a> EditorState<'a> {
                                 }
                             } else if first == KeyCode::Char('g') && c == 'e' {
                                 // dge / cge / yge - delete/change/yank backward to end of previous word
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.perform_delete_motion(
+                                    self.perform_delete_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::Word),
+                                        count,
                                         true,
                                         false,
                                         false,
@@ -5350,14 +5678,17 @@ impl<'a> EditorState<'a> {
                                         WordType::Word,
                                         Direction::Backward,
                                     ));
+                                    self.last_count = count;
                                 } else if op == 'y' {
-                                    self.perform_yank_motion(
+                                    self.perform_yank_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::Word),
+                                        count,
                                         true,
                                     );
                                 } else {
-                                    self.perform_delete_motion(
+                                    self.perform_delete_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::Word),
+                                        count,
                                         true,
                                         true,
                                         false,
@@ -5366,14 +5697,17 @@ impl<'a> EditorState<'a> {
                                         WordType::Word,
                                         Direction::Backward,
                                     ));
+                                    self.last_count = count;
                                 }
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // dgE / cgE / ygE - delete/change/yank backward to end of previous WORD
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
-                                    self.perform_delete_motion(
+                                    self.perform_delete_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::LongWord),
+                                        count,
                                         true,
                                         false,
                                         false,
@@ -5382,14 +5716,17 @@ impl<'a> EditorState<'a> {
                                         WordType::LongWord,
                                         Direction::Backward,
                                     ));
+                                    self.last_count = count;
                                 } else if op == 'y' {
-                                    self.perform_yank_motion(
+                                    self.perform_yank_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::LongWord),
+                                        count,
                                         true,
                                     );
                                 } else {
-                                    self.perform_delete_motion(
+                                    self.perform_delete_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::LongWord),
+                                        count,
                                         true,
                                         true,
                                         false,
@@ -5398,6 +5735,7 @@ impl<'a> EditorState<'a> {
                                         WordType::LongWord,
                                         Direction::Backward,
                                     ));
+                                    self.last_count = count;
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
                                 // diw / ciw / yiw - delete/change/yank inner word
@@ -5705,12 +6043,17 @@ impl<'a> EditorState<'a> {
 
                             if op == 'c' {
                                 match c {
-                                    'c' => self.substitute_line(), // cc == S
+                                    'c' => {
+                                        let count = self.take_count();
+                                        self.substitute_lines(count); // cc == S
+                                        self.last_count = count;
+                                    }
                                     'w' => {
                                         // cw behavior depends on what we're on:
                                         // - On a word: cw is like ce (change to end of word)
                                         // - On whitespace: cw uses w motion (change whitespace to start of next word)
                                         // - On punctuation: cw is like ce (change to end of punctuation)
+                                        let count = self.take_count();
                                         self.insert_buffer.clear();
                                         self.mode = EditorMode::Insert;
                                         let chars: Vec<char> =
@@ -5718,15 +6061,17 @@ impl<'a> EditorState<'a> {
                                         let on_whitespace = self.cursor.1 < chars.len()
                                             && chars[self.cursor.1].is_whitespace();
                                         if on_whitespace {
-                                            self.perform_delete_motion(
+                                            self.perform_delete_motion_with_count(
                                                 |s| s.get_word_forward_pos(WordType::Word),
+                                                count,
                                                 false,
                                                 false,
                                                 false,
                                             );
                                         } else {
-                                            self.perform_delete_motion(
+                                            self.perform_delete_motion_with_count(
                                                 |s| s.get_word_end_pos(WordType::Word),
+                                                count,
                                                 true,
                                                 false,
                                                 false,
@@ -5737,9 +6082,11 @@ impl<'a> EditorState<'a> {
                                                 WordType::Word,
                                                 Direction::Forward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     'W' => {
                                         // cW behavior: like cw but for WORD
+                                        let count = self.take_count();
                                         self.insert_buffer.clear();
                                         self.mode = EditorMode::Insert;
                                         let chars: Vec<char> =
@@ -5747,15 +6094,17 @@ impl<'a> EditorState<'a> {
                                         let on_whitespace = self.cursor.1 < chars.len()
                                             && chars[self.cursor.1].is_whitespace();
                                         if on_whitespace {
-                                            self.perform_delete_motion(
+                                            self.perform_delete_motion_with_count(
                                                 |s| s.get_word_forward_pos(WordType::LongWord),
+                                                count,
                                                 false,
                                                 false,
                                                 false,
                                             );
                                         } else {
-                                            self.perform_delete_motion(
+                                            self.perform_delete_motion_with_count(
                                                 |s| s.get_word_end_pos(WordType::LongWord),
+                                                count,
                                                 true,
                                                 false,
                                                 false,
@@ -5766,12 +6115,15 @@ impl<'a> EditorState<'a> {
                                                 WordType::LongWord,
                                                 Direction::Forward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     'e' => {
+                                        let count = self.take_count();
                                         self.insert_buffer.clear();
                                         self.mode = EditorMode::Insert;
-                                        self.perform_delete_motion(
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_end_pos(WordType::Word),
+                                            count,
                                             true,
                                             false,
                                             false,
@@ -5780,12 +6132,15 @@ impl<'a> EditorState<'a> {
                                             WordType::Word,
                                             Direction::Forward,
                                         ));
+                                        self.last_count = count;
                                     }
                                     'E' => {
+                                        let count = self.take_count();
                                         self.insert_buffer.clear();
                                         self.mode = EditorMode::Insert;
-                                        self.perform_delete_motion(
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_end_pos(WordType::LongWord),
+                                            count,
                                             true,
                                             false,
                                             false,
@@ -5794,12 +6149,15 @@ impl<'a> EditorState<'a> {
                                             WordType::LongWord,
                                             Direction::Forward,
                                         ));
+                                        self.last_count = count;
                                     }
                                     'b' => {
+                                        let count = self.take_count();
                                         self.insert_buffer.clear();
                                         self.mode = EditorMode::Insert;
-                                        self.perform_delete_motion(
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_backward_pos(WordType::Word),
+                                            count,
                                             false,
                                             false,
                                             false,
@@ -5809,12 +6167,15 @@ impl<'a> EditorState<'a> {
                                                 WordType::Word,
                                                 Direction::Backward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     'B' => {
+                                        let count = self.take_count();
                                         self.insert_buffer.clear();
                                         self.mode = EditorMode::Insert;
-                                        self.perform_delete_motion(
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_backward_pos(WordType::LongWord),
+                                            count,
                                             false,
                                             false,
                                             false,
@@ -5824,6 +6185,7 @@ impl<'a> EditorState<'a> {
                                                 WordType::LongWord,
                                                 Direction::Backward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     '$' => self.change_to_end_of_line(),
                                     '^' => {
@@ -5935,12 +6297,16 @@ impl<'a> EditorState<'a> {
                             } else if op == 'd' {
                                 match c {
                                     'd' => {
-                                        self.delete_line();
+                                        let count = self.take_count();
+                                        self.delete_lines(count);
                                         self.last_change = LastChange::Delete(EditTarget::Line);
+                                        self.last_count = count;
                                     }
                                     'w' => {
-                                        self.perform_delete_motion(
+                                        let count = self.take_count();
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_forward_pos(WordType::Word),
+                                            count,
                                             false,
                                             true,
                                             false,
@@ -5950,10 +6316,13 @@ impl<'a> EditorState<'a> {
                                                 WordType::Word,
                                                 Direction::Forward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     'W' => {
-                                        self.perform_delete_motion(
+                                        let count = self.take_count();
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_forward_pos(WordType::LongWord),
+                                            count,
                                             false,
                                             true,
                                             false,
@@ -5963,10 +6332,13 @@ impl<'a> EditorState<'a> {
                                                 WordType::LongWord,
                                                 Direction::Forward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     'e' => {
-                                        self.perform_delete_motion(
+                                        let count = self.take_count();
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_end_pos(WordType::Word),
+                                            count,
                                             true,
                                             true,
                                             false,
@@ -5975,10 +6347,13 @@ impl<'a> EditorState<'a> {
                                             WordType::Word,
                                             Direction::Forward,
                                         ));
+                                        self.last_count = count;
                                     }
                                     'E' => {
-                                        self.perform_delete_motion(
+                                        let count = self.take_count();
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_end_pos(WordType::LongWord),
+                                            count,
                                             true,
                                             true,
                                             false,
@@ -5987,10 +6362,13 @@ impl<'a> EditorState<'a> {
                                             WordType::LongWord,
                                             Direction::Forward,
                                         ));
+                                        self.last_count = count;
                                     }
                                     'b' => {
-                                        self.perform_delete_motion(
+                                        let count = self.take_count();
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_backward_pos(WordType::Word),
+                                            count,
                                             false,
                                             true,
                                             false,
@@ -6000,10 +6378,13 @@ impl<'a> EditorState<'a> {
                                                 WordType::Word,
                                                 Direction::Backward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     'B' => {
-                                        self.perform_delete_motion(
+                                        let count = self.take_count();
+                                        self.perform_delete_motion_with_count(
                                             |s| s.get_word_backward_pos(WordType::LongWord),
+                                            count,
                                             false,
                                             true,
                                             false,
@@ -6013,6 +6394,7 @@ impl<'a> EditorState<'a> {
                                                 WordType::LongWord,
                                                 Direction::Backward,
                                             ));
+                                        self.last_count = count;
                                     }
                                     '$' => self.delete_to_end_of_line(),
                                     '^' => self.perform_delete_motion(
@@ -6092,31 +6474,58 @@ impl<'a> EditorState<'a> {
                                 }
                             } else if op == 'y' {
                                 match c {
-                                    'y' => self.yank_line(),
-                                    'w' => self.perform_yank_motion(
-                                        |s| s.get_word_forward_pos(WordType::Word),
-                                        false,
-                                    ),
-                                    'W' => self.perform_yank_motion(
-                                        |s| s.get_word_forward_pos(WordType::LongWord),
-                                        false,
-                                    ),
-                                    'e' => self.perform_yank_motion(
-                                        |s| s.get_word_end_pos(WordType::Word),
-                                        true,
-                                    ),
-                                    'E' => self.perform_yank_motion(
-                                        |s| s.get_word_end_pos(WordType::LongWord),
-                                        true,
-                                    ),
-                                    'b' => self.perform_yank_motion(
-                                        |s| s.get_word_backward_pos(WordType::Word),
-                                        false,
-                                    ),
-                                    'B' => self.perform_yank_motion(
-                                        |s| s.get_word_backward_pos(WordType::LongWord),
-                                        false,
-                                    ),
+                                    'y' => {
+                                        let count = self.take_count();
+                                        self.yank_lines(count);
+                                    }
+                                    'w' => {
+                                        let count = self.take_count();
+                                        self.perform_yank_motion_with_count(
+                                            |s| s.get_word_forward_pos(WordType::Word),
+                                            count,
+                                            false,
+                                        );
+                                    }
+                                    'W' => {
+                                        let count = self.take_count();
+                                        self.perform_yank_motion_with_count(
+                                            |s| s.get_word_forward_pos(WordType::LongWord),
+                                            count,
+                                            false,
+                                        );
+                                    }
+                                    'e' => {
+                                        let count = self.take_count();
+                                        self.perform_yank_motion_with_count(
+                                            |s| s.get_word_end_pos(WordType::Word),
+                                            count,
+                                            true,
+                                        );
+                                    }
+                                    'E' => {
+                                        let count = self.take_count();
+                                        self.perform_yank_motion_with_count(
+                                            |s| s.get_word_end_pos(WordType::LongWord),
+                                            count,
+                                            true,
+                                        );
+                                    }
+                                    'b' => {
+                                        let count = self.take_count();
+                                        self.perform_yank_motion_with_count(
+                                            |s| s.get_word_backward_pos(WordType::Word),
+                                            count,
+                                            false,
+                                        );
+                                    }
+                                    'B' => {
+                                        let count = self.take_count();
+                                        self.perform_yank_motion_with_count(
+                                            |s| s.get_word_backward_pos(WordType::LongWord),
+                                            count,
+                                            false,
+                                        );
+                                    }
                                     '$' => self.yank_to_end_of_line(),
                                     '^' => self.perform_yank_motion(
                                         |s| s.get_first_non_blank_pos(),
@@ -6334,19 +6743,75 @@ impl<'a> EditorState<'a> {
                                 self.cursor.1 = 0;
                                 self.mode = EditorMode::Insert;
                             }
-                            'h' => self.move_cursor(0, -1),
-                            'j' => self.move_cursor(1, 0),
-                            'k' => self.move_cursor(-1, 0),
-                            'l' => self.move_cursor(0, 1),
-                            'w' => self.move_word_forward(WordType::Word),
-                            'W' => self.move_word_forward(WordType::LongWord),
-                            'e' => self.move_to_word_end(WordType::Word),
-                            'E' => self.move_to_word_end(WordType::LongWord),
-                            'b' => self.move_word_backward(WordType::Word),
-                            'B' => self.move_word_backward(WordType::LongWord),
+                            'h' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_cursor(0, -1);
+                                }
+                            }
+                            'j' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_cursor(1, 0);
+                                }
+                            }
+                            'k' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_cursor(-1, 0);
+                                }
+                            }
+                            'l' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_cursor(0, 1);
+                                }
+                            }
+                            'w' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_word_forward(WordType::Word);
+                                }
+                            }
+                            'W' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_word_forward(WordType::LongWord);
+                                }
+                            }
+                            'e' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_to_word_end(WordType::Word);
+                                }
+                            }
+                            'E' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_to_word_end(WordType::LongWord);
+                                }
+                            }
+                            'b' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_word_backward(WordType::Word);
+                                }
+                            }
+                            'B' => {
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.move_word_backward(WordType::LongWord);
+                                }
+                            }
                             'x' => {
-                                self.delete_char();
+                                let count = self.take_count();
+                                self.save_undo_state();
+                                for _ in 0..count {
+                                    self.delete_char_no_undo();
+                                }
+                                self.record_change();
                                 self.last_change = LastChange::Delete(EditTarget::Char);
+                                self.last_count = count;
                             }
                             'u' => {
                                 self.undo();
@@ -6366,7 +6831,14 @@ impl<'a> EditorState<'a> {
                                 self.update_desired_col();
                             }
                             'G' => {
-                                self.cursor.0 = self.lines.len() - 1;
+                                // With count: go to line N, without count: go to last line
+                                let target_line = if let Some(count) = self.count_prefix.take() {
+                                    // Line numbers are 1-based
+                                    (count.saturating_sub(1)).min(self.lines.len() - 1)
+                                } else {
+                                    self.lines.len() - 1
+                                };
+                                self.cursor.0 = target_line;
                                 // Use desired_col like vertical movement
                                 let line_len = self.lines[self.cursor.0].chars().count();
                                 let max_col = if self.mode == EditorMode::Insert {
@@ -6455,11 +6927,17 @@ impl<'a> EditorState<'a> {
                                 self.search_start_pos = self.cursor;
                             }
                             'n' => {
-                                self.search_next();
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.search_next();
+                                }
                                 self.update_desired_col();
                             }
                             'N' => {
-                                self.search_prev();
+                                let count = self.take_count();
+                                for _ in 0..count {
+                                    self.search_prev();
+                                }
                                 self.update_desired_col();
                             }
                             '*' => {
@@ -6496,6 +6974,7 @@ impl<'a> EditorState<'a> {
                     }) => {
                         self.pending_keys.clear();
                         self.pending_operator = None;
+                        self.count_prefix = None;
                         // Turn off search highlighting
                         self.search_highlight = false;
                         self.current_match = None;
