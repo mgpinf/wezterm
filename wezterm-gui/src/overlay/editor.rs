@@ -105,11 +105,26 @@ impl EditorColors {
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::White.into()), |c| {
                     ColorAttribute::TrueColorWithDefaultFallback(c.into())
                 }),
-            // Search match colors (yellow bg for matches, orange for current)
-            search_match_bg: ColorAttribute::PaletteIndex(AnsiColor::Yellow.into()),
-            search_match_fg: ColorAttribute::PaletteIndex(AnsiColor::Black.into()),
-            search_current_match_bg: ColorAttribute::PaletteIndex(AnsiColor::Olive.into()),
-            search_current_match_fg: ColorAttribute::PaletteIndex(AnsiColor::White.into()),
+            // Search match colors (yellow bg for matches, olive for current)
+            search_match_fg: colors
+                .input_text_search_match_fg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Black.into()), |c| {
+                    c.into()
+                }),
+            search_match_bg: colors.input_text_search_match_bg.map_or(
+                ColorAttribute::PaletteIndex(AnsiColor::Yellow.into()),
+                |c| c.into(),
+            ),
+            search_current_match_fg: colors
+                .input_text_search_current_match_fg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::White.into()), |c| {
+                    c.into()
+                }),
+            search_current_match_bg: colors
+                .input_text_search_current_match_bg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Olive.into()), |c| {
+                    c.into()
+                }),
         }
     }
 }
