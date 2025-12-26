@@ -3728,7 +3728,6 @@ impl<'a> EditorState<'a> {
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Background(mode_bg)),
                 Change::Attribute(AttributeChange::Foreground(mode_fg)),
-                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Text(position),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
