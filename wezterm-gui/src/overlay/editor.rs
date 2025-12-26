@@ -38,7 +38,9 @@ impl EditorColors {
             }),
             line_number_fg: colors
                 .input_text_line_number_fg
-                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Grey.into()), |c| c.into()),
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Grey.into()), |c| {
+                    c.into()
+                }),
             status_fg: colors.input_text_status_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
@@ -47,9 +49,10 @@ impl EditorColors {
                 },
                 |c| c.into(),
             ),
-            status_bg: colors
-                .input_text_status_bg
-                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Purple.into()), |c| c.into()),
+            status_bg: colors.input_text_status_bg.map_or(
+                ColorAttribute::PaletteIndex(AnsiColor::Purple.into()),
+                |c| c.into(),
+            ),
             normal_mode_fg: colors.input_text_normal_mode_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
@@ -3782,14 +3785,22 @@ impl<'a> EditorState<'a> {
                 break;
             }
 
-            // Line number
+            // Line number (relative, with absolute for current line)
+            let line_number_text = if line_idx == self.cursor.0 {
+                // Current line shows absolute line number, left-aligned
+                format!("{:<3} ", self.cursor.0 + 1)
+            } else {
+                // Other lines show relative distance, right-aligned
+                let rel_num = (line_idx as isize - self.cursor.0 as isize).unsigned_abs();
+                format!("{:>3} ", rel_num)
+            };
             self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(content_start_row + i),
                 },
                 Change::Attribute(AttributeChange::Foreground(self.colors.line_number_fg)),
-                Change::Text(format!("{:>3} ", line_idx + 1)),
+                Change::Text(line_number_text),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
 
