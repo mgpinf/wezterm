@@ -3716,7 +3716,12 @@ impl<'a> EditorState<'a> {
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
-                Change::Text(format!("{:width$}{}", "", right_content, width = middle_padding)),
+                Change::Text(format!(
+                    "{:width$}{}",
+                    "",
+                    right_content,
+                    width = middle_padding
+                )),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
