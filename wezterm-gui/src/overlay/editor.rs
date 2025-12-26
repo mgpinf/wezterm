@@ -311,6 +311,12 @@ impl<'a> EditorState<'a> {
         self.count_prefix = Some(self.count_prefix.unwrap_or(0) * 10 + d);
     }
 
+    /// Set the last change and count for repeat (.) command
+    fn set_last_change(&mut self, change: LastChange, count: usize) {
+        self.last_change = change;
+        self.last_count = count;
+    }
+
     fn record_change(&mut self) {
         // Truncate redo history
         if self.history_idx < self.history.len() - 1 {
@@ -5724,11 +5730,13 @@ impl<'a> EditorState<'a> {
                                         false,
                                         false,
                                     );
-                                    self.last_change = LastChange::Change(EditTarget::WordEnd(
-                                        WordType::Word,
-                                        Direction::Backward,
-                                    ));
-                                    self.last_count = count;
+                                    self.set_last_change(
+                                        LastChange::Change(EditTarget::WordEnd(
+                                            WordType::Word,
+                                            Direction::Backward,
+                                        )),
+                                        count,
+                                    );
                                 } else if op == 'y' {
                                     self.perform_yank_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::Word),
@@ -5743,11 +5751,13 @@ impl<'a> EditorState<'a> {
                                         true,
                                         false,
                                     );
-                                    self.last_change = LastChange::Delete(EditTarget::WordEnd(
-                                        WordType::Word,
-                                        Direction::Backward,
-                                    ));
-                                    self.last_count = count;
+                                    self.set_last_change(
+                                        LastChange::Delete(EditTarget::WordEnd(
+                                            WordType::Word,
+                                            Direction::Backward,
+                                        )),
+                                        count,
+                                    );
                                 }
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // dgE / cgE / ygE - delete/change/yank backward to end of previous WORD
@@ -5762,11 +5772,13 @@ impl<'a> EditorState<'a> {
                                         false,
                                         false,
                                     );
-                                    self.last_change = LastChange::Change(EditTarget::WordEnd(
-                                        WordType::LongWord,
-                                        Direction::Backward,
-                                    ));
-                                    self.last_count = count;
+                                    self.set_last_change(
+                                        LastChange::Change(EditTarget::WordEnd(
+                                            WordType::LongWord,
+                                            Direction::Backward,
+                                        )),
+                                        count,
+                                    );
                                 } else if op == 'y' {
                                     self.perform_yank_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::LongWord),
@@ -5781,11 +5793,13 @@ impl<'a> EditorState<'a> {
                                         true,
                                         false,
                                     );
-                                    self.last_change = LastChange::Delete(EditTarget::WordEnd(
-                                        WordType::LongWord,
-                                        Direction::Backward,
-                                    ));
-                                    self.last_count = count;
+                                    self.set_last_change(
+                                        LastChange::Delete(EditTarget::WordEnd(
+                                            WordType::LongWord,
+                                            Direction::Backward,
+                                        )),
+                                        count,
+                                    );
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
                                 // diw / ciw / yiw - delete/change/yank inner word
@@ -6096,7 +6110,7 @@ impl<'a> EditorState<'a> {
                                     'c' => {
                                         let count = self.take_count();
                                         self.substitute_lines(count); // cc == S
-                                        self.last_count = count;
+                                        self.set_last_change(LastChange::Change(EditTarget::Line), count);
                                     }
                                     'w' => {
                                         // cw behavior depends on what we're on:
@@ -6127,12 +6141,13 @@ impl<'a> EditorState<'a> {
                                                 false,
                                             );
                                         }
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::Word,
                                                 Direction::Forward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'W' => {
                                         // cW behavior: like cw but for WORD
@@ -6160,12 +6175,13 @@ impl<'a> EditorState<'a> {
                                                 false,
                                             );
                                         }
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::LongWord,
                                                 Direction::Forward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'e' => {
                                         let count = self.take_count();
@@ -6178,11 +6194,13 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change = LastChange::Change(EditTarget::WordEnd(
-                                            WordType::Word,
-                                            Direction::Forward,
-                                        ));
-                                        self.last_count = count;
+                                        self.set_last_change(
+                                            LastChange::Change(EditTarget::WordEnd(
+                                                WordType::Word,
+                                                Direction::Forward,
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'E' => {
                                         let count = self.take_count();
@@ -6195,11 +6213,13 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change = LastChange::Change(EditTarget::WordEnd(
-                                            WordType::LongWord,
-                                            Direction::Forward,
-                                        ));
-                                        self.last_count = count;
+                                        self.set_last_change(
+                                            LastChange::Change(EditTarget::WordEnd(
+                                                WordType::LongWord,
+                                                Direction::Forward,
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'b' => {
                                         let count = self.take_count();
@@ -6212,12 +6232,13 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::Word,
                                                 Direction::Backward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'B' => {
                                         let count = self.take_count();
@@ -6230,12 +6251,13 @@ impl<'a> EditorState<'a> {
                                             false,
                                             false,
                                         );
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Change(EditTarget::WordStart(
                                                 WordType::LongWord,
                                                 Direction::Backward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     '$' => self.change_to_end_of_line(),
                                     '^' => {
@@ -6349,8 +6371,7 @@ impl<'a> EditorState<'a> {
                                     'd' => {
                                         let count = self.take_count();
                                         self.delete_lines(count);
-                                        self.last_change = LastChange::Delete(EditTarget::Line);
-                                        self.last_count = count;
+                                        self.set_last_change(LastChange::Delete(EditTarget::Line), count);
                                     }
                                     'w' => {
                                         let count = self.take_count();
@@ -6361,12 +6382,13 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::Word,
                                                 Direction::Forward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'W' => {
                                         let count = self.take_count();
@@ -6377,12 +6399,13 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::LongWord,
                                                 Direction::Forward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'e' => {
                                         let count = self.take_count();
@@ -6393,11 +6416,13 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::Delete(EditTarget::WordEnd(
-                                            WordType::Word,
-                                            Direction::Forward,
-                                        ));
-                                        self.last_count = count;
+                                        self.set_last_change(
+                                            LastChange::Delete(EditTarget::WordEnd(
+                                                WordType::Word,
+                                                Direction::Forward,
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'E' => {
                                         let count = self.take_count();
@@ -6408,11 +6433,13 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change = LastChange::Delete(EditTarget::WordEnd(
-                                            WordType::LongWord,
-                                            Direction::Forward,
-                                        ));
-                                        self.last_count = count;
+                                        self.set_last_change(
+                                            LastChange::Delete(EditTarget::WordEnd(
+                                                WordType::LongWord,
+                                                Direction::Forward,
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'b' => {
                                         let count = self.take_count();
@@ -6423,12 +6450,13 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::Word,
                                                 Direction::Backward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     'B' => {
                                         let count = self.take_count();
@@ -6439,12 +6467,13 @@ impl<'a> EditorState<'a> {
                                             true,
                                             false,
                                         );
-                                        self.last_change =
+                                        self.set_last_change(
                                             LastChange::Delete(EditTarget::WordStart(
                                                 WordType::LongWord,
                                                 Direction::Backward,
-                                            ));
-                                        self.last_count = count;
+                                            )),
+                                            count,
+                                        );
                                     }
                                     '$' => self.delete_to_end_of_line(),
                                     '^' => self.perform_delete_motion(
@@ -6860,8 +6889,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_char_no_undo();
                                 }
                                 self.record_change();
-                                self.last_change = LastChange::Delete(EditTarget::Char);
-                                self.last_count = count;
+                                self.set_last_change(LastChange::Delete(EditTarget::Char), count);
                             }
                             'u' => {
                                 self.undo();
@@ -6956,15 +6984,13 @@ impl<'a> EditorState<'a> {
                             'p' => {
                                 let count = self.take_count();
                                 self.paste_after_count(count);
-                                self.last_change = LastChange::PasteAfter;
-                                self.last_count = count;
+                                self.set_last_change(LastChange::PasteAfter, count);
                                 self.update_desired_col();
                             }
                             'P' => {
                                 let count = self.take_count();
                                 self.paste_before_count(count);
-                                self.last_change = LastChange::PasteBefore;
-                                self.last_count = count;
+                                self.set_last_change(LastChange::PasteBefore, count);
                                 self.update_desired_col();
                             }
                             'Y' => self.yank_to_end_of_line(), // Y yanks to end of line (like y$)
