@@ -108,11 +108,10 @@ impl EditorColors {
                 },
                 |c| c.into(),
             ),
-            command_mode_bg: colors
-                .input_text_command_mode_bg
-                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Yellow.into()), |c| {
-                    c.into()
-                }),
+            command_mode_bg: colors.input_text_command_mode_bg.map_or(
+                ColorAttribute::PaletteIndex(AnsiColor::Yellow.into()),
+                |c| c.into(),
+            ),
             visual_mode_fg: colors.input_text_visual_mode_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
@@ -3945,34 +3944,19 @@ impl<'a> EditorState<'a> {
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
-        // Render middle section (pending keys if any) and position at the end
+        // Render middle section and position at the end
         let position = format!(" {}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
         let mode_len = mode_text.len();
         let position_len = position.len();
-        let gap = 4; // Gap between pending keys and position
 
         // Calculate middle section width
         let middle_width = cols.saturating_sub(mode_len + position_len);
 
-        // Render middle section with status bar colors
-        let middle_content = if pending_str.is_empty() {
-            format!("{:width$}", "", width = middle_width)
-        } else {
-            // Right-align pending keys in the middle section with gap before position
-            let effective_width = middle_width.saturating_sub(gap);
-            format!(
-                "{:>width$}{:gap$}",
-                pending_str,
-                "",
-                width = effective_width,
-                gap = gap
-            )
-        };
-
+        // Render middle section with status bar colors (empty space)
         self.buf.add_changes(vec![
             Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
             Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
-            Change::Text(middle_content),
+            Change::Text(format!("{:width$}", "", width = middle_width)),
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
@@ -3984,8 +3968,9 @@ impl<'a> EditorState<'a> {
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
-        // In search mode, render the search prompt on the last row
+        // Render last row content
         if self.mode == EditorMode::Search {
+            // In search mode, render the search prompt on the last row
             let prompt = match self.search_direction {
                 Direction::Forward => "/",
                 Direction::Backward => "?",
@@ -3997,6 +3982,24 @@ impl<'a> EditorState<'a> {
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Text(format!("{:<width$}", search_text, width = cols)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        } else if !pending_str.is_empty() {
+            // Show pending keys on the last row (right-aligned with 11-char right padding)
+            let right_padding = 11;
+            let content_width = cols.saturating_sub(right_padding);
+            self.buf.add_changes(vec![
+                Change::CursorPosition {
+                    x: Position::Absolute(0),
+                    y: Position::Absolute(rows - 1),
+                },
+                Change::Text(format!(
+                    "{:>content_width$}{:padding$}",
+                    pending_str,
+                    "",
+                    content_width = content_width,
+                    padding = right_padding
+                )),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
