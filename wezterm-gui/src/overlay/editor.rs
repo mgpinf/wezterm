@@ -3850,6 +3850,7 @@ impl<'a> EditorState<'a> {
             let position = format!(" {}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
             let mode_len = mode_text.len();
             let position_len = position.len();
+            let gap = 4; // Gap between pending keys and position
 
             // Calculate middle section width
             let middle_width = cols.saturating_sub(mode_len + position_len);
@@ -3858,8 +3859,9 @@ impl<'a> EditorState<'a> {
             let middle_content = if pending_str.is_empty() {
                 format!("{:width$}", "", width = middle_width)
             } else {
-                // Right-align pending keys in the middle section
-                format!("{:>width$}", pending_str, width = middle_width)
+                // Right-align pending keys in the middle section with gap before position
+                let effective_width = middle_width.saturating_sub(gap);
+                format!("{:>width$}{:gap$}", pending_str, "", width = effective_width, gap = gap)
             };
 
             self.buf.add_changes(vec![
