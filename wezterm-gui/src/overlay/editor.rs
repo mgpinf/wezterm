@@ -21,6 +21,8 @@ struct EditorColors {
     normal_mode_bg: ColorAttribute,
     insert_mode_fg: ColorAttribute,
     insert_mode_bg: ColorAttribute,
+    replace_mode_fg: ColorAttribute,
+    replace_mode_bg: ColorAttribute,
     visual_mode_fg: ColorAttribute,
     visual_mode_bg: ColorAttribute,
     selection_bg: ColorAttribute,
@@ -83,6 +85,19 @@ impl EditorColors {
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Blue.into()), |c| {
                     c.into()
                 }),
+            replace_mode_fg: colors.input_text_replace_mode_fg.map_or_else(
+                || {
+                    colors.background.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            replace_mode_bg: colors
+                .input_text_replace_mode_bg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Red.into()), |c| {
+                    c.into()
+                }),
             visual_mode_fg: colors.input_text_visual_mode_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
@@ -133,6 +148,7 @@ impl EditorColors {
 enum EditorMode {
     Normal,
     Insert,
+    Replace, // Replace mode (R) - overwrite characters
     Search,
     Visual,     // Character-wise visual selection (v)
     VisualLine, // Line-wise visual selection (V)
@@ -211,6 +227,7 @@ enum LastChange {
     ToggleCase,         // ~
     JoinLines,          // J
     ReplaceChar(char),  // r{char}
+    ReplaceMode(String), // R - text entered in replace mode
     IncrementNumber,    // Ctrl-A
     DecrementNumber,    // Ctrl-X
     PasteAfter,         // p
@@ -263,6 +280,8 @@ struct EditorState<'a> {
     current_match: Option<(usize, usize)>, // Current match position (row, col)
     search_start_pos: (usize, usize), // Cursor position when search started (for incremental search)
     visual_start: (usize, usize),     // Anchor point for visual selection (row, col)
+    replace_originals: Vec<Option<char>>, // Original chars for backspace in Replace mode
+    replace_start_pos: (usize, usize), // Cursor position when Replace mode started
 }
 
 impl<'a> EditorState<'a> {
@@ -312,6 +331,8 @@ impl<'a> EditorState<'a> {
             current_match: None,
             search_start_pos: (0, 0),
             visual_start: (0, 0),
+            replace_originals: Vec::new(),
+            replace_start_pos: (0, 0),
         }
     }
 
@@ -330,6 +351,41 @@ impl<'a> EditorState<'a> {
     fn set_last_change(&mut self, change: LastChange, count: usize) {
         self.last_change = change;
         self.last_count = count;
+    }
+
+    /// Check if mode allows cursor at end of line (Insert or Replace mode)
+    fn is_insert_like_mode(&self) -> bool {
+        self.mode == EditorMode::Insert || self.mode == EditorMode::Replace
+    }
+
+    /// Replace character at cursor position, returns the original character if one existed
+    fn replace_char_at_cursor(&mut self, c: char) -> Option<char> {
+        let line = &self.lines[self.cursor.0];
+        let chars: Vec<char> = line.chars().collect();
+        if self.cursor.1 < chars.len() {
+            let original = chars[self.cursor.1];
+            let mut new_chars = chars;
+            new_chars[self.cursor.1] = c;
+            self.lines[self.cursor.0] = new_chars.into_iter().collect();
+            self.cursor.1 += 1;
+            self.lines_version += 1;
+            Some(original)
+        } else {
+            // At end of line - insert instead
+            self.insert_char(c);
+            None
+        }
+    }
+
+    /// Restore character at cursor position (for Replace mode backspace)
+    fn restore_char_at_cursor(&mut self, orig_char: char) {
+        let line = &self.lines[self.cursor.0];
+        let mut chars: Vec<char> = line.chars().collect();
+        if self.cursor.1 < chars.len() {
+            chars[self.cursor.1] = orig_char;
+            self.lines[self.cursor.0] = chars.into_iter().collect();
+            self.lines_version += 1;
+        }
     }
 
     fn record_change(&mut self) {
@@ -402,7 +458,7 @@ impl<'a> EditorState<'a> {
             .max(0)
             .min((self.lines.len() - 1) as isize) as usize;
         let line_len = self.lines[new_row].chars().count();
-        let max_col = if self.mode == EditorMode::Insert {
+        let max_col = if self.is_insert_like_mode() {
             line_len
         } else {
             line_len.saturating_sub(1)
@@ -432,7 +488,7 @@ impl<'a> EditorState<'a> {
         }
         // Then clamp column
         let line_len = self.lines[self.cursor.0].chars().count();
-        let max_col = if self.mode == EditorMode::Insert {
+        let max_col = if self.is_insert_like_mode() {
             line_len
         } else {
             line_len.saturating_sub(1)
@@ -3214,6 +3270,21 @@ impl<'a> EditorState<'a> {
             LastChange::ToggleCase => self.toggle_case(),
             LastChange::JoinLines => self.join_lines(),
             LastChange::ReplaceChar(c) => self.replace_char(c),
+            LastChange::ReplaceMode(text) => {
+                self.save_undo_state();
+                for c in text.chars() {
+                    if c == '\n' {
+                        self.insert_newline();
+                    } else {
+                        self.replace_char_at_cursor(c);
+                    }
+                }
+                // Move cursor back like Escape does
+                if self.cursor.1 > 0 {
+                    self.cursor.1 -= 1;
+                }
+                self.record_change();
+            }
             LastChange::IncrementNumber => self.increment_number(),
             LastChange::DecrementNumber => self.decrement_number(),
             LastChange::PasteAfter => {
@@ -3809,6 +3880,7 @@ impl<'a> EditorState<'a> {
         let mode_text = match self.mode {
             EditorMode::Normal => " NORMAL ",
             EditorMode::Insert => " INSERT ",
+            EditorMode::Replace => " REPLACE ",
             EditorMode::Search => "",
             EditorMode::Visual => " VISUAL ",
             EditorMode::VisualLine => " VISUAL LINE ",
@@ -3852,6 +3924,7 @@ impl<'a> EditorState<'a> {
             let (mode_fg, mode_bg) = match self.mode {
                 EditorMode::Normal => (self.colors.normal_mode_fg, self.colors.normal_mode_bg),
                 EditorMode::Insert => (self.colors.insert_mode_fg, self.colors.insert_mode_bg),
+                EditorMode::Replace => (self.colors.replace_mode_fg, self.colors.replace_mode_bg),
                 EditorMode::Visual | EditorMode::VisualLine => {
                     (self.colors.visual_mode_fg, self.colors.visual_mode_bg)
                 }
@@ -4089,6 +4162,7 @@ impl<'a> EditorState<'a> {
                 match self.mode {
                     EditorMode::Normal => CursorShape::SteadyBlock,
                     EditorMode::Insert => CursorShape::SteadyBar,
+                    EditorMode::Replace => CursorShape::SteadyUnderline,
                     EditorMode::Search => CursorShape::SteadyBar, // won't reach here
                     EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
                 }
@@ -6818,6 +6892,13 @@ impl<'a> EditorState<'a> {
                                 self.cursor.1 = self.lines[self.cursor.0].len();
                                 self.mode = EditorMode::Insert;
                             }
+                            'R' => {
+                                self.save_undo_state(); // Save state before replace
+                                self.insert_buffer.clear();
+                                self.replace_originals.clear();
+                                self.replace_start_pos = self.cursor;
+                                self.mode = EditorMode::Replace;
+                            }
                             'o' => {
                                 self.save_undo_state(); // Save state before insert
                                 self.insert_buffer.clear();
@@ -7142,6 +7223,72 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Enter,
                         ..
                     }) => {
+                        self.insert_newline();
+                        self.insert_buffer.push('\n');
+                    }
+                    _ => {}
+                },
+                EditorMode::Replace => match event {
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Escape,
+                        ..
+                    }) => {
+                        self.mode = EditorMode::Normal;
+                        // Move cursor left first (Vim behavior when leaving Replace mode)
+                        if self.cursor.1 > 0 {
+                            self.cursor.1 -= 1;
+                        }
+                        self.clamp_cursor();
+                        self.update_desired_col();
+                        self.record_change();
+                        // Save replace buffer as last change
+                        if !self.insert_buffer.is_empty() {
+                            self.last_change = LastChange::ReplaceMode(self.insert_buffer.clone());
+                        }
+                        self.replace_originals.clear();
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char(c),
+                        modifiers,
+                    }) => {
+                        if !modifiers.contains(Modifiers::CTRL)
+                            && !modifiers.contains(Modifiers::ALT)
+                        {
+                            let original = self.replace_char_at_cursor(c);
+                            self.replace_originals.push(original);
+                            self.insert_buffer.push(c);
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Backspace,
+                        ..
+                    }) => {
+                        if let Some(original) = self.replace_originals.pop() {
+                            if self.cursor.1 > 0 {
+                                self.cursor.1 -= 1;
+                                if let Some(orig_char) = original {
+                                    self.restore_char_at_cursor(orig_char);
+                                } else {
+                                    // Was inserted (no original) - delete it
+                                    self.delete_char();
+                                }
+                                self.insert_buffer.pop();
+                            }
+                        } else if self.cursor.1 > self.replace_start_pos.1
+                            || self.cursor.0 > self.replace_start_pos.0
+                        {
+                            // Allow backspace only if we're past the start position
+                            if self.cursor.1 > 0 {
+                                self.cursor.1 -= 1;
+                            }
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Enter,
+                        ..
+                    }) => {
+                        // In Replace mode, Enter typically inserts a newline
+                        self.replace_originals.push(None);
                         self.insert_newline();
                         self.insert_buffer.push('\n');
                     }
