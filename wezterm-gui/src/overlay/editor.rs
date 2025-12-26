@@ -7194,8 +7194,9 @@ impl<'a> EditorState<'a> {
                         self.pending_keys.clear();
                         self.pending_operator = None;
                         self.count_prefix = None;
-                        // Turn off search highlighting
+                        // Turn off search highlighting and clear search pattern
                         self.search_highlight = false;
+                        self.search_pattern.clear();
                         self.current_match = None;
                     }
                     _ => {}
