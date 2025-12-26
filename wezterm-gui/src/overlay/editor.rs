@@ -233,7 +233,7 @@ struct EditorState<'a> {
     pending_operator: Option<char>, // 'd', 'c', 'y'
     count_prefix: Option<usize>,    // Numeric prefix for commands (e.g., 5j, 3dd)
     last_change: LastChange,
-    last_count: usize, // Count used with last change (for . repeat)
+    last_count: usize,         // Count used with last change (for . repeat)
     insert_buffer: String,     // Buffer to track text inserted in insert mode
     insert_style: InsertStyle, // Style of insert (i, a, I, A)
     last_char_search: Option<(char, char)>, // (search_type: f/F/t/T, character)
@@ -4175,7 +4175,13 @@ impl<'a> EditorState<'a> {
             self.cursor = old_cursor;
         }
 
-        self.perform_delete_motion_inner(start, end, is_inclusive, delete_empty_lines, allow_linewise);
+        self.perform_delete_motion_inner(
+            start,
+            end,
+            is_inclusive,
+            delete_empty_lines,
+            allow_linewise,
+        );
     }
 
     // Helper to perform delete action based on a motion
@@ -4195,7 +4201,13 @@ impl<'a> EditorState<'a> {
         self.lines_version += 1;
         let start = self.cursor;
         let end = motion(self);
-        self.perform_delete_motion_inner(start, end, is_inclusive, delete_empty_lines, allow_linewise);
+        self.perform_delete_motion_inner(
+            start,
+            end,
+            is_inclusive,
+            delete_empty_lines,
+            allow_linewise,
+        );
     }
 
     fn perform_delete_motion_inner(
@@ -4206,7 +4218,6 @@ impl<'a> EditorState<'a> {
         delete_empty_lines: bool,
         allow_linewise: bool,
     ) {
-
         // Handle direction - use character-based operations
         if end.0 < start.0 {
             // Backward motion crossing to previous line - need to handle multi-line deletion
