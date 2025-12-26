@@ -3904,10 +3904,10 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Position status bar at bottom
+        // Position status bar at second last row
         self.buf.add_changes(vec![Change::CursorPosition {
             x: Position::Absolute(0),
-            y: Position::Absolute(rows - 1),
+            y: Position::Absolute(rows - 2),
         }]);
 
         if self.mode == EditorMode::Search {
@@ -4001,8 +4001,8 @@ impl<'a> EditorState<'a> {
             content_start_row = 0;
         }
 
-        // Adjust viewport: subtract 1 for status bar + content_start_row for optional title
-        let content_rows = rows.saturating_sub(1 + content_start_row);
+        // Adjust viewport: subtract 2 for status bar row and empty last row + content_start_row for optional title
+        let content_rows = rows.saturating_sub(2 + content_start_row);
         if self.cursor.0 < self.viewport_top {
             self.viewport_top = self.cursor.0;
         } else if self.cursor.0 >= self.viewport_top + content_rows {
@@ -4151,7 +4151,7 @@ impl<'a> EditorState<'a> {
         let (cursor_screen_x, cursor_screen_y, cursor_shape) = if self.mode == EditorMode::Search {
             // In search mode, show cursor in status bar after search input
             let x = 1 + self.search_input.len(); // 1 for prompt (/ or ?)
-            (x, rows - 1, CursorShape::SteadyBlock)
+            (x, rows - 2, CursorShape::SteadyBlock)
         } else {
             let y = content_start_row + (self.cursor.0 - self.viewport_top);
             let x = 6 + self.cursor.1; // 6 for line number width (2 padding + 3 digits + 1 space)
