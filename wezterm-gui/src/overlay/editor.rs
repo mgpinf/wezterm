@@ -37,16 +37,19 @@ impl EditorColors {
                 ColorAttribute::TrueColorWithDefaultFallback(c.into())
             }),
             line_number_fg: colors
-                .transient_context_label_fg
-                .unwrap_or(AnsiColor::Grey.into())
-                .into(),
-            status_fg: colors.background.map_or(ColorAttribute::Default, |c| {
-                ColorAttribute::TrueColorWithDefaultFallback(c.into())
-            }),
+                .input_text_line_number_fg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Grey.into()), |c| c.into()),
+            status_fg: colors.input_text_status_fg.map_or_else(
+                || {
+                    colors.background.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
             status_bg: colors
-                .transient_entry_active_flag_fg
-                .unwrap_or(AnsiColor::Purple.into())
-                .into(),
+                .input_text_status_bg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Purple.into()), |c| c.into()),
             normal_mode_fg: colors.input_text_normal_mode_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
