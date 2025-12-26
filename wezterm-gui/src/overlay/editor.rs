@@ -401,10 +401,10 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Record change only if not in Insert mode.
+    /// Record change only if not in Insert/Replace mode.
     /// For change operations (c, s, C, S, etc.), we defer recording until exiting insert mode.
     fn maybe_record_change(&mut self) {
-        if self.mode != EditorMode::Insert {
+        if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
@@ -508,16 +508,16 @@ impl<'a> EditorState<'a> {
         self.lines[self.cursor.0] = chars.into_iter().collect();
         self.cursor.1 += 1;
         self.lines_version += 1;
-        // Only record change if not in insert mode (batch insert mode changes)
-        if self.mode != EditorMode::Insert {
+        // Only record change if not in insert/replace mode (batch changes)
+        if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
 
     fn delete_char(&mut self) {
         self.delete_char_no_undo();
-        // Only record change if not in insert mode (batch insert mode changes)
-        if self.mode != EditorMode::Insert {
+        // Only record change if not in insert/replace mode (batch changes)
+        if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
@@ -552,8 +552,8 @@ impl<'a> EditorState<'a> {
         self.cursor.0 += 1;
         self.cursor.1 = 0;
         self.lines_version += 1;
-        // Only record change if not in insert mode (batch insert mode changes)
-        if self.mode != EditorMode::Insert {
+        // Only record change if not in insert/replace mode (batch changes)
+        if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
@@ -1731,7 +1731,7 @@ impl<'a> EditorState<'a> {
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         self.clamp_cursor();
         self.update_desired_col();
-        // For change operations (Insert mode), don't record yet
+        // For change operations (mode set to Insert), don't record yet
         if self.mode != EditorMode::Insert {
             self.record_change();
         }
@@ -4618,7 +4618,7 @@ impl<'a> EditorState<'a> {
         }
         self.clamp_cursor();
         self.update_desired_col();
-        // For change operations (Insert mode), don't record yet - will be recorded when exiting insert
+        // For change operations (mode set to Insert), don't record yet
         if self.mode != EditorMode::Insert {
             self.record_change();
         }
@@ -7947,6 +7947,10 @@ mod tests {
             self.last_count = count;
         }
 
+        fn is_insert_like_mode(&self) -> bool {
+            self.mode == EditorMode::Insert || self.mode == EditorMode::Replace
+        }
+
         /// Delete `count` characters at cursor (like 3x)
         fn delete_chars(&mut self, count: usize) {
             self.save_undo_state();
@@ -8323,16 +8327,16 @@ mod tests {
                 }
 
                 self.clamp_cursor();
-                // For change operations (Insert mode), don't record yet
+                // For change operations (mode set to Insert), don't record yet
                 if self.mode != EditorMode::Insert {
                     self.record_change();
                 }
             }
         }
 
-        /// Record change only if not in Insert mode
+        /// Record change only if not in Insert/Replace mode
         fn maybe_record_change(&mut self) {
-            if self.mode != EditorMode::Insert {
+            if !self.is_insert_like_mode() {
                 self.record_change();
             }
         }
