@@ -33,6 +33,13 @@ struct EditorColors {
     search_match_fg: ColorAttribute,
     search_current_match_bg: ColorAttribute,
     search_current_match_fg: ColorAttribute,
+    // Mode text strings
+    normal_mode_text: String,
+    insert_mode_text: String,
+    replace_mode_text: String,
+    command_mode_text: String,
+    visual_mode_text: String,
+    visual_line_mode_text: String,
 }
 
 impl EditorColors {
@@ -154,6 +161,13 @@ impl EditorColors {
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Olive.into()), |c| {
                     c.into()
                 }),
+            // Mode text strings
+            normal_mode_text: config.input_text_normal_mode_text.clone(),
+            insert_mode_text: config.input_text_insert_mode_text.clone(),
+            replace_mode_text: config.input_text_replace_mode_text.clone(),
+            command_mode_text: config.input_text_command_mode_text.clone(),
+            visual_mode_text: config.input_text_visual_mode_text.clone(),
+            visual_line_mode_text: config.input_text_visual_line_mode_text.clone(),
         }
     }
 }
@@ -3895,12 +3909,12 @@ impl<'a> EditorState<'a> {
 
         // Status bar
         let mode_text = match self.mode {
-            EditorMode::Normal => " NORMAL ",
-            EditorMode::Insert => " INSERT ",
-            EditorMode::Replace => " REPLACE ",
-            EditorMode::Search => " COMMAND ",
-            EditorMode::Visual => " VISUAL ",
-            EditorMode::VisualLine => " VISUAL LINE ",
+            EditorMode::Normal => &self.colors.normal_mode_text,
+            EditorMode::Insert => &self.colors.insert_mode_text,
+            EditorMode::Replace => &self.colors.replace_mode_text,
+            EditorMode::Search => &self.colors.command_mode_text,
+            EditorMode::Visual => &self.colors.visual_mode_text,
+            EditorMode::VisualLine => &self.colors.visual_line_mode_text,
         };
 
         // Build pending keys string (shown on the right like Neovim)
