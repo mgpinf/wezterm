@@ -4002,6 +4002,21 @@ impl<'a> EditorState<'a> {
                 )),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
+        } else if !self.search_pattern.is_empty() {
+            // Show the last search pattern on the last row
+            let prompt = match self.search_direction {
+                Direction::Forward => "/",
+                Direction::Backward => "?",
+            };
+            let search_display = format!("{}{}", prompt, self.search_pattern);
+            self.buf.add_changes(vec![
+                Change::CursorPosition {
+                    x: Position::Absolute(0),
+                    y: Position::Absolute(rows - 1),
+                },
+                Change::Text(format!("{:<width$}", search_display, width = cols)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
         }
 
         let content_start_row;
