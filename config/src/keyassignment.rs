@@ -690,7 +690,8 @@ pub struct InputForm {
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct InputText {
-    pub title: String,
+    #[dynamic(default)]
+    pub title: Option<String>,
     #[dynamic(default)]
     pub initial_value: Option<String>,
     pub action: Box<KeyAssignment>,

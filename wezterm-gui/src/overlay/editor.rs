@@ -3649,26 +3649,32 @@ impl<'a> EditorState<'a> {
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
-        // Adjust viewport
-        let content_rows = rows.saturating_sub(2); // Title + Status
+        let content_start_row;
+
+        // Render title if provided
+        if let Some(title) = &self.args.title {
+            self.buf.add_changes(vec![
+                Change::CursorPosition {
+                    x: Position::Absolute(0),
+                    y: Position::Absolute(0),
+                },
+                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                Change::Text(title.clone()),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+            content_start_row = 1;
+        } else {
+            content_start_row = 0;
+        }
+
+        // Adjust viewport: subtract 1 for status bar + content_start_row for optional title
+        let content_rows = rows.saturating_sub(1 + content_start_row);
         if self.cursor.0 < self.viewport_top {
             self.viewport_top = self.cursor.0;
         } else if self.cursor.0 >= self.viewport_top + content_rows {
             self.viewport_top = self.cursor.0 - content_rows + 1;
         }
 
-        // Title
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(0),
-            },
-            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Text(self.args.title.clone()),
-            Change::AllAttributes(CellAttributes::default()),
-        ]);
-
-        // Content
         // Calculate selection range if in visual mode
         let selection = if self.mode == EditorMode::Visual || self.mode == EditorMode::VisualLine {
             let (start, end) = if self.visual_start.0 < self.cursor.0
@@ -3693,7 +3699,7 @@ impl<'a> EditorState<'a> {
             self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
-                    y: Position::Absolute(1 + i),
+                    y: Position::Absolute(content_start_row + i),
                 },
                 Change::Attribute(AttributeChange::Foreground(self.colors.line_number_fg)),
                 Change::Text(format!("{:>3} ", line_idx + 1)),
@@ -3806,7 +3812,7 @@ impl<'a> EditorState<'a> {
         }
 
         // Cursor
-        let cursor_screen_y = 1 + (self.cursor.0 - self.viewport_top);
+        let cursor_screen_y = content_start_row + (self.cursor.0 - self.viewport_top);
         let cursor_screen_x = 4 + self.cursor.1; // 4 for line number width
 
         self.buf.add_changes(vec![
