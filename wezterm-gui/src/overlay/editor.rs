@@ -3910,8 +3910,26 @@ impl<'a> EditorState<'a> {
         }
 
         // Cursor
-        let cursor_screen_y = content_start_row + (self.cursor.0 - self.viewport_top);
-        let cursor_screen_x = 6 + self.cursor.1; // 6 for line number width (2 padding + 3 digits + 1 space)
+        let (cursor_screen_x, cursor_screen_y, cursor_shape) = if self.mode == EditorMode::Search {
+            // In search mode, show cursor in status bar after search input
+            let x = 1 + self.search_input.len(); // 1 for prompt (/ or ?)
+            (x, rows - 1, CursorShape::SteadyBlock)
+        } else {
+            let y = content_start_row + (self.cursor.0 - self.viewport_top);
+            let x = 6 + self.cursor.1; // 6 for line number width (2 padding + 3 digits + 1 space)
+            let shape = if self.pending_operator.is_some() {
+                // Operator-pending mode (d, c, y waiting for motion)
+                CursorShape::SteadyUnderline
+            } else {
+                match self.mode {
+                    EditorMode::Normal => CursorShape::SteadyBlock,
+                    EditorMode::Insert => CursorShape::SteadyBar,
+                    EditorMode::Search => CursorShape::SteadyBar, // won't reach here
+                    EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
+                }
+            };
+            (x, y, shape)
+        };
 
         self.buf.add_changes(vec![
             Change::CursorPosition {
@@ -3919,17 +3937,7 @@ impl<'a> EditorState<'a> {
                 y: Position::Absolute(cursor_screen_y),
             },
             Change::CursorVisibility(CursorVisibility::Visible),
-            Change::CursorShape(if self.pending_operator.is_some() {
-                // Operator-pending mode (d, c, y waiting for motion)
-                CursorShape::SteadyUnderline
-            } else {
-                match self.mode {
-                    EditorMode::Normal => CursorShape::SteadyBlock,
-                    EditorMode::Insert => CursorShape::SteadyBar,
-                    EditorMode::Search => CursorShape::SteadyUnderline,
-                    EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
-                }
-            }),
+            Change::CursorShape(cursor_shape),
         ]);
 
         self.buf.flush()?;
