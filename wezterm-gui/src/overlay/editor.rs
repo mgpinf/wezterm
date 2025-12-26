@@ -3867,7 +3867,13 @@ impl<'a> EditorState<'a> {
             } else {
                 // Right-align pending keys in the middle section with gap before position
                 let effective_width = middle_width.saturating_sub(gap);
-                format!("{:>width$}{:gap$}", pending_str, "", width = effective_width, gap = gap)
+                format!(
+                    "{:>width$}{:gap$}",
+                    pending_str,
+                    "",
+                    width = effective_width,
+                    gap = gap
+                )
             };
 
             self.buf.add_changes(vec![
@@ -6110,7 +6116,10 @@ impl<'a> EditorState<'a> {
                                     'c' => {
                                         let count = self.take_count();
                                         self.substitute_lines(count); // cc == S
-                                        self.set_last_change(LastChange::Change(EditTarget::Line), count);
+                                        self.set_last_change(
+                                            LastChange::Change(EditTarget::Line),
+                                            count,
+                                        );
                                     }
                                     'w' => {
                                         // cw behavior depends on what we're on:
@@ -6371,7 +6380,10 @@ impl<'a> EditorState<'a> {
                                     'd' => {
                                         let count = self.take_count();
                                         self.delete_lines(count);
-                                        self.set_last_change(LastChange::Delete(EditTarget::Line), count);
+                                        self.set_last_change(
+                                            LastChange::Delete(EditTarget::Line),
+                                            count,
+                                        );
                                     }
                                     'w' => {
                                         let count = self.take_count();
@@ -9025,7 +9037,10 @@ mod tests {
     fn test_set_last_change() {
         let mut editor = TestEditor::new("test");
         editor.set_last_change(LastChange::Delete(EditTarget::Line), 3);
-        assert!(matches!(editor.last_change, LastChange::Delete(EditTarget::Line)));
+        assert!(matches!(
+            editor.last_change,
+            LastChange::Delete(EditTarget::Line)
+        ));
         assert_eq!(editor.last_count, 3);
     }
 
