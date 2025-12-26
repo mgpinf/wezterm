@@ -3788,11 +3788,11 @@ impl<'a> EditorState<'a> {
             // Line number (relative, with absolute for current line)
             let line_number_text = if line_idx == self.cursor.0 {
                 // Current line shows absolute line number, left-aligned
-                format!("{:<3} ", self.cursor.0 + 1)
+                format!("  {:<3} ", self.cursor.0 + 1)
             } else {
                 // Other lines show relative distance, right-aligned
                 let rel_num = (line_idx as isize - self.cursor.0 as isize).unsigned_abs();
-                format!("{:>3} ", rel_num)
+                format!("  {:>3} ", rel_num)
             };
             self.buf.add_changes(vec![
                 Change::CursorPosition {
@@ -3911,7 +3911,7 @@ impl<'a> EditorState<'a> {
 
         // Cursor
         let cursor_screen_y = content_start_row + (self.cursor.0 - self.viewport_top);
-        let cursor_screen_x = 4 + self.cursor.1; // 4 for line number width
+        let cursor_screen_x = 6 + self.cursor.1; // 6 for line number width (2 padding + 3 digits + 1 space)
 
         self.buf.add_changes(vec![
             Change::CursorPosition {
