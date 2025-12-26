@@ -178,6 +178,13 @@ pub struct Palette {
     pub input_selector_label_fg: Option<ColorSpec>,
     pub input_selector_label_bg: Option<ColorSpec>,
 
+    pub input_text_normal_mode_fg: Option<ColorSpec>,
+    pub input_text_normal_mode_bg: Option<ColorSpec>,
+    pub input_text_insert_mode_fg: Option<ColorSpec>,
+    pub input_text_insert_mode_bg: Option<ColorSpec>,
+    pub input_text_visual_mode_fg: Option<ColorSpec>,
+    pub input_text_visual_mode_bg: Option<ColorSpec>,
+
     pub launcher_label_fg: Option<ColorSpec>,
     pub launcher_label_bg: Option<ColorSpec>,
 
@@ -246,6 +253,12 @@ impl Palette {
             quick_select_inactive_fg: overlay!(quick_select_inactive_fg),
             input_selector_label_fg: overlay!(input_selector_label_fg),
             input_selector_label_bg: overlay!(input_selector_label_bg),
+            input_text_normal_mode_fg: overlay!(input_text_normal_mode_fg),
+            input_text_normal_mode_bg: overlay!(input_text_normal_mode_bg),
+            input_text_insert_mode_fg: overlay!(input_text_insert_mode_fg),
+            input_text_insert_mode_bg: overlay!(input_text_insert_mode_bg),
+            input_text_visual_mode_fg: overlay!(input_text_visual_mode_fg),
+            input_text_visual_mode_bg: overlay!(input_text_visual_mode_bg),
             launcher_label_fg: overlay!(launcher_label_fg),
             launcher_label_bg: overlay!(launcher_label_bg),
             transient_entry_key_fg: overlay!(transient_entry_key_fg),

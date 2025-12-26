@@ -17,6 +17,12 @@ struct EditorColors {
     line_number_fg: ColorAttribute,
     status_fg: ColorAttribute,
     status_bg: ColorAttribute,
+    normal_mode_fg: ColorAttribute,
+    normal_mode_bg: ColorAttribute,
+    insert_mode_fg: ColorAttribute,
+    insert_mode_bg: ColorAttribute,
+    visual_mode_fg: ColorAttribute,
+    visual_mode_bg: ColorAttribute,
     selection_bg: ColorAttribute,
     selection_fg: ColorAttribute,
 }
@@ -41,6 +47,44 @@ impl EditorColors {
                 .transient_entry_active_flag_fg
                 .unwrap_or(AnsiColor::Purple.into())
                 .into(),
+            normal_mode_fg: colors.input_text_normal_mode_fg.map_or_else(
+                || {
+                    colors.background.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            normal_mode_bg: colors
+                .input_text_normal_mode_bg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Green.into()), |c| {
+                    c.into()
+                }),
+            insert_mode_fg: colors.input_text_insert_mode_fg.map_or_else(
+                || {
+                    colors.background.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            insert_mode_bg: colors
+                .input_text_insert_mode_bg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Blue.into()), |c| {
+                    c.into()
+                }),
+            visual_mode_fg: colors.input_text_visual_mode_fg.map_or_else(
+                || {
+                    colors.background.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            visual_mode_bg: colors.input_text_visual_mode_bg.map_or(
+                ColorAttribute::PaletteIndex(AnsiColor::Purple.into()),
+                |c| c.into(),
+            ),
             selection_bg: colors
                 .selection_bg
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Navy.into()), |c| {
@@ -3601,11 +3645,11 @@ impl<'a> EditorState<'a> {
 
         // Status bar
         let mode_text = match self.mode {
-            EditorMode::Normal => " -- NORMAL --",
-            EditorMode::Insert => " -- INSERT --",
+            EditorMode::Normal => " NORMAL ",
+            EditorMode::Insert => " INSERT ",
             EditorMode::Search => "",
-            EditorMode::Visual => " -- VISUAL --",
-            EditorMode::VisualLine => " -- VISUAL LINE --",
+            EditorMode::Visual => " VISUAL ",
+            EditorMode::VisualLine => " VISUAL LINE ",
         };
 
         // Build pending keys string (shown on the right like Neovim)
@@ -3619,35 +3663,63 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        let status_text = if self.mode == EditorMode::Search {
+        // Position status bar at bottom
+        self.buf.add_changes(vec![Change::CursorPosition {
+            x: Position::Absolute(0),
+            y: Position::Absolute(rows - 1),
+        }]);
+
+        if self.mode == EditorMode::Search {
             let prompt = match self.search_direction {
                 Direction::Forward => "/",
                 Direction::Backward => "?",
             };
-            format!("{}{}", prompt, self.search_input)
+            let search_text = format!("{}{}", prompt, self.search_input);
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
+                Change::Text(format!("{:<width$}", search_text, width = cols)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
         } else {
-            let position = format!("{}:{}", self.cursor.0 + 1, self.cursor.1 + 1);
-            if pending_str.is_empty() {
-                format!("{}  {}", mode_text, position)
-            } else {
-                // Calculate spacing: mode on left, pending keys on right
-                let left_part = format!("{}  {}", mode_text, position);
-                let right_part = &pending_str;
-                let padding = cols.saturating_sub(left_part.len() + right_part.len() + 1);
-                format!("{}{:>width$}{}", left_part, "", right_part, width = padding)
-            }
-        };
+            // Get mode-specific colors
+            let (mode_fg, mode_bg) = match self.mode {
+                EditorMode::Normal => (self.colors.normal_mode_fg, self.colors.normal_mode_bg),
+                EditorMode::Insert => (self.colors.insert_mode_fg, self.colors.insert_mode_bg),
+                EditorMode::Visual | EditorMode::VisualLine => {
+                    (self.colors.visual_mode_fg, self.colors.visual_mode_bg)
+                }
+                EditorMode::Search => (self.colors.status_fg, self.colors.status_bg),
+            };
 
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(rows - 1),
-            },
-            Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
-            Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
-            Change::Text(format!("{:<width$}", status_text, width = cols)),
-            Change::AllAttributes(CellAttributes::default()),
-        ]);
+            // Render mode with special colors
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(mode_bg)),
+                Change::Attribute(AttributeChange::Foreground(mode_fg)),
+                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                Change::Text(mode_text.to_string()),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+
+            // Render rest of status bar
+            let position = format!(" {}:{}", self.cursor.0 + 1, self.cursor.1 + 1);
+            let mode_len = mode_text.len();
+            let remaining_cols = cols.saturating_sub(mode_len);
+
+            let status_rest = if pending_str.is_empty() {
+                format!("{:<width$}", position, width = remaining_cols)
+            } else {
+                let padding = remaining_cols.saturating_sub(position.len() + pending_str.len());
+                format!("{}{:>width$}{}", position, "", pending_str, width = padding)
+            };
+
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
+                Change::Text(status_rest),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        }
 
         let content_start_row;
 
