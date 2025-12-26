@@ -3701,22 +3701,22 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
 
-            // Render rest of status bar
-            let position = format!(" {}:{}", self.cursor.0 + 1, self.cursor.1 + 1);
+            // Render rest of status bar with position at the end
+            let position = format!("{}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
             let mode_len = mode_text.len();
-            let remaining_cols = cols.saturating_sub(mode_len);
 
-            let status_rest = if pending_str.is_empty() {
-                format!("{:<width$}", position, width = remaining_cols)
+            // Calculate the middle padding and right side content
+            let right_content = if pending_str.is_empty() {
+                position.clone()
             } else {
-                let padding = remaining_cols.saturating_sub(position.len() + pending_str.len());
-                format!("{}{:>width$}{}", position, "", pending_str, width = padding)
+                format!("{}    {}", pending_str, position)
             };
+            let middle_padding = cols.saturating_sub(mode_len + right_content.len());
 
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
-                Change::Text(status_rest),
+                Change::Text(format!("{:width$}{}", "", right_content, width = middle_padding)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
