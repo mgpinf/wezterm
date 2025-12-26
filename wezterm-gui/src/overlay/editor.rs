@@ -4082,6 +4082,9 @@ impl<'a> EditorState<'a> {
             let shape = if self.pending_operator.is_some() {
                 // Operator-pending mode (d, c, y waiting for motion)
                 CursorShape::SteadyUnderline
+            } else if self.pending_keys.contains(&KeyCode::Char('r')) {
+                // Replace character mode
+                CursorShape::SteadyUnderline
             } else {
                 match self.mode {
                     EditorMode::Normal => CursorShape::SteadyBlock,
