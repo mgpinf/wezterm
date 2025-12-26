@@ -6710,15 +6710,12 @@ impl<'a> EditorState<'a> {
                                     line_len.saturating_sub(1)
                                 };
                                 self.cursor.1 = self.desired_col.min(max_col);
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('g') && c == 'e' {
                                 // ge - move backward to end of previous word
                                 self.move_to_word_end_backward(WordType::Word);
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // gE - move backward to end of previous WORD
                                 self.move_to_word_end_backward(WordType::LongWord);
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('Z') && c == 'Z' {
                                 self.submit();
                                 break;
@@ -6727,46 +6724,36 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('[') && c == '(' {
                                 self.jump_to_prev_unmatched('(', ')');
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('[') && c == '{' {
                                 self.jump_to_prev_unmatched('{', '}');
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char(']') && c == ')' {
                                 self.jump_to_next_unmatched('(', ')');
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char(']') && c == '}' {
                                 self.jump_to_next_unmatched('{', '}');
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('f') {
                                 self.move_to_char_forward(c);
                                 self.last_char_search = Some(('f', c));
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('F') {
                                 self.move_to_char_backward(c);
                                 self.last_char_search = Some(('F', c));
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('t') {
                                 self.move_till_char_forward(c);
                                 self.last_char_search = Some(('t', c));
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('T') {
                                 self.move_till_char_backward(c);
                                 self.last_char_search = Some(('T', c));
                                 self.update_desired_col();
-                                self.pending_keys.clear();
                             } else if first == KeyCode::Char('r') {
                                 self.replace_char(c);
                                 self.last_change = LastChange::ReplaceChar(c);
-                                self.pending_keys.clear();
-                            } else {
-                                self.pending_keys.clear();
                             }
+                            self.pending_keys.clear();
                             self.render()?;
                             continue;
                         }
