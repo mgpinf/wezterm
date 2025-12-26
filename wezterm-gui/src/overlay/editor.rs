@@ -7731,6 +7731,9 @@ mod tests {
         history_idx: usize,
         lines_version: u64,
         history_version: u64,
+        count_prefix: Option<usize>,
+        last_change: LastChange,
+        last_count: usize,
     }
 
     impl TestEditor {
@@ -7751,6 +7754,9 @@ mod tests {
                 history_idx: 0,
                 lines_version: 0,
                 history_version: 0,
+                count_prefix: None,
+                last_change: LastChange::None,
+                last_count: 1,
             }
         }
 
@@ -7761,6 +7767,86 @@ mod tests {
 
         fn text(&self) -> String {
             self.lines.join("\n")
+        }
+
+        fn take_count(&mut self) -> usize {
+            self.count_prefix.take().unwrap_or(1)
+        }
+
+        fn add_count_digit(&mut self, digit: char) {
+            let d = digit.to_digit(10).unwrap_or(0) as usize;
+            self.count_prefix = Some(self.count_prefix.unwrap_or(0) * 10 + d);
+        }
+
+        fn set_last_change(&mut self, change: LastChange, count: usize) {
+            self.last_change = change;
+            self.last_count = count;
+        }
+
+        /// Delete `count` characters at cursor (like 3x)
+        fn delete_chars(&mut self, count: usize) {
+            self.save_undo_state();
+            self.lines_version += 1;
+            for _ in 0..count {
+                let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                if self.cursor.1 < chars.len() {
+                    chars.remove(self.cursor.1);
+                    self.lines[self.cursor.0] = chars.into_iter().collect();
+                }
+            }
+            self.clamp_cursor();
+            self.record_change();
+        }
+
+        /// Delete `count` lines at cursor (like 3dd)
+        fn delete_lines(&mut self, count: usize) {
+            self.save_undo_state();
+            self.lines_version += 1;
+            let mut yanked = Vec::new();
+            for _ in 0..count {
+                if self.lines.len() > 1 && self.cursor.0 < self.lines.len() {
+                    yanked.push(self.lines.remove(self.cursor.0));
+                } else if self.lines.len() == 1 {
+                    yanked.push(self.lines[0].clone());
+                    self.lines[0].clear();
+                    break;
+                }
+            }
+            self.yank_buffer = yanked.join("\n");
+            self.yank_is_linewise = true;
+            self.clamp_cursor();
+            self.record_change();
+        }
+
+        /// Paste after cursor `count` times (like 3p)
+        fn paste_after_count(&mut self, count: usize) {
+            if self.yank_buffer.is_empty() || count == 0 {
+                return;
+            }
+            self.save_undo_state();
+            self.lines_version += 1;
+
+            if self.yank_is_linewise {
+                let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+                for _ in 0..count {
+                    for (i, line) in base_lines.iter().enumerate() {
+                        self.lines.insert(self.cursor.0 + 1 + i, line.to_string());
+                    }
+                }
+                self.cursor.0 += 1;
+                self.cursor.1 = 0;
+            } else {
+                let repeated: String = self.yank_buffer.repeat(count);
+                let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                let insert_pos = (self.cursor.1 + 1).min(chars.len());
+                for (i, c) in repeated.chars().enumerate() {
+                    chars.insert(insert_pos + i, c);
+                }
+                self.lines[self.cursor.0] = chars.into_iter().collect();
+                self.cursor.1 = insert_pos + repeated.len().saturating_sub(1);
+            }
+            self.clamp_cursor();
+            self.record_change();
         }
 
         fn clamp_cursor(&mut self) {
@@ -8247,7 +8333,7 @@ mod tests {
             &mut self,
             end: (usize, usize),
             is_inclusive: bool,
-            delete_empty_lines: bool,
+            _delete_empty_lines: bool,
             allow_linewise: bool,
         ) {
             self.save_undo_state();
@@ -8841,7 +8927,7 @@ mod tests {
         let mut editor = TestEditor::new("word\nnext line");
         editor.cursor = (0, 0);
         // Simulate dw - delete to next word position
-        let end = editor.get_word_forward_pos(WordType::Word);
+        let end = editor.get_word_forward_pos();
         editor.perform_delete_motion_for_test(end, false, true, false);
 
         // Line should still exist (empty), not deleted
@@ -8855,7 +8941,7 @@ mod tests {
         // dw should not merge lines or delete entire line
         let mut editor = TestEditor::new("one two\nthree");
         editor.cursor = (0, 4); // on 'two'
-        let end = editor.get_word_forward_pos(WordType::Word);
+        let end = editor.get_word_forward_pos();
         editor.perform_delete_motion_for_test(end, false, true, false);
 
         // Should delete 'two' but keep both lines
@@ -8900,5 +8986,118 @@ mod tests {
         editor.maybe_record_change();
         // Should NOT record change in insert mode
         assert_eq!(editor.history.len(), history_len_before);
+    }
+
+    // ============ Count Prefix Tests ============
+
+    #[test]
+    fn test_add_count_digit_single() {
+        let mut editor = TestEditor::new("test");
+        editor.add_count_digit('5');
+        assert_eq!(editor.count_prefix, Some(5));
+    }
+
+    #[test]
+    fn test_add_count_digit_multiple() {
+        let mut editor = TestEditor::new("test");
+        editor.add_count_digit('3');
+        editor.add_count_digit('2');
+        assert_eq!(editor.count_prefix, Some(32));
+    }
+
+    #[test]
+    fn test_take_count_with_prefix() {
+        let mut editor = TestEditor::new("test");
+        editor.add_count_digit('5');
+        let count = editor.take_count();
+        assert_eq!(count, 5);
+        assert_eq!(editor.count_prefix, None);
+    }
+
+    #[test]
+    fn test_take_count_without_prefix() {
+        let mut editor = TestEditor::new("test");
+        let count = editor.take_count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_set_last_change() {
+        let mut editor = TestEditor::new("test");
+        editor.set_last_change(LastChange::Delete(EditTarget::Line), 3);
+        assert!(matches!(editor.last_change, LastChange::Delete(EditTarget::Line)));
+        assert_eq!(editor.last_count, 3);
+    }
+
+    // ============ Count with Delete Tests ============
+
+    #[test]
+    fn test_delete_chars_with_count() {
+        let mut editor = TestEditor::new("hello world");
+        editor.cursor = (0, 0);
+        editor.delete_chars(3); // 3x
+        assert_eq!(editor.text(), "lo world");
+    }
+
+    #[test]
+    fn test_delete_lines_with_count() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4");
+        editor.cursor = (0, 0);
+        editor.delete_lines(2); // 2dd
+        assert_eq!(editor.text(), "line3\nline4");
+        assert_eq!(editor.yank_buffer, "line1\nline2");
+        assert!(editor.yank_is_linewise);
+    }
+
+    #[test]
+    fn test_delete_lines_single_undo() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (0, 0);
+        let history_before = editor.history.len();
+        editor.delete_lines(2); // 2dd should be single undo
+        assert_eq!(editor.history.len(), history_before + 1);
+
+        // Undo should restore both lines
+        editor.undo();
+        assert_eq!(editor.text(), "line1\nline2\nline3");
+    }
+
+    // ============ Count with Paste Tests ============
+
+    #[test]
+    fn test_paste_after_with_count_characterwise() {
+        let mut editor = TestEditor::new("hello");
+        editor.yank_buffer = "X".to_string();
+        editor.yank_is_linewise = false;
+        editor.cursor = (0, 0);
+        editor.paste_after_count(3); // 3p
+        assert_eq!(editor.text(), "hXXXello");
+    }
+
+    #[test]
+    fn test_paste_after_with_count_linewise() {
+        let mut editor = TestEditor::new("first\nlast");
+        editor.yank_buffer = "middle".to_string();
+        editor.yank_is_linewise = true;
+        editor.cursor = (0, 0);
+        editor.paste_after_count(2); // 2p
+        assert_eq!(editor.lines.len(), 4);
+        assert_eq!(editor.lines[1], "middle");
+        assert_eq!(editor.lines[2], "middle");
+    }
+
+    #[test]
+    fn test_paste_single_undo() {
+        let mut editor = TestEditor::new("test");
+        editor.yank_buffer = "X".to_string();
+        editor.yank_is_linewise = false;
+        editor.cursor = (0, 0);
+        let history_before = editor.history.len();
+        editor.paste_after_count(3);
+        assert_eq!(editor.history.len(), history_before + 1);
+
+        // Undo should remove all 3 pastes
+        editor.undo();
+        assert_eq!(editor.text(), "test");
     }
 }
