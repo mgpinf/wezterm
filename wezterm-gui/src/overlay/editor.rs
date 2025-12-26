@@ -3908,7 +3908,7 @@ impl<'a> EditorState<'a> {
         ]);
 
         // Status bar
-        let mode_text = match self.mode {
+        let mode_text_raw = match self.mode {
             EditorMode::Normal => &self.colors.normal_mode_text,
             EditorMode::Insert => &self.colors.insert_mode_text,
             EditorMode::Replace => &self.colors.replace_mode_text,
@@ -3916,6 +3916,8 @@ impl<'a> EditorState<'a> {
             EditorMode::Visual => &self.colors.visual_mode_text,
             EditorMode::VisualLine => &self.colors.visual_line_mode_text,
         };
+        let mode_text = format!(" {} ", mode_text_raw);
+        let mode_len = mode_text_raw.len() + 2; // +2 for leading/trailing spaces
 
         // Build pending keys string (shown on the right like Neovim)
         let mut pending_str = String::new();
@@ -3954,13 +3956,12 @@ impl<'a> EditorState<'a> {
             Change::Attribute(AttributeChange::Background(mode_bg)),
             Change::Attribute(AttributeChange::Foreground(mode_fg)),
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Text(mode_text.to_string()),
+            Change::Text(mode_text),
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
         // Render middle section and position at the end
         let position = format!(" {}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
-        let mode_len = mode_text.len();
         let position_len = position.len();
 
         // Calculate middle section width

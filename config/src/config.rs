@@ -1675,27 +1675,27 @@ fn default_command_palette_bg_color() -> RgbaColor {
 }
 
 fn default_input_text_normal_mode_text() -> String {
-    " NORMAL ".to_string()
+    "NORMAL".to_string()
 }
 
 fn default_input_text_insert_mode_text() -> String {
-    " INSERT ".to_string()
+    "INSERT".to_string()
 }
 
 fn default_input_text_replace_mode_text() -> String {
-    " REPLACE ".to_string()
+    "REPLACE".to_string()
 }
 
 fn default_input_text_command_mode_text() -> String {
-    " COMMAND ".to_string()
+    "COMMAND".to_string()
 }
 
 fn default_input_text_visual_mode_text() -> String {
-    " VISUAL ".to_string()
+    "VISUAL".to_string()
 }
 
 fn default_input_text_visual_line_mode_text() -> String {
-    " VISUAL LINE ".to_string()
+    "VISUAL LINE".to_string()
 }
 
 fn default_swallow_mouse_click_on_window_focus() -> bool {
