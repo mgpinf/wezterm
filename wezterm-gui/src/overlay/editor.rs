@@ -25,6 +25,10 @@ struct EditorColors {
     visual_mode_bg: ColorAttribute,
     selection_bg: ColorAttribute,
     selection_fg: ColorAttribute,
+    search_match_bg: ColorAttribute,
+    search_match_fg: ColorAttribute,
+    search_current_match_bg: ColorAttribute,
+    search_current_match_fg: ColorAttribute,
 }
 
 impl EditorColors {
@@ -101,6 +105,11 @@ impl EditorColors {
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::White.into()), |c| {
                     ColorAttribute::TrueColorWithDefaultFallback(c.into())
                 }),
+            // Search match colors (yellow bg for matches, orange for current)
+            search_match_bg: ColorAttribute::PaletteIndex(AnsiColor::Yellow.into()),
+            search_match_fg: ColorAttribute::PaletteIndex(AnsiColor::Black.into()),
+            search_current_match_bg: ColorAttribute::PaletteIndex(AnsiColor::Olive.into()),
+            search_current_match_fg: ColorAttribute::PaletteIndex(AnsiColor::White.into()),
         }
     }
 }
@@ -231,6 +240,8 @@ struct EditorState<'a> {
     search_pattern: String,    // Current search pattern
     search_direction: Direction, // Current search direction
     search_input: String,      // Input buffer for search mode
+    search_highlight: bool,    // Whether to highlight search matches
+    current_match: Option<(usize, usize)>, // Current match position (row, col)
     visual_start: (usize, usize), // Anchor point for visual selection (row, col)
 }
 
@@ -275,6 +286,8 @@ impl<'a> EditorState<'a> {
             search_pattern: String::new(),
             search_direction: Direction::Forward,
             search_input: String::new(),
+            search_highlight: false,
+            current_match: None,
             visual_start: (0, 0),
         }
     }
@@ -3805,7 +3818,7 @@ impl<'a> EditorState<'a> {
             ]);
 
             // Line content with selection highlighting
-            let line = &self.lines[line_idx];
+            let line = self.lines[line_idx].clone();
             if let Some((sel_start, sel_end)) = selection {
                 // Check if this line is part of the selection
                 let line_in_selection = line_idx >= sel_start.0 && line_idx <= sel_end.0;
@@ -3894,18 +3907,12 @@ impl<'a> EditorState<'a> {
                             .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
                     }
                 } else {
-                    // Not in selection range
-                    self.buf.add_changes(vec![
-                        Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                        Change::Text(line.clone()),
-                    ]);
+                    // Not in selection range - render with search highlighting
+                    self.render_line_with_search_highlight(&line, line_idx);
                 }
             } else {
-                // Not in visual mode
-                self.buf.add_changes(vec![
-                    Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                    Change::Text(line.clone()),
-                ]);
+                // Not in visual mode - render with search highlighting
+                self.render_line_with_search_highlight(&line, line_idx);
             }
         }
 
@@ -3943,6 +3950,89 @@ impl<'a> EditorState<'a> {
         self.buf.flush()?;
 
         Ok(())
+    }
+
+    /// Render a line with search match highlighting
+    fn render_line_with_search_highlight(&mut self, line: &str, line_idx: usize) {
+        // If no search pattern or highlighting is off, just render normally
+        if !self.search_highlight || self.search_pattern.is_empty() {
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(line.to_string()),
+            ]);
+            return;
+        }
+
+        let pattern = &self.search_pattern;
+        let is_current_line = self.current_match.map_or(false, |(r, _)| r == line_idx);
+
+        // Find all matches in this line
+        let mut matches: Vec<(usize, usize)> = Vec::new();
+        let mut search_start = 0;
+        while let Some(pos) = line[search_start..].find(pattern) {
+            let start = search_start + pos;
+            let end = start + pattern.len();
+            matches.push((start, end));
+            search_start = end;
+        }
+
+        if matches.is_empty() {
+            // No matches, render normally
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(line.to_string()),
+            ]);
+            return;
+        }
+
+        // Render line with highlighted matches
+        let mut last_end = 0;
+        for (start, end) in matches {
+            // Text before match
+            if start > last_end {
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                    Change::Text(line[last_end..start].to_string()),
+                ]);
+            }
+
+            // Check if this is the current match
+            let is_current = is_current_line
+                && self
+                    .current_match
+                    .map_or(false, |(_, c)| c >= start && c < end);
+
+            // Highlighted match
+            if is_current {
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Background(
+                        self.colors.search_current_match_bg,
+                    )),
+                    Change::Attribute(AttributeChange::Foreground(
+                        self.colors.search_current_match_fg,
+                    )),
+                    Change::Text(line[start..end].to_string()),
+                    Change::AllAttributes(CellAttributes::default()),
+                ]);
+            } else {
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Background(self.colors.search_match_bg)),
+                    Change::Attribute(AttributeChange::Foreground(self.colors.search_match_fg)),
+                    Change::Text(line[start..end].to_string()),
+                    Change::AllAttributes(CellAttributes::default()),
+                ]);
+            }
+
+            last_end = end;
+        }
+
+        // Text after last match
+        if last_end < line.len() {
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(line[last_end..].to_string()),
+            ]);
+        }
     }
 
     // Helper to perform delete action based on a motion
@@ -4813,6 +4903,7 @@ impl<'a> EditorState<'a> {
             Direction::Forward => self.search_forward_from_cursor(),
             Direction::Backward => self.search_backward_from_cursor(),
         }
+        self.current_match = Some(self.cursor);
     }
 
     fn search_prev(&mut self) {
@@ -4824,6 +4915,7 @@ impl<'a> EditorState<'a> {
             Direction::Forward => self.search_backward_from_cursor(),
             Direction::Backward => self.search_forward_from_cursor(),
         }
+        self.current_match = Some(self.cursor);
     }
 
     fn search_forward_from_cursor(&mut self) {
@@ -4945,12 +5037,16 @@ impl<'a> EditorState<'a> {
             } else {
                 Direction::Backward
             };
+            // Enable highlighting
+            self.search_highlight = true;
             // Move to next/previous occurrence
             if forward {
                 self.search_forward_from_cursor();
             } else {
                 self.search_backward_from_cursor();
             }
+            // Track current match position
+            self.current_match = Some(self.cursor);
         }
     }
 
@@ -6297,6 +6393,9 @@ impl<'a> EditorState<'a> {
                     }) => {
                         self.pending_keys.clear();
                         self.pending_operator = None;
+                        // Turn off search highlighting
+                        self.search_highlight = false;
+                        self.current_match = None;
                     }
                     _ => {}
                 },
@@ -6384,11 +6483,15 @@ impl<'a> EditorState<'a> {
                         self.search_pattern = self.search_input.clone();
                         self.mode = EditorMode::Normal;
                         self.search_input.clear();
+                        // Enable highlighting if we have a search pattern
+                        self.search_highlight = !self.search_pattern.is_empty();
                         // Perform the search
                         match self.search_direction {
                             Direction::Forward => self.search_forward_from_cursor(),
                             Direction::Backward => self.search_backward_from_cursor(),
                         }
+                        // Track current match position
+                        self.current_match = Some(self.cursor);
                         self.update_desired_col();
                     }
                     InputEvent::Key(KeyEvent {
