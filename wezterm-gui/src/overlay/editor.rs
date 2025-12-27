@@ -7558,30 +7558,39 @@ impl<'a> EditorState<'a> {
                         self.mode = EditorMode::Normal;
                         self.cursor = self.search_start_pos;
                         self.search_input.clear();
-                        // Restore previous search pattern
-                        self.search_pattern = self.search_saved_pattern.clone();
-                        // Keep highlighting previous search pattern if it exists
-                        (self.search_highlight, self.current_match) =
-                            if self.search_pattern.is_empty() {
-                                (false, None)
-                            } else {
-                                (true, Some(self.cursor))
-                            };
+                        // Restore previous search pattern if it exists in the document
+                        let pattern_exists = !self.search_saved_pattern.is_empty()
+                            && self
+                                .lines
+                                .iter()
+                                .any(|line| line.contains(&self.search_saved_pattern));
+                        if pattern_exists {
+                            self.search_pattern = self.search_saved_pattern.clone();
+                            self.search_highlight = true;
+                            self.current_match = Some(self.cursor);
+                        } else {
+                            self.search_pattern.clear();
+                            self.search_highlight = false;
+                            self.current_match = None;
+                        }
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Enter,
                         ..
                     }) => {
                         // Confirm search - cursor is already on match from incremental search
-                        self.search_pattern = self.search_input.clone();
                         self.mode = EditorMode::Normal;
+                        // Only set pattern and enable highlighting if a match was found
+                        if self.current_match.is_some() {
+                            self.search_pattern = self.search_input.clone();
+                            self.search_highlight = true;
+                            self.search_display_direction = self.search_direction;
+                        } else {
+                            // No match found - don't display the pattern
+                            self.search_pattern.clear();
+                            self.search_highlight = false;
+                        }
                         self.search_input.clear();
-                        // Enable highlighting if we have a search pattern
-                        self.search_highlight = !self.search_pattern.is_empty();
-                        // Set display direction to match original search direction
-                        self.search_display_direction = self.search_direction;
-                        // Track current match position (already set by incremental search)
-                        self.current_match = Some(self.cursor);
                         self.update_desired_col();
                     }
                     InputEvent::Key(KeyEvent {
