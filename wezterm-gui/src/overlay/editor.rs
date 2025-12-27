@@ -4052,8 +4052,13 @@ impl<'a> EditorState<'a> {
                 format!("{}{}", prompt, self.search_pattern)
             };
 
-            let pending_width = pending_str.len() + PENDING_KEYS_PADDING;
-            let left_width = cols.saturating_sub(pending_width);
+            let pending_with_padding = if pending_str.is_empty() {
+                String::new()
+            } else {
+                let padding = PENDING_KEYS_PADDING.saturating_sub(pending_str.len());
+                format!("{}{}", pending_str, " ".repeat(padding))
+            };
+            let left_width = cols.saturating_sub(pending_with_padding.len());
 
             self.buf.add_changes(vec![
                 Change::CursorPosition {
@@ -4061,11 +4066,10 @@ impl<'a> EditorState<'a> {
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Text(format!(
-                    "{:<left$}{:>right$}",
+                    "{:<left$}{}",
                     search_display,
-                    pending_str,
-                    left = left_width,
-                    right = pending_width
+                    pending_with_padding,
+                    left = left_width
                 )),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
