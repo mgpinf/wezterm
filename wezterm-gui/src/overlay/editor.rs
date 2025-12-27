@@ -5805,31 +5805,68 @@ impl<'a> EditorState<'a> {
     }
 
     fn search_word_under_cursor(&mut self, forward: bool) {
-        // Get the word under cursor
-        let (start, end) = self.get_inner_word_bounds();
         let line = &self.lines[self.cursor.0];
-        if start < end && end <= line.len() {
-            let word = &line[start..end];
-            // Use word boundaries for exact word match
-            self.search_pattern = word.to_string();
-            self.search_direction = if forward {
-                Direction::Forward
-            } else {
-                Direction::Backward
-            };
-            // Set display direction to match search direction
-            self.search_display_direction = self.search_direction;
-            // Enable highlighting
-            self.search_highlight = true;
-            // Move to next/previous occurrence
-            if forward {
-                self.search_forward_from_cursor();
-            } else {
-                self.search_backward_from_cursor();
-            }
-            // Track current match position
-            self.current_match = Some(self.cursor);
+        if line.is_empty() {
+            return;
         }
+
+        let chars: Vec<char> = line.chars().collect();
+        let col = self.cursor.1.min(chars.len().saturating_sub(1));
+
+        // If on whitespace, find next non-whitespace character
+        let search_col = if chars[col].is_whitespace() {
+            match chars[col..].iter().position(|c| !c.is_whitespace()) {
+                Some(offset) => col + offset,
+                None => return, // No word found after cursor
+            }
+        } else {
+            col
+        };
+
+        // Find word bounds at the determined position
+        let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+        let is_punct = |c: char| !c.is_whitespace() && !is_word_char(c);
+
+        let char_matches: &dyn Fn(char) -> bool = if is_word_char(chars[search_col]) {
+            &is_word_char
+        } else {
+            &is_punct
+        };
+
+        let mut start = search_col;
+        let mut end = search_col;
+
+        while start > 0 && char_matches(chars[start - 1]) {
+            start -= 1;
+        }
+        while end < chars.len() && char_matches(chars[end]) {
+            end += 1;
+        }
+
+        if start >= end {
+            return;
+        }
+
+        // Convert char indices to byte indices
+        let byte_start: usize = chars[..start].iter().map(|c| c.len_utf8()).sum();
+        let byte_end: usize = chars[..end].iter().map(|c| c.len_utf8()).sum();
+
+        self.search_pattern = line[byte_start..byte_end].to_string();
+        self.search_direction = if forward {
+            Direction::Forward
+        } else {
+            Direction::Backward
+        };
+        self.search_display_direction = self.search_direction;
+        self.search_highlight = true;
+        self.cursor.1 = start;
+
+        if forward {
+            self.search_forward_from_cursor();
+        } else {
+            self.search_backward_from_cursor();
+        }
+        self.current_match = Some(self.cursor);
     }
 
     // Visual mode helpers
