@@ -3995,13 +3995,20 @@ impl<'a> EditorState<'a> {
 
         // Calculate position and middle section width
         // Show "0-1" for column when on a blank line in normal mode (like Vim)
+        // Show "0" for row if buffer has no text (single empty line)
         let line_is_empty = self.lines[self.cursor.0].is_empty();
+        let buffer_is_empty = self.lines.len() == 1 && self.lines[0].is_empty();
+        let row_display = if buffer_is_empty {
+            "0".to_string()
+        } else {
+            (self.cursor.0 + 1).to_string()
+        };
         let col_display = if line_is_empty && self.mode == EditorMode::Normal {
             "0-1".to_string()
         } else {
             (self.cursor.1 + 1).to_string()
         };
-        let position_text = format!("{},{}", self.cursor.0 + 1, col_display);
+        let position_text = format!("{},{}", row_display, col_display);
         let position_padding = POSITION_WIDTH.saturating_sub(position_text.len());
         let position = format!("{}{}", position_text, " ".repeat(position_padding));
         let middle_width = cols.saturating_sub(mode_len + POSITION_WIDTH);
