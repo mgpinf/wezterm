@@ -7519,18 +7519,13 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Enter,
                         ..
                     }) => {
-                        // Confirm search and find first match
+                        // Confirm search - cursor is already on match from incremental search
                         self.search_pattern = self.search_input.clone();
                         self.mode = EditorMode::Normal;
                         self.search_input.clear();
                         // Enable highlighting if we have a search pattern
                         self.search_highlight = !self.search_pattern.is_empty();
-                        // Perform the search
-                        match self.search_direction {
-                            Direction::Forward => self.search_forward_from_cursor(),
-                            Direction::Backward => self.search_backward_from_cursor(),
-                        }
-                        // Track current match position
+                        // Track current match position (already set by incremental search)
                         self.current_match = Some(self.cursor);
                         self.update_desired_col();
                     }
