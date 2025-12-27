@@ -665,6 +665,16 @@ pub struct DisplayText {
     pub text: String,
 }
 
+/// A choice option for selector fields in InputForm
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct FormFieldChoice {
+    /// Display label for the choice
+    pub label: String,
+    /// Value to submit (defaults to label if not specified)
+    #[dynamic(default)]
+    pub id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct FormField {
     pub label: String,
@@ -677,6 +687,9 @@ pub struct FormField {
     pub initial_value: Option<String>,
     #[dynamic(default)]
     pub required: bool,
+    /// If non-empty, this field becomes a selector with fuzzy search
+    #[dynamic(default)]
+    pub choices: Vec<FormFieldChoice>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
