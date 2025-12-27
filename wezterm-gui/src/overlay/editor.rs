@@ -3995,32 +3995,23 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        // Render mode with special colors
+        // Calculate position and middle section width
+        let position = format!(" {}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
+        let middle_width = cols.saturating_sub(mode_len + position.len());
+
+        // Render status bar: mode | middle section | position
         self.buf.add_changes(vec![
+            // Mode section
             Change::Attribute(AttributeChange::Background(mode_bg)),
             Change::Attribute(AttributeChange::Foreground(mode_fg)),
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
             Change::Text(mode_text),
-            Change::AllAttributes(CellAttributes::default()),
-        ]);
-
-        // Render middle section and position at the end
-        let position = format!(" {}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
-        let position_len = position.len();
-
-        // Calculate middle section width
-        let middle_width = cols.saturating_sub(mode_len + position_len);
-
-        // Render middle section with status bar colors (empty space)
-        self.buf.add_changes(vec![
+            // Middle section (empty space with status bar colors)
+            Change::Attribute(AttributeChange::Intensity(Intensity::Normal)),
             Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
             Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
             Change::Text(format!("{:width$}", "", width = middle_width)),
-            Change::AllAttributes(CellAttributes::default()),
-        ]);
-
-        // Render position with mode colors
-        self.buf.add_changes(vec![
+            // Position section
             Change::Attribute(AttributeChange::Background(mode_bg)),
             Change::Attribute(AttributeChange::Foreground(mode_fg)),
             Change::Text(position),
