@@ -3660,9 +3660,10 @@ impl<'a> EditorState<'a> {
                 self.lines.remove(self.cursor.0);
             }
         }
-        self.lines.insert(self.cursor.0, indent.clone());
+        let indent_len = indent.len();
+        self.lines.insert(self.cursor.0, indent);
 
-        self.cursor.1 = indent.len();
+        self.cursor.1 = indent_len;
         self.mode = EditorMode::Insert;
         // Don't call record_change() here - it will be called when exiting insert mode
     }
