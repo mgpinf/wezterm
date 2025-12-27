@@ -4033,37 +4033,34 @@ impl<'a> EditorState<'a> {
                 Change::Text(format!("{:<width$}", search_text, width = cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-        } else if !pending_str.is_empty() {
-            // Show pending keys on the last row (right-aligned)
-            let content_width = cols.saturating_sub(PENDING_KEYS_PADDING);
+        } else {
+            // Show search pattern on left and pending keys on right
+            let search_display = if self.search_pattern.is_empty() {
+                String::new()
+            } else {
+                let prompt = if self.search_display_direction == Direction::Forward {
+                    "/"
+                } else {
+                    "?"
+                };
+                format!("{}{}", prompt, self.search_pattern)
+            };
+
+            let pending_width = pending_str.len() + PENDING_KEYS_PADDING;
+            let left_width = cols.saturating_sub(pending_width);
+
             self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Text(format!(
-                    "{:>content_width$}{:padding$}",
+                    "{:<left$}{:>right$}",
+                    search_display,
                     pending_str,
-                    "",
-                    content_width = content_width,
-                    padding = PENDING_KEYS_PADDING
+                    left = left_width,
+                    right = pending_width
                 )),
-                Change::AllAttributes(CellAttributes::default()),
-            ]);
-        } else if !self.search_pattern.is_empty() {
-            // Show the last search pattern on the last row
-            // Use display direction which is updated by n/N
-            let prompt = match self.search_display_direction {
-                Direction::Forward => "/",
-                Direction::Backward => "?",
-            };
-            let search_display = format!("{}{}", prompt, self.search_pattern);
-            self.buf.add_changes(vec![
-                Change::CursorPosition {
-                    x: Position::Absolute(0),
-                    y: Position::Absolute(rows - 1),
-                },
-                Change::Text(format!("{:<width$}", search_display, width = cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
