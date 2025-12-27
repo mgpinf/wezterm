@@ -381,6 +381,25 @@ impl<'a> EditorState<'a> {
         self.last_count = count;
     }
 
+    /// Calculate how many visual rows a line takes when wrapped
+    fn wrapped_line_rows(char_count: usize, content_width: usize) -> usize {
+        if content_width == 0 || char_count == 0 {
+            1
+        } else {
+            (char_count + content_width - 1) / content_width
+        }
+    }
+
+    /// Get the visual row offset and column within that row for a cursor position
+    /// Returns (visual_row_offset, column_in_visual_row)
+    fn cursor_visual_position(cursor_col: usize, content_width: usize) -> (usize, usize) {
+        if content_width == 0 {
+            (0, cursor_col)
+        } else {
+            (cursor_col / content_width, cursor_col % content_width)
+        }
+    }
+
     /// Check if mode allows cursor at end of line (Insert or Replace mode)
     fn is_insert_like_mode(&self) -> bool {
         self.mode == EditorMode::Insert || self.mode == EditorMode::Replace
@@ -4052,12 +4071,58 @@ impl<'a> EditorState<'a> {
             content_start_row = 0;
         }
 
+        // Gutter width constant
+        const GUTTER_WIDTH: usize = 6;
+        const EMPTY_GUTTER: &str = "      ";
+
         // Adjust viewport: subtract 2 for status bar row and empty last row + content_start_row for optional title
         let content_rows = rows.saturating_sub(2 + content_start_row);
+        let content_width = cols.saturating_sub(GUTTER_WIDTH);
+
+        // Viewport adjustment - account for wrapped lines when scrolling
+        // First, scroll up if cursor is above viewport
         if self.cursor.0 < self.viewport_top {
             self.viewport_top = self.cursor.0;
-        } else if self.cursor.0 >= self.viewport_top + content_rows {
-            self.viewport_top = self.cursor.0 - content_rows + 1;
+        }
+
+        // Then check if cursor line is visible
+        if content_width > 0 {
+            loop {
+                let mut visual_row = 0;
+                let mut cursor_visible = false;
+
+                for line_idx in self.viewport_top..self.lines.len() {
+                    let line_char_count = self.lines[line_idx].chars().count();
+                    let line_visual_rows = Self::wrapped_line_rows(line_char_count, content_width);
+
+                    if line_idx == self.cursor.0 {
+                        // Calculate which visual row the cursor is on
+                        let (cursor_row_offset, _) =
+                            Self::cursor_visual_position(self.cursor.1, content_width);
+                        let cursor_visual_row = visual_row + cursor_row_offset;
+                        if cursor_visual_row < content_rows {
+                            cursor_visible = true;
+                        }
+                        break;
+                    }
+
+                    visual_row += line_visual_rows;
+                    if visual_row >= content_rows {
+                        break;
+                    }
+                }
+
+                if cursor_visible {
+                    break;
+                } else {
+                    // Scroll down by one line
+                    self.viewport_top += 1;
+                    if self.viewport_top >= self.lines.len() {
+                        self.viewport_top = self.lines.len().saturating_sub(1);
+                        break;
+                    }
+                }
+            }
         }
 
         // Calculate selection range if in visual mode
@@ -4074,128 +4139,97 @@ impl<'a> EditorState<'a> {
             None
         };
 
-        for i in 0..content_rows {
-            let line_idx = self.viewport_top + i;
-            if line_idx >= self.lines.len() {
-                break;
-            }
+        // Track cursor screen position for later
+        let mut cursor_screen_row: Option<usize> = None;
+        let mut cursor_screen_col: Option<usize> = None;
 
-            // Line number (relative, with absolute for current line)
-            let line_number_text = if line_idx == self.cursor.0 {
-                // Current line shows absolute line number, left-aligned
-                format!("  {:<3} ", self.cursor.0 + 1)
-            } else {
-                // Other lines show relative distance, right-aligned
-                let rel_num = (line_idx as isize - self.cursor.0 as isize).unsigned_abs();
-                format!("  {:>3} ", rel_num)
-            };
-            self.buf.add_changes(vec![
-                Change::CursorPosition {
-                    x: Position::Absolute(0),
-                    y: Position::Absolute(content_start_row + i),
-                },
-                Change::Attribute(AttributeChange::Foreground(self.colors.line_number_fg)),
-                Change::Text(line_number_text),
-                Change::AllAttributes(CellAttributes::default()),
-            ]);
+        // Line wrap rendering
+        let mut visual_row = 0;
+        let mut line_idx = self.viewport_top;
 
-            // Line content with selection highlighting
-            let line = self.lines[line_idx].clone();
-            if let Some((sel_start, sel_end)) = selection {
-                // Check if this line is part of the selection
-                let line_in_selection = line_idx >= sel_start.0 && line_idx <= sel_end.0;
+        while visual_row < content_rows && line_idx < self.lines.len() {
+            let chars: Vec<char> = self.lines[line_idx].chars().collect();
+            let line_len = chars.len();
+            let line_visual_rows = Self::wrapped_line_rows(line_len, content_width);
+
+            for wrap_row in 0..line_visual_rows {
+                if visual_row >= content_rows {
+                    break;
+                }
+
+                let start_col = wrap_row * content_width;
+                let end_col = ((wrap_row + 1) * content_width).min(line_len);
+
+                // Line number (only on first visual row of each line)
+                let line_number_text = if wrap_row == 0 {
+                    if line_idx == self.cursor.0 {
+                        format!("  {:<3} ", self.cursor.0 + 1)
+                    } else {
+                        let rel_num = (line_idx as isize - self.cursor.0 as isize).unsigned_abs();
+                        format!("  {:>3} ", rel_num)
+                    }
+                } else {
+                    EMPTY_GUTTER.to_string()
+                };
+
+                self.buf.add_changes(vec![
+                    Change::CursorPosition {
+                        x: Position::Absolute(0),
+                        y: Position::Absolute(content_start_row + visual_row),
+                    },
+                    Change::Attribute(AttributeChange::Foreground(self.colors.line_number_fg)),
+                    Change::Text(line_number_text),
+                    Change::AllAttributes(CellAttributes::default()),
+                ]);
+
+                // Track cursor position
+                if line_idx == self.cursor.0 {
+                    let (cursor_wrap_row, col_in_row) =
+                        Self::cursor_visual_position(self.cursor.1, content_width);
+                    if wrap_row == cursor_wrap_row {
+                        cursor_screen_row = Some(content_start_row + visual_row);
+                        cursor_screen_col = Some(GUTTER_WIDTH + col_in_row);
+                    }
+                }
+
+                // Extract the portion of the line for this visual row
+                let segment: String = if line_len == 0 && wrap_row == 0 {
+                    String::new()
+                } else {
+                    chars[start_col..end_col].iter().collect()
+                };
+
+                // Render segment with appropriate highlighting
+                let line_in_selection = selection
+                    .map(|(sel_start, sel_end)| line_idx >= sel_start.0 && line_idx <= sel_end.0)
+                    .unwrap_or(false);
 
                 if line_in_selection && self.mode == EditorMode::VisualLine {
-                    // Entire line is selected in VisualLine mode
+                    // Entire segment is selected
                     self.buf.add_changes(vec![
                         Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                         Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
-                        Change::Text(if line.is_empty() {
+                        Change::Text(if segment.is_empty() && wrap_row == 0 {
                             " ".to_string()
                         } else {
-                            line.clone()
+                            segment.clone()
                         }),
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
                 } else if line_in_selection && self.mode == EditorMode::Visual {
-                    // Character-wise selection
-                    let chars: Vec<char> = line.chars().collect();
-                    let line_len = chars.len();
-
-                    // Handle empty lines - show a highlighted space like Neovim
-                    if line_len == 0 {
-                        self.buf.add_changes(vec![
-                            Change::Attribute(AttributeChange::Background(
-                                self.colors.selection_bg,
-                            )),
-                            Change::Attribute(AttributeChange::Foreground(
-                                self.colors.selection_fg,
-                            )),
-                            Change::Text(" ".to_string()),
-                            Change::AllAttributes(CellAttributes::default()),
-                        ]);
-                    } else {
-                        let sel_col_start = if line_idx == sel_start.0 {
-                            sel_start.1
-                        } else {
-                            0
-                        };
-                        let sel_col_end = if line_idx == sel_end.0 {
-                            sel_end.1 + 1
-                        } else {
-                            line_len
-                        };
-
-                        // Text before selection
-                        if sel_col_start > 0 {
-                            let before: String =
-                                chars[..sel_col_start.min(line_len)].iter().collect();
-                            self.buf.add_changes(vec![
-                                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                                Change::Text(before),
-                            ]);
-                        }
-
-                        // Selected text
-                        if sel_col_start < line_len {
-                            let selected: String = chars
-                                [sel_col_start.min(line_len)..sel_col_end.min(line_len)]
-                                .iter()
-                                .collect();
-                            if !selected.is_empty() {
-                                self.buf.add_changes(vec![
-                                    Change::Attribute(AttributeChange::Background(
-                                        self.colors.selection_bg,
-                                    )),
-                                    Change::Attribute(AttributeChange::Foreground(
-                                        self.colors.selection_fg,
-                                    )),
-                                    Change::Text(selected),
-                                    Change::AllAttributes(CellAttributes::default()),
-                                ]);
-                            }
-                        }
-
-                        // Text after selection
-                        if sel_col_end < line_len {
-                            let after: String = chars[sel_col_end..].iter().collect();
-                            self.buf.add_changes(vec![
-                                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                                Change::Text(after),
-                            ]);
-                        }
-
-                        self.buf
-                            .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
-                    }
+                    // Character-wise selection within segment
+                    let (sel_start, sel_end) = selection.unwrap();
+                    self.render_wrapped_segment_with_selection(
+                        &chars, start_col, end_col, line_idx, sel_start, sel_end,
+                    );
                 } else {
-                    // Not in selection range - render with search highlighting
-                    self.render_line_with_search_highlight(&line, line_idx);
+                    self.render_segment_with_search_highlight(&segment, line_idx, start_col);
                 }
-            } else {
-                // Not in visual mode - render with search highlighting
-                self.render_line_with_search_highlight(&line, line_idx);
+
+                visual_row += 1;
             }
+
+            line_idx += 1;
         }
 
         // Cursor
@@ -4204,8 +4238,9 @@ impl<'a> EditorState<'a> {
             let x = 1 + self.search_input.len(); // 1 for prompt (/ or ?)
             (x, rows - 1, CursorShape::SteadyBlock)
         } else {
-            let y = content_start_row + (self.cursor.0 - self.viewport_top);
-            let x = 6 + self.cursor.1; // 6 for line number width (2 padding + 3 digits + 1 space)
+            // Use tracked cursor position (accounts for line wrap)
+            let y = cursor_screen_row.unwrap_or(content_start_row);
+            let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
             let shape = if self.pending_operator.is_some() {
                 // Operator-pending mode (d, c, y waiting for motion)
                 CursorShape::SteadyUnderline
@@ -4238,47 +4273,66 @@ impl<'a> EditorState<'a> {
         Ok(())
     }
 
-    /// Render a line with search match highlighting
-    fn render_line_with_search_highlight(&mut self, line: &str, line_idx: usize) {
-        // If no search pattern or highlighting is off, just render normally
+    /// Render a segment of a line with search highlighting (for wrapped lines)
+    /// start_col is the column offset in the original line where this segment starts
+    fn render_segment_with_search_highlight(
+        &mut self,
+        segment: &str,
+        line_idx: usize,
+        start_col: usize,
+    ) {
         if !self.search_highlight || self.search_pattern.is_empty() {
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                Change::Text(line.to_string()),
+                Change::Text(segment.to_string()),
             ]);
             return;
         }
 
+        let line = &self.lines[line_idx];
         let pattern = &self.search_pattern;
         let is_current_line = self.current_match.map_or(false, |(r, _)| r == line_idx);
+        let end_col = start_col + segment.chars().count();
 
-        // Find all matches in this line
+        // Find all matches in the full line that overlap with this segment
         let mut matches: Vec<(usize, usize)> = Vec::new();
         let mut search_start = 0;
         while let Some(pos) = line[search_start..].find(pattern) {
-            let start = search_start + pos;
-            let end = start + pattern.len();
-            matches.push((start, end));
-            search_start = end;
+            let match_start = search_start + pos;
+            let match_end = match_start + pattern.len();
+            // Check if this match overlaps with our segment
+            if match_end > start_col && match_start < end_col {
+                matches.push((match_start, match_end));
+            }
+            search_start = match_end;
+            if search_start >= line.len() {
+                break;
+            }
         }
 
         if matches.is_empty() {
-            // No matches, render normally
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                Change::Text(line.to_string()),
+                Change::Text(segment.to_string()),
             ]);
             return;
         }
 
-        // Render line with highlighted matches
-        let mut last_end = 0;
-        for (start, end) in matches {
-            // Text before match
-            if start > last_end {
+        // Render segment with highlighted matches
+        let segment_chars: Vec<char> = segment.chars().collect();
+        let mut last_pos = 0;
+
+        for (match_start, match_end) in matches {
+            // Calculate positions relative to segment
+            let seg_match_start = match_start.saturating_sub(start_col);
+            let seg_match_end = (match_end.saturating_sub(start_col)).min(segment_chars.len());
+
+            // Text before match (within segment)
+            if seg_match_start > last_pos {
+                let before: String = segment_chars[last_pos..seg_match_start].iter().collect();
                 self.buf.add_changes(vec![
                     Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                    Change::Text(line[last_end..start].to_string()),
+                    Change::Text(before),
                 ]);
             }
 
@@ -4286,39 +4340,105 @@ impl<'a> EditorState<'a> {
             let is_current = is_current_line
                 && self
                     .current_match
-                    .map_or(false, |(_, c)| c >= start && c < end);
+                    .map_or(false, |(_, c)| c >= match_start && c < match_end);
 
-            // Highlighted match
-            if is_current {
-                self.buf.add_changes(vec![
-                    Change::Attribute(AttributeChange::Background(
-                        self.colors.search_current_match_bg,
-                    )),
-                    Change::Attribute(AttributeChange::Foreground(
-                        self.colors.search_current_match_fg,
-                    )),
-                    Change::Text(line[start..end].to_string()),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
-            } else {
-                self.buf.add_changes(vec![
-                    Change::Attribute(AttributeChange::Background(self.colors.search_match_bg)),
-                    Change::Attribute(AttributeChange::Foreground(self.colors.search_match_fg)),
-                    Change::Text(line[start..end].to_string()),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
+            // Highlighted match portion (clipped to segment)
+            let actual_start = seg_match_start.max(last_pos);
+            if actual_start < seg_match_end {
+                let matched: String = segment_chars[actual_start..seg_match_end].iter().collect();
+                if is_current {
+                    self.buf.add_changes(vec![
+                        Change::Attribute(AttributeChange::Background(
+                            self.colors.search_current_match_bg,
+                        )),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.search_current_match_fg,
+                        )),
+                        Change::Text(matched),
+                        Change::AllAttributes(CellAttributes::default()),
+                    ]);
+                } else {
+                    self.buf.add_changes(vec![
+                        Change::Attribute(AttributeChange::Background(self.colors.search_match_bg)),
+                        Change::Attribute(AttributeChange::Foreground(self.colors.search_match_fg)),
+                        Change::Text(matched),
+                        Change::AllAttributes(CellAttributes::default()),
+                    ]);
+                }
             }
 
-            last_end = end;
+            last_pos = seg_match_end;
         }
 
         // Text after last match
-        if last_end < line.len() {
+        if last_pos < segment_chars.len() {
+            let after: String = segment_chars[last_pos..].iter().collect();
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
-                Change::Text(line[last_end..].to_string()),
+                Change::Text(after),
             ]);
         }
+    }
+
+    /// Render a wrapped segment with visual selection highlighting
+    fn render_wrapped_segment_with_selection(
+        &mut self,
+        chars: &[char],
+        start_col: usize,
+        end_col: usize,
+        line_idx: usize,
+        sel_start: (usize, usize),
+        sel_end: (usize, usize),
+    ) {
+        let line_len = chars.len();
+
+        // Calculate selection bounds for the full line
+        let sel_col_start = if line_idx == sel_start.0 {
+            sel_start.1
+        } else {
+            0
+        };
+        let sel_col_end = if line_idx == sel_end.0 {
+            sel_end.1 + 1
+        } else {
+            line_len
+        };
+
+        // Clip to segment bounds
+        let seg_sel_start = sel_col_start.max(start_col).min(end_col);
+        let seg_sel_end = sel_col_end.max(start_col).min(end_col);
+
+        // Before selection (in segment)
+        if start_col < seg_sel_start {
+            let before: String = chars[start_col..seg_sel_start].iter().collect();
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(before),
+            ]);
+        }
+
+        // Selected portion (in segment)
+        if seg_sel_start < seg_sel_end {
+            let selected: String = chars[seg_sel_start..seg_sel_end].iter().collect();
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
+                Change::Text(selected),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        }
+
+        // After selection (in segment)
+        if seg_sel_end < end_col {
+            let after: String = chars[seg_sel_end..end_col].iter().collect();
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(after),
+            ]);
+        }
+
+        self.buf
+            .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
     }
 
     // Helper to perform delete action based on a motion with count support
