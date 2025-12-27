@@ -760,6 +760,10 @@ impl Tab {
     pub fn get_zoomed_pane(&self) -> Option<Arc<dyn Pane>> {
         self.inner.lock().get_zoomed_pane()
     }
+
+    pub fn has_floating_pane(&self) -> bool {
+        self.inner.lock().floating.is_some()
+    }
 }
 
 impl TabInner {

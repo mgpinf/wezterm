@@ -135,6 +135,16 @@ pub async fn spawn_command_internal(
                 None => anyhow::bail!("no src window when spawning floating pane?"),
             };
             if let Some(tab) = mux.get_active_tab_for_window(src_window_id) {
+                // A tab can only have one floating pane at a time.
+                // If one already exists, we don't spawn another.
+                if tab.has_floating_pane() {
+                    log::debug!(
+                        "tab {} already has a floating pane, not spawning another",
+                        tab.tab_id()
+                    );
+                    return Ok(());
+                }
+
                 let domain = match &spawn.domain {
                     SpawnTabDomain::DefaultDomain => Some(mux.default_domain()),
                     SpawnTabDomain::CurrentPaneDomain => {
