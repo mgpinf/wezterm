@@ -189,6 +189,7 @@ enum Direction {
     Backward,
 }
 
+#[cfg(test)]
 impl Direction {
     fn opposite(self) -> Self {
         match self {
