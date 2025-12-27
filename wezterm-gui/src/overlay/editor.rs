@@ -3998,7 +3998,7 @@ impl<'a> EditorState<'a> {
         } else {
             (self.cursor.1 + 1).to_string()
         };
-        let position = format!(" {}:{} ", self.cursor.0 + 1, col_display);
+        let position = format!(" {},{} ", self.cursor.0 + 1, col_display);
         let middle_width = cols.saturating_sub(mode_len + position.len());
 
         // Render status bar: mode | middle section | position
