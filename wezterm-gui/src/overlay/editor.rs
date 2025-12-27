@@ -280,6 +280,10 @@ struct NumberAtCursor {
 const GUTTER_WIDTH: usize = 6;
 /// Empty gutter string for wrapped line continuations
 const EMPTY_GUTTER: &str = "      ";
+/// Rows reserved at bottom for status bar and command line
+const RESERVED_ROWS: usize = 2;
+/// Right padding for pending keys display
+const PENDING_KEYS_PADDING: usize = 11;
 
 struct EditorState<'a> {
     args: &'a InputText,
@@ -4024,9 +4028,8 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if !pending_str.is_empty() {
-            // Show pending keys on the last row (right-aligned with 11-char right padding)
-            let right_padding = 11;
-            let content_width = cols.saturating_sub(right_padding);
+            // Show pending keys on the last row (right-aligned)
+            let content_width = cols.saturating_sub(PENDING_KEYS_PADDING);
             self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
@@ -4037,7 +4040,7 @@ impl<'a> EditorState<'a> {
                     pending_str,
                     "",
                     content_width = content_width,
-                    padding = right_padding
+                    padding = PENDING_KEYS_PADDING
                 )),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
@@ -4076,8 +4079,8 @@ impl<'a> EditorState<'a> {
             content_start_row = 0;
         }
 
-        // Adjust viewport: subtract 2 for status bar row and empty last row + content_start_row for optional title
-        let content_rows = rows.saturating_sub(2 + content_start_row);
+        // Adjust viewport: subtract reserved rows for status bar and command line + content_start_row for optional title
+        let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
         let content_width = cols.saturating_sub(GUTTER_WIDTH);
 
         // Viewport adjustment - account for wrapped lines when scrolling
