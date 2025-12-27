@@ -4019,8 +4019,6 @@ impl<'a> EditorState<'a> {
             Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
             Change::Text(format!("{:width$}", "", width = middle_width)),
             // Position section
-            Change::Attribute(AttributeChange::Background(mode_bg)),
-            Change::Attribute(AttributeChange::Foreground(mode_fg)),
             Change::Text(position),
             Change::AllAttributes(CellAttributes::default()),
         ]);
