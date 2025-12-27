@@ -319,6 +319,7 @@ struct EditorState<'a> {
     search_highlight: bool,    // Whether to highlight search matches
     current_match: Option<(usize, usize)>, // Current match position (row, col)
     search_start_pos: (usize, usize), // Cursor position when search started (for incremental search)
+    search_saved_pattern: String,     // Previous search pattern (restored on Escape)
     visual_start: (usize, usize),     // Anchor point for visual selection (row, col)
     replace_originals: Vec<Option<char>>, // Original chars for backspace in Replace mode
     replace_start_pos: (usize, usize), // Cursor position when Replace mode started
@@ -371,6 +372,7 @@ impl<'a> EditorState<'a> {
             search_highlight: false,
             current_match: None,
             search_start_pos: (0, 0),
+            search_saved_pattern: String::new(),
             visual_start: (0, 0),
             replace_originals: Vec::new(),
             replace_start_pos: (0, 0),
@@ -7307,6 +7309,7 @@ impl<'a> EditorState<'a> {
                             'Y' => self.yank_to_end_of_line(), // Y yanks to end of line (like y$)
                             '/' => {
                                 // Enter forward search mode
+                                self.search_saved_pattern = self.search_pattern.clone();
                                 self.mode = EditorMode::Search;
                                 self.search_direction = Direction::Forward;
                                 self.search_input.clear();
@@ -7314,6 +7317,7 @@ impl<'a> EditorState<'a> {
                             }
                             '?' => {
                                 // Enter backward search mode
+                                self.search_saved_pattern = self.search_pattern.clone();
                                 self.mode = EditorMode::Search;
                                 self.search_direction = Direction::Backward;
                                 self.search_input.clear();
@@ -7517,8 +7521,15 @@ impl<'a> EditorState<'a> {
                         self.mode = EditorMode::Normal;
                         self.cursor = self.search_start_pos;
                         self.search_input.clear();
-                        self.search_highlight = false;
-                        self.current_match = None;
+                        // Restore previous search pattern
+                        self.search_pattern = self.search_saved_pattern.clone();
+                        // Keep highlighting previous search pattern if it exists
+                        (self.search_highlight, self.current_match) =
+                            if self.search_pattern.is_empty() {
+                                (false, None)
+                            } else {
+                                (true, Some(self.cursor))
+                            };
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Enter,
