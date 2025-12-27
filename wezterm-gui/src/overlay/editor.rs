@@ -5963,6 +5963,13 @@ impl<'a> EditorState<'a> {
     fn run_loop(&mut self) -> anyhow::Result<()> {
         self.render()?;
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
+            // Handle resize events regardless of mode
+            if let InputEvent::Resized { cols, rows } = event {
+                self.buf.resize(cols, rows);
+                self.render()?;
+                continue;
+            }
+
             match self.mode {
                 EditorMode::Normal => match event {
                     InputEvent::Key(KeyEvent {
