@@ -280,6 +280,8 @@ struct NumberAtCursor {
 const GUTTER_WIDTH: usize = 6;
 /// Empty gutter string for wrapped line continuations
 const EMPTY_GUTTER: &str = "      ";
+/// Indicator when line continues from above (smooth scroll)
+const LINE_CONTINUES_ABOVE: &str = "  <<< ";
 /// Rows reserved at bottom for status bar and command line
 const RESERVED_ROWS: usize = 2;
 /// Right padding for pending keys display
@@ -4084,47 +4086,59 @@ impl<'a> EditorState<'a> {
         let content_width = cols.saturating_sub(GUTTER_WIDTH);
 
         // Viewport adjustment - account for wrapped lines when scrolling
-        // First, scroll up if cursor is above viewport
-        if self.cursor.0 < self.viewport_top {
-            self.viewport_top = self.cursor.0;
-        }
+        // Goal: Show entire wrapped line if possible, otherwise show cursor's visual row
+        // wrap_row_offset: skip initial wrap rows when cursor line is taller than screen
+        let mut wrap_row_offset: usize = 0;
 
-        // Then check if cursor line is visible
         if content_width > 0 {
-            loop {
-                let mut visual_row = 0;
-                let mut cursor_visible = false;
+            let cursor_line_chars = self.lines[self.cursor.0].chars().count();
+            let cursor_line_visual_rows = Self::wrapped_line_rows(cursor_line_chars, content_width);
+            let (cursor_row_in_line, _) =
+                Self::cursor_visual_position(self.cursor.1, content_width);
 
-                for line_idx in self.viewport_top..self.lines.len() {
-                    let line_char_count = self.lines[line_idx].chars().count();
-                    let line_visual_rows = Self::wrapped_line_rows(line_char_count, content_width);
+            // First, scroll up if cursor line is above viewport
+            if self.cursor.0 < self.viewport_top {
+                self.viewport_top = self.cursor.0;
+            }
 
-                    if line_idx == self.cursor.0 {
-                        // Calculate which visual row the cursor is on
-                        let (cursor_row_offset, _) =
-                            Self::cursor_visual_position(self.cursor.1, content_width);
-                        let cursor_visual_row = visual_row + cursor_row_offset;
-                        if cursor_visual_row < content_rows {
-                            cursor_visible = true;
-                        }
-                        break;
+            // Check if entire cursor line fits on screen
+            if cursor_line_visual_rows <= content_rows {
+                // Try to show the entire wrapped line
+                loop {
+                    // Calculate visual rows from viewport_top to cursor line
+                    let mut visual_rows_before_cursor = 0;
+                    for line_idx in self.viewport_top..self.cursor.0 {
+                        let char_count = self.lines[line_idx].chars().count();
+                        visual_rows_before_cursor +=
+                            Self::wrapped_line_rows(char_count, content_width);
                     }
 
-                    visual_row += line_visual_rows;
-                    if visual_row >= content_rows {
+                    // Check if entire cursor line (all visual rows) fits
+                    let cursor_line_end_row = visual_rows_before_cursor + cursor_line_visual_rows;
+                    if cursor_line_end_row <= content_rows {
+                        // Entire line is visible
                         break;
+                    } else {
+                        // Scroll down to make room for the entire line
+                        self.viewport_top += 1;
+                        if self.viewport_top > self.cursor.0 {
+                            // Can't scroll past cursor line
+                            self.viewport_top = self.cursor.0;
+                            break;
+                        }
                     }
                 }
+            } else {
+                // Cursor line is taller than screen - show the portion with cursor
+                self.viewport_top = self.cursor.0;
 
-                if cursor_visible {
-                    break;
-                } else {
-                    // Scroll down by one line
-                    self.viewport_top += 1;
-                    if self.viewport_top >= self.lines.len() {
-                        self.viewport_top = self.lines.len().saturating_sub(1);
-                        break;
-                    }
+                // Calculate wrap_row_offset so cursor's wrap row is visible
+                // Try to keep some context above the cursor if possible
+                if cursor_row_in_line >= content_rows {
+                    // Cursor row would be off-screen, calculate offset
+                    // Keep cursor near the middle of the screen
+                    let margin = content_rows / 3;
+                    wrap_row_offset = cursor_row_in_line.saturating_sub(margin);
                 }
             }
         }
@@ -4156,7 +4170,14 @@ impl<'a> EditorState<'a> {
             let line_len = chars.len();
             let line_visual_rows = Self::wrapped_line_rows(line_len, content_width);
 
-            for wrap_row in 0..line_visual_rows {
+            // Apply wrap_row_offset only to the first line (viewport_top)
+            let start_wrap_row = if line_idx == self.viewport_top {
+                wrap_row_offset
+            } else {
+                0
+            };
+
+            for wrap_row in start_wrap_row..line_visual_rows {
                 if visual_row >= content_rows {
                     break;
                 }
@@ -4164,8 +4185,10 @@ impl<'a> EditorState<'a> {
                 let start_col = wrap_row * content_width;
                 let end_col = ((wrap_row + 1) * content_width).min(line_len);
 
-                // Line number (only on first visual row of each line)
-                let line_number_text = if wrap_row == 0 {
+                // Line number: show on first wrap row, or "<<<" if line continues from above
+                let line_number_text = if start_wrap_row > 0 && wrap_row == start_wrap_row {
+                    LINE_CONTINUES_ABOVE.to_string()
+                } else if wrap_row == 0 {
                     if line_idx == self.cursor.0 {
                         format!("  {:<3} ", self.cursor.0 + 1)
                     } else {
