@@ -247,6 +247,7 @@ enum TextObject {
 #[derive(Clone, Debug)]
 enum EditTarget {
     Char,                                    // x / s
+    CharBackward,                            // X - delete char before cursor
     Line,                                    // dd / cc (S)
     WordStart(WordType, Direction),          // dw, dW, db, dB / cw, cW, cb, cB
     WordEnd(WordType, Direction),            // de, dE, dge, dgE / ce, cE, cge, cgE
@@ -3386,6 +3387,16 @@ impl<'a> EditorState<'a> {
                 }
                 self.record_change();
             }
+            EditTarget::CharBackward => {
+                self.save_undo_state();
+                for _ in 0..count {
+                    if self.cursor.1 > 0 {
+                        self.cursor.1 -= 1;
+                        self.delete_char_no_undo();
+                    }
+                }
+                self.record_change();
+            }
             EditTarget::Line => self.delete_lines(count),
             EditTarget::WordStart(wt, dir) => match dir {
                 Direction::Forward => {
@@ -3461,6 +3472,13 @@ impl<'a> EditorState<'a> {
         match target {
             EditTarget::Char => {
                 self.substitute_char();
+            }
+            EditTarget::CharBackward => {
+                // Move back and substitute (like s but for char before cursor)
+                if self.cursor.1 > 0 {
+                    self.cursor.1 -= 1;
+                    self.substitute_char();
+                }
             }
             EditTarget::Line => {
                 self.substitute_lines(count);
@@ -7254,6 +7272,21 @@ impl<'a> EditorState<'a> {
                                 }
                                 self.record_change();
                                 self.set_last_change(LastChange::Delete(EditTarget::Char), count);
+                            }
+                            'X' => {
+                                let count = self.take_count();
+                                self.save_undo_state();
+                                for _ in 0..count {
+                                    if self.cursor.1 > 0 {
+                                        self.cursor.1 -= 1;
+                                        self.delete_char_no_undo();
+                                    }
+                                }
+                                self.record_change();
+                                self.set_last_change(
+                                    LastChange::Delete(EditTarget::CharBackward),
+                                    count,
+                                );
                             }
                             'u' => {
                                 self.undo();
