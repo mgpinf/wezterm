@@ -8321,6 +8321,8 @@ mod tests {
         count_prefix: Option<usize>,
         last_change: LastChange,
         last_count: usize,
+        viewport_top: usize,
+        screen_height: usize, // Number of visible lines for H/M/L tests
     }
 
     impl TestEditor {
@@ -8344,7 +8346,14 @@ mod tests {
                 count_prefix: None,
                 last_change: LastChange::None,
                 last_count: 1,
+                viewport_top: 0,
+                screen_height: 24, // Default screen height for tests
             }
+        }
+
+        fn with_screen_height(mut self, height: usize) -> Self {
+            self.screen_height = height;
+            self
         }
 
         fn with_cursor(mut self, row: usize, col: usize) -> Self {
@@ -8603,6 +8612,69 @@ mod tests {
                 self.lines[self.cursor.0] = chars.into_iter().collect();
                 self.lines_version += 1;
                 self.clamp_cursor();
+            }
+        }
+
+        /// Delete character before cursor (X command)
+        fn delete_char_backward(&mut self) {
+            if self.cursor.1 > 0 {
+                self.cursor.1 -= 1;
+                self.delete_char();
+            }
+        }
+
+        /// Get visible lines based on viewport_top and screen_height
+        fn get_visible_lines(&self) -> Vec<usize> {
+            let mut visible = Vec::new();
+            for i in 0..self.screen_height {
+                let line_idx = self.viewport_top + i;
+                if line_idx < self.lines.len() {
+                    visible.push(line_idx);
+                }
+            }
+            visible
+        }
+
+        /// Move cursor to screen position (H/M/L commands)
+        fn move_to_screen_position(&mut self, position: ScreenPosition) {
+            let visible = self.get_visible_lines();
+            if visible.is_empty() {
+                return;
+            }
+
+            let idx = match position {
+                ScreenPosition::Top(count) => (count.saturating_sub(1)).min(visible.len() - 1),
+                ScreenPosition::Middle => visible.len() / 2,
+                ScreenPosition::Bottom(count) => visible.len().saturating_sub(count),
+            };
+
+            self.cursor.0 = visible[idx];
+            self.clamp_cursor();
+        }
+
+        /// Scroll viewport down (Ctrl-E)
+        fn scroll_down(&mut self, count: usize) {
+            let max_viewport = self.lines.len().saturating_sub(1);
+            self.viewport_top = (self.viewport_top + count).min(max_viewport);
+
+            // If cursor is now above viewport, move it down
+            if self.cursor.0 < self.viewport_top {
+                self.cursor.0 = self.viewport_top;
+                self.clamp_cursor();
+            }
+        }
+
+        /// Scroll viewport up (Ctrl-Y)
+        fn scroll_up(&mut self, count: usize) {
+            self.viewport_top = self.viewport_top.saturating_sub(count);
+
+            // If cursor is now below viewport, move it up
+            let visible = self.get_visible_lines();
+            if let Some(&last_visible) = visible.last() {
+                if self.cursor.0 > last_visible {
+                    self.cursor.0 = last_visible;
+                    self.clamp_cursor();
+                }
             }
         }
 
@@ -10014,5 +10086,209 @@ mod tests {
         editor.cursor = (0, 0);
         editor.delete_chars(10);
         assert_eq!(editor.text(), "");
+    }
+
+    // ============ X (Delete Char Backward) Tests ============
+
+    #[test]
+    fn test_delete_char_backward_basic() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 3);
+        editor.delete_char_backward();
+        assert_eq!(editor.text(), "helo");
+        assert_eq!(editor.cursor.1, 2);
+    }
+
+    #[test]
+    fn test_delete_char_backward_at_beginning() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 0);
+        editor.delete_char_backward();
+        assert_eq!(editor.text(), "hello"); // No change
+        assert_eq!(editor.cursor.1, 0);
+    }
+
+    #[test]
+    fn test_delete_char_backward_at_end() {
+        // In normal mode, cursor max is len-1 (position 4 for "hello")
+        let mut editor = TestEditor::new("hello").with_cursor(0, 4);
+        editor.delete_char_backward();
+        assert_eq!(editor.text(), "helo");
+        assert_eq!(editor.cursor.1, 3);
+    }
+
+    #[test]
+    fn test_delete_char_backward_with_count() {
+        let mut editor = TestEditor::new("hello").with_cursor(0, 4);
+        // Simulate 3X
+        for _ in 0..3 {
+            editor.delete_char_backward();
+        }
+        assert_eq!(editor.text(), "ho");
+        assert_eq!(editor.cursor.1, 1);
+    }
+
+    #[test]
+    fn test_delete_char_backward_unicode() {
+        let mut editor = TestEditor::new("日本語").with_cursor(0, 2);
+        editor.delete_char_backward();
+        assert_eq!(editor.text(), "日語");
+        assert_eq!(editor.cursor.1, 1);
+    }
+
+    // ============ H/M/L (Screen Position) Tests ============
+
+    #[test]
+    fn test_move_to_screen_top() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(5)
+            .with_cursor(2, 0);
+        editor.move_to_screen_position(ScreenPosition::Top(1));
+        assert_eq!(editor.cursor.0, 0);
+    }
+
+    #[test]
+    fn test_move_to_screen_top_with_count() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(5)
+            .with_cursor(0, 0);
+        editor.move_to_screen_position(ScreenPosition::Top(3));
+        assert_eq!(editor.cursor.0, 2); // 3rd line from top (0-indexed: 2)
+    }
+
+    #[test]
+    fn test_move_to_screen_middle() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(5)
+            .with_cursor(0, 0);
+        editor.move_to_screen_position(ScreenPosition::Middle);
+        assert_eq!(editor.cursor.0, 2); // Middle of 5 lines
+    }
+
+    #[test]
+    fn test_move_to_screen_bottom() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(5)
+            .with_cursor(0, 0);
+        editor.move_to_screen_position(ScreenPosition::Bottom(1));
+        assert_eq!(editor.cursor.0, 4); // Last visible line
+    }
+
+    #[test]
+    fn test_move_to_screen_bottom_with_count() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(5)
+            .with_cursor(0, 0);
+        editor.move_to_screen_position(ScreenPosition::Bottom(2));
+        assert_eq!(editor.cursor.0, 3); // 2nd from bottom
+    }
+
+    #[test]
+    fn test_move_to_screen_with_viewport_offset() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5\nline6\nline7")
+            .with_screen_height(3)
+            .with_cursor(0, 0);
+        editor.viewport_top = 2; // Viewport shows lines 2, 3, 4
+
+        editor.move_to_screen_position(ScreenPosition::Top(1));
+        assert_eq!(editor.cursor.0, 2);
+
+        editor.move_to_screen_position(ScreenPosition::Middle);
+        assert_eq!(editor.cursor.0, 3);
+
+        editor.move_to_screen_position(ScreenPosition::Bottom(1));
+        assert_eq!(editor.cursor.0, 4);
+    }
+
+    #[test]
+    fn test_move_to_screen_fewer_lines_than_height() {
+        let mut editor = TestEditor::new("line1\nline2")
+            .with_screen_height(10)
+            .with_cursor(0, 0);
+
+        editor.move_to_screen_position(ScreenPosition::Bottom(1));
+        assert_eq!(editor.cursor.0, 1); // Last line even though screen is larger
+    }
+
+    // ============ Ctrl-E/Ctrl-Y (Scroll) Tests ============
+
+    #[test]
+    fn test_scroll_down_basic() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(3)
+            .with_cursor(0, 0);
+        editor.scroll_down(1);
+        assert_eq!(editor.viewport_top, 1);
+        assert_eq!(editor.cursor.0, 1); // Cursor moved to stay visible
+    }
+
+    #[test]
+    fn test_scroll_down_cursor_stays_visible() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(3)
+            .with_cursor(2, 0);
+        editor.scroll_down(1);
+        assert_eq!(editor.viewport_top, 1);
+        assert_eq!(editor.cursor.0, 2); // Cursor stays on same line (still visible)
+    }
+
+    #[test]
+    fn test_scroll_down_with_count() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(3)
+            .with_cursor(0, 0);
+        editor.scroll_down(3);
+        assert_eq!(editor.viewport_top, 3);
+        assert_eq!(editor.cursor.0, 3); // Cursor moved to viewport_top
+    }
+
+    #[test]
+    fn test_scroll_down_clamps_to_end() {
+        let mut editor = TestEditor::new("line1\nline2\nline3")
+            .with_screen_height(3)
+            .with_cursor(0, 0);
+        editor.scroll_down(10);
+        assert_eq!(editor.viewport_top, 2); // Clamped to last line
+    }
+
+    #[test]
+    fn test_scroll_up_basic() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(3)
+            .with_cursor(4, 0);
+        editor.viewport_top = 2;
+        editor.scroll_up(1);
+        assert_eq!(editor.viewport_top, 1);
+        assert_eq!(editor.cursor.0, 3); // Cursor adjusted to stay visible
+    }
+
+    #[test]
+    fn test_scroll_up_cursor_stays_visible() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(3)
+            .with_cursor(2, 0);
+        editor.viewport_top = 2;
+        editor.scroll_up(1);
+        assert_eq!(editor.viewport_top, 1);
+        assert_eq!(editor.cursor.0, 2); // Cursor stays on same line
+    }
+
+    #[test]
+    fn test_scroll_up_clamps_to_start() {
+        let mut editor = TestEditor::new("line1\nline2\nline3")
+            .with_screen_height(3)
+            .with_cursor(0, 0);
+        editor.viewport_top = 1;
+        editor.scroll_up(10);
+        assert_eq!(editor.viewport_top, 0); // Clamped to start
+    }
+
+    #[test]
+    fn test_scroll_up_with_count() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(3)
+            .with_cursor(4, 0);
+        editor.viewport_top = 4;
+        editor.scroll_up(3);
+        assert_eq!(editor.viewport_top, 1);
+        assert_eq!(editor.cursor.0, 3); // Cursor adjusted to last visible
     }
 }
