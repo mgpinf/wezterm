@@ -1434,6 +1434,36 @@ impl<'a> EditorState<'a> {
         self.move_to_first_non_blank();
     }
 
+    /// Scroll viewport down by count lines (Ctrl-E)
+    /// Cursor stays on same line if visible, otherwise moves to stay on screen
+    fn scroll_down(&mut self, count: usize) {
+        let max_viewport = self.lines.len().saturating_sub(1);
+        self.viewport_top = (self.viewport_top + count).min(max_viewport);
+
+        // If cursor is now above viewport, move it down
+        if self.cursor.0 < self.viewport_top {
+            self.cursor.0 = self.viewport_top;
+            self.clamp_cursor();
+            self.update_desired_col();
+        }
+    }
+
+    /// Scroll viewport up by count lines (Ctrl-Y)
+    /// Cursor stays on same line if visible, otherwise moves to stay on screen
+    fn scroll_up(&mut self, count: usize) {
+        self.viewport_top = self.viewport_top.saturating_sub(count);
+
+        // If cursor is now below viewport, move it up
+        let visible = self.get_visible_lines();
+        if let Some(&last_visible) = visible.last() {
+            if self.cursor.0 > last_visible {
+                self.cursor.0 = last_visible;
+                self.clamp_cursor();
+                self.update_desired_col();
+            }
+        }
+    }
+
     fn get_line_start_pos(&self) -> (usize, usize) {
         (self.cursor.0, 0)
     }
@@ -6124,6 +6154,20 @@ impl<'a> EditorState<'a> {
                     }) => {
                         self.decrement_number();
                         self.last_change = LastChange::DecrementNumber;
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('E'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        let count = self.take_count();
+                        self.scroll_down(count);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('Y'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        let count = self.take_count();
+                        self.scroll_up(count);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
