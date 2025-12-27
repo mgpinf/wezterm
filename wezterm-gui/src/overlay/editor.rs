@@ -189,6 +189,15 @@ enum Direction {
     Backward,
 }
 
+impl Direction {
+    fn opposite(self) -> Self {
+        match self {
+            Direction::Forward => Direction::Backward,
+            Direction::Backward => Direction::Forward,
+        }
+    }
+}
+
 /// Type of word for word-based motions
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum WordType {
@@ -8282,6 +8291,83 @@ mod tests {
             self.record_change();
         }
 
+        /// Replace character at cursor (like R mode)
+        fn replace_char_at_cursor(&mut self, c: char) -> Option<char> {
+            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let original = if self.cursor.1 < chars.len() {
+                let orig = chars[self.cursor.1];
+                chars[self.cursor.1] = c;
+                Some(orig)
+            } else {
+                chars.push(c);
+                None
+            };
+            self.lines[self.cursor.0] = chars.into_iter().collect();
+            self.cursor.1 += 1;
+            self.lines_version += 1;
+            original
+        }
+
+        /// Restore character at cursor (for Replace mode backspace)
+        fn restore_char_at_cursor(&mut self, orig_char: char) {
+            if self.cursor.1 == 0 {
+                return;
+            }
+            self.cursor.1 -= 1;
+            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            if self.cursor.1 < chars.len() {
+                chars[self.cursor.1] = orig_char;
+                self.lines[self.cursor.0] = chars.into_iter().collect();
+                self.lines_version += 1;
+            }
+        }
+
+        /// Yank `count` lines at cursor (like 3yy)
+        fn yank_lines(&mut self, count: usize) {
+            let end = (self.cursor.0 + count).min(self.lines.len());
+            let yanked: Vec<&str> = self.lines[self.cursor.0..end]
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            self.yank_buffer = yanked.join("\n");
+            self.yank_is_linewise = true;
+        }
+
+        /// Substitute `count` lines at cursor (like 3cc)
+        fn substitute_lines(&mut self, count: usize) {
+            self.save_undo_state();
+            self.lines_version += 1;
+
+            let mut yanked = Vec::new();
+            let start_row = self.cursor.0;
+
+            // Yank the lines first
+            for i in 0..count {
+                if start_row + i < self.lines.len() {
+                    yanked.push(self.lines[start_row + i].clone());
+                }
+            }
+            self.yank_buffer = yanked.join("\n");
+            self.yank_is_linewise = true;
+
+            // Delete lines except first, then clear first
+            let lines_to_delete = (count - 1).min(self.lines.len().saturating_sub(start_row + 1));
+            for _ in 0..lines_to_delete {
+                if start_row + 1 < self.lines.len() {
+                    self.lines.remove(start_row + 1);
+                }
+            }
+
+            // Clear the current line
+            if start_row < self.lines.len() {
+                self.lines[start_row].clear();
+            }
+
+            self.cursor.1 = 0;
+            self.mode = EditorMode::Insert;
+            self.record_change();
+        }
+
         fn clamp_cursor(&mut self) {
             // Clamp row first
             if self.cursor.0 >= self.lines.len() {
@@ -9535,5 +9621,249 @@ mod tests {
         // Undo should remove all 3 pastes
         editor.undo();
         assert_eq!(editor.text(), "test");
+    }
+
+    // Tests for wrapped line helpers
+    #[test]
+    fn test_wrapped_line_rows_empty() {
+        assert_eq!(EditorState::wrapped_line_rows(0, 80), 1);
+    }
+
+    #[test]
+    fn test_wrapped_line_rows_fits_single_row() {
+        assert_eq!(EditorState::wrapped_line_rows(40, 80), 1);
+        assert_eq!(EditorState::wrapped_line_rows(80, 80), 1);
+    }
+
+    #[test]
+    fn test_wrapped_line_rows_wraps_to_two() {
+        assert_eq!(EditorState::wrapped_line_rows(81, 80), 2);
+        assert_eq!(EditorState::wrapped_line_rows(160, 80), 2);
+    }
+
+    #[test]
+    fn test_wrapped_line_rows_wraps_to_multiple() {
+        assert_eq!(EditorState::wrapped_line_rows(161, 80), 3);
+        assert_eq!(EditorState::wrapped_line_rows(240, 80), 3);
+        assert_eq!(EditorState::wrapped_line_rows(241, 80), 4);
+    }
+
+    #[test]
+    fn test_wrapped_line_rows_zero_width() {
+        // Zero width should return 1 (safe default)
+        assert_eq!(EditorState::wrapped_line_rows(100, 0), 1);
+    }
+
+    #[test]
+    fn test_cursor_visual_position_first_row() {
+        // Cursor at column 0 in 80-char width
+        let (row, col) = EditorState::cursor_visual_position(0, 80);
+        assert_eq!(row, 0);
+        assert_eq!(col, 0);
+
+        // Cursor at column 79 (last char of first row)
+        let (row, col) = EditorState::cursor_visual_position(79, 80);
+        assert_eq!(row, 0);
+        assert_eq!(col, 79);
+    }
+
+    #[test]
+    fn test_cursor_visual_position_second_row() {
+        // Cursor at column 80 (first char of second row)
+        let (row, col) = EditorState::cursor_visual_position(80, 80);
+        assert_eq!(row, 1);
+        assert_eq!(col, 0);
+
+        // Cursor at column 159 (last char of second row)
+        let (row, col) = EditorState::cursor_visual_position(159, 80);
+        assert_eq!(row, 1);
+        assert_eq!(col, 79);
+    }
+
+    #[test]
+    fn test_cursor_visual_position_third_row() {
+        let (row, col) = EditorState::cursor_visual_position(160, 80);
+        assert_eq!(row, 2);
+        assert_eq!(col, 0);
+    }
+
+    #[test]
+    fn test_cursor_visual_position_zero_width() {
+        // Zero width should handle gracefully
+        let (row, col) = EditorState::cursor_visual_position(50, 0);
+        assert_eq!(row, 0);
+        assert_eq!(col, 50);
+    }
+
+    // Tests for Replace mode
+    #[test]
+    fn test_replace_char_at_cursor() {
+        let mut editor = TestEditor::new("hello");
+        editor.cursor = (0, 1);
+        let original = editor.replace_char_at_cursor('X');
+        assert_eq!(original, Some('e'));
+        assert_eq!(editor.text(), "hXllo");
+        assert_eq!(editor.cursor.1, 2);
+    }
+
+    #[test]
+    fn test_replace_char_at_end() {
+        let mut editor = TestEditor::new("hello");
+        editor.cursor = (0, 4);
+        let original = editor.replace_char_at_cursor('X');
+        assert_eq!(original, Some('o'));
+        assert_eq!(editor.text(), "hellX");
+        assert_eq!(editor.cursor.1, 5);
+    }
+
+    #[test]
+    fn test_replace_char_past_end() {
+        let mut editor = TestEditor::new("hello");
+        editor.cursor = (0, 5);
+        let original = editor.replace_char_at_cursor('X');
+        assert_eq!(original, None);
+        assert_eq!(editor.text(), "helloX");
+        assert_eq!(editor.cursor.1, 6);
+    }
+
+    #[test]
+    fn test_replace_char_on_empty_line() {
+        let mut editor = TestEditor::new("");
+        editor.cursor = (0, 0);
+        let original = editor.replace_char_at_cursor('X');
+        assert_eq!(original, None);
+        assert_eq!(editor.text(), "X");
+    }
+
+    #[test]
+    fn test_restore_char_at_cursor() {
+        let mut editor = TestEditor::new("hXllo");
+        editor.cursor = (0, 2);
+        editor.restore_char_at_cursor('e');
+        assert_eq!(editor.text(), "hello");
+        assert_eq!(editor.cursor.1, 1);
+    }
+
+    // Tests for yank_lines with count
+    #[test]
+    fn test_yank_lines_single() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (0, 0);
+        editor.yank_lines(1);
+        assert_eq!(editor.yank_buffer, "line1");
+        assert!(editor.yank_is_linewise);
+    }
+
+    #[test]
+    fn test_yank_lines_multiple() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (0, 0);
+        editor.yank_lines(2);
+        assert_eq!(editor.yank_buffer, "line1\nline2");
+        assert!(editor.yank_is_linewise);
+    }
+
+    #[test]
+    fn test_yank_lines_exceeds_buffer() {
+        let mut editor = TestEditor::new("line1\nline2");
+        editor.cursor = (0, 0);
+        editor.yank_lines(5);
+        assert_eq!(editor.yank_buffer, "line1\nline2");
+        assert!(editor.yank_is_linewise);
+    }
+
+    // Tests for is_insert_like_mode
+    #[test]
+    fn test_is_insert_like_mode_normal() {
+        let editor = TestEditor::new("test");
+        assert!(!editor.is_insert_like_mode());
+    }
+
+    #[test]
+    fn test_is_insert_like_mode_insert() {
+        let mut editor = TestEditor::new("test");
+        editor.mode = EditorMode::Insert;
+        assert!(editor.is_insert_like_mode());
+    }
+
+    #[test]
+    fn test_is_insert_like_mode_replace() {
+        let mut editor = TestEditor::new("test");
+        editor.mode = EditorMode::Replace;
+        assert!(editor.is_insert_like_mode());
+    }
+
+    // Tests for direction enum
+    #[test]
+    fn test_direction_opposite() {
+        assert_eq!(Direction::Forward.opposite(), Direction::Backward);
+        assert_eq!(Direction::Backward.opposite(), Direction::Forward);
+    }
+
+    // Tests for substitute_lines (cc)
+    #[test]
+    fn test_substitute_lines_single() {
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.cursor = (1, 0);
+        editor.substitute_lines(1);
+        assert_eq!(editor.text(), "line1\n\nline3");
+        assert_eq!(editor.yank_buffer, "line2");
+        assert!(editor.yank_is_linewise);
+        assert_eq!(editor.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn test_substitute_lines_multiple() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4");
+        editor.cursor = (1, 0);
+        editor.substitute_lines(2);
+        assert_eq!(editor.text(), "line1\n\nline4");
+        assert_eq!(editor.yank_buffer, "line2\nline3");
+        assert!(editor.yank_is_linewise);
+    }
+
+    #[test]
+    fn test_substitute_lines_exceeds_buffer() {
+        let mut editor = TestEditor::new("line1\nline2");
+        editor.cursor = (0, 0);
+        editor.substitute_lines(5);
+        assert_eq!(editor.text(), "");
+        assert_eq!(editor.yank_buffer, "line1\nline2");
+    }
+
+    // Tests for delete_lines count
+    #[test]
+    fn test_delete_lines_multiple() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4");
+        editor.cursor = (1, 0);
+        editor.delete_lines(2);
+        assert_eq!(editor.text(), "line1\nline4");
+        assert_eq!(editor.yank_buffer, "line2\nline3");
+    }
+
+    #[test]
+    fn test_delete_lines_exceeds_buffer() {
+        let mut editor = TestEditor::new("line1\nline2");
+        editor.cursor = (0, 0);
+        editor.delete_lines(5);
+        // Should delete both lines and keep empty buffer
+        assert_eq!(editor.text(), "");
+    }
+
+    // Tests for delete_chars count
+    #[test]
+    fn test_delete_chars_multiple() {
+        let mut editor = TestEditor::new("hello world");
+        editor.cursor = (0, 0);
+        editor.delete_chars(5);
+        assert_eq!(editor.text(), " world");
+    }
+
+    #[test]
+    fn test_delete_chars_exceeds_line() {
+        let mut editor = TestEditor::new("hi");
+        editor.cursor = (0, 0);
+        editor.delete_chars(10);
+        assert_eq!(editor.text(), "");
     }
 }
