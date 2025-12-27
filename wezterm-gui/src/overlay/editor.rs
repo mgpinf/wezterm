@@ -276,6 +276,11 @@ struct NumberAtCursor {
     is_negative: bool,
 }
 
+/// Width of the line number gutter (2 padding + 3 digits + 1 space)
+const GUTTER_WIDTH: usize = 6;
+/// Empty gutter string for wrapped line continuations
+const EMPTY_GUTTER: &str = "      ";
+
 struct EditorState<'a> {
     args: &'a InputText,
     window: GuiWin,
@@ -4070,10 +4075,6 @@ impl<'a> EditorState<'a> {
         } else {
             content_start_row = 0;
         }
-
-        // Gutter width constant
-        const GUTTER_WIDTH: usize = 6;
-        const EMPTY_GUTTER: &str = "      ";
 
         // Adjust viewport: subtract 2 for status bar row and empty last row + content_start_row for optional title
         let content_rows = rows.saturating_sub(2 + content_start_row);
