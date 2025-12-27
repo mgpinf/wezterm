@@ -313,7 +313,8 @@ struct EditorState<'a> {
     yank_buffer: String,       // Buffer to store yanked text
     yank_is_linewise: bool,    // Whether the yank was linewise (yy, dG, etc.)
     search_pattern: String,    // Current search pattern
-    search_direction: Direction, // Current search direction
+    search_direction: Direction, // Original search direction (/ or ?)
+    search_display_direction: Direction, // Direction to display in status bar (updated by n/N)
     search_input: String,      // Input buffer for search mode
     search_highlight: bool,    // Whether to highlight search matches
     current_match: Option<(usize, usize)>, // Current match position (row, col)
@@ -365,6 +366,7 @@ impl<'a> EditorState<'a> {
             yank_is_linewise: false,
             search_pattern: String::new(),
             search_direction: Direction::Forward,
+            search_display_direction: Direction::Forward,
             search_input: String::new(),
             search_highlight: false,
             current_match: None,
@@ -4048,7 +4050,8 @@ impl<'a> EditorState<'a> {
             ]);
         } else if !self.search_pattern.is_empty() {
             // Show the last search pattern on the last row
-            let prompt = match self.search_direction {
+            // Use display direction which is updated by n/N
+            let prompt = match self.search_display_direction {
                 Direction::Forward => "/",
                 Direction::Backward => "?",
             };
@@ -5812,6 +5815,8 @@ impl<'a> EditorState<'a> {
             } else {
                 Direction::Backward
             };
+            // Set display direction to match search direction
+            self.search_display_direction = self.search_direction;
             // Enable highlighting
             self.search_highlight = true;
             // Move to next/previous occurrence
@@ -7319,6 +7324,8 @@ impl<'a> EditorState<'a> {
                                 for _ in 0..count {
                                     self.search_next();
                                 }
+                                // Display same direction as original search
+                                self.search_display_direction = self.search_direction;
                                 self.update_desired_col();
                             }
                             'N' => {
@@ -7326,6 +7333,11 @@ impl<'a> EditorState<'a> {
                                 for _ in 0..count {
                                     self.search_prev();
                                 }
+                                // Display opposite direction (searching in reverse)
+                                self.search_display_direction = match self.search_direction {
+                                    Direction::Forward => Direction::Backward,
+                                    Direction::Backward => Direction::Forward,
+                                };
                                 self.update_desired_col();
                             }
                             '*' => {
@@ -7348,13 +7360,6 @@ impl<'a> EditorState<'a> {
                             }
                             _ => {}
                         }
-                    }
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::Enter,
-                        ..
-                    }) => {
-                        self.submit();
-                        break;
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Escape,
@@ -7525,6 +7530,8 @@ impl<'a> EditorState<'a> {
                         self.search_input.clear();
                         // Enable highlighting if we have a search pattern
                         self.search_highlight = !self.search_pattern.is_empty();
+                        // Set display direction to match original search direction
+                        self.search_display_direction = self.search_direction;
                         // Track current match position (already set by incremental search)
                         self.current_match = Some(self.cursor);
                         self.update_desired_col();
