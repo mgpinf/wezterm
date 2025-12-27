@@ -297,6 +297,9 @@ const RESERVED_ROWS: usize = 2;
 /// Right padding for pending keys display
 const PENDING_KEYS_PADDING: usize = 11;
 
+/// Fixed width for position display from right edge
+const POSITION_WIDTH: usize = 18;
+
 struct EditorState<'a> {
     args: &'a InputText,
     window: GuiWin,
@@ -3998,8 +4001,10 @@ impl<'a> EditorState<'a> {
         } else {
             (self.cursor.1 + 1).to_string()
         };
-        let position = format!(" {},{} ", self.cursor.0 + 1, col_display);
-        let middle_width = cols.saturating_sub(mode_len + position.len());
+        let position_text = format!("{},{}", self.cursor.0 + 1, col_display);
+        let position_padding = POSITION_WIDTH.saturating_sub(position_text.len());
+        let position = format!("{}{}", position_text, " ".repeat(position_padding));
+        let middle_width = cols.saturating_sub(mode_len + POSITION_WIDTH);
 
         // Render status bar: mode | middle section | position
         self.buf.add_changes(vec![
