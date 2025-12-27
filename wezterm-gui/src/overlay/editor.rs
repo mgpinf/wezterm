@@ -3991,7 +3991,14 @@ impl<'a> EditorState<'a> {
         };
 
         // Calculate position and middle section width
-        let position = format!(" {}:{} ", self.cursor.0 + 1, self.cursor.1 + 1);
+        // Show "0-1" for column when on a blank line in normal mode (like Vim)
+        let line_is_empty = self.lines[self.cursor.0].is_empty();
+        let col_display = if line_is_empty && self.mode == EditorMode::Normal {
+            "0-1".to_string()
+        } else {
+            (self.cursor.1 + 1).to_string()
+        };
+        let position = format!(" {}:{} ", self.cursor.0 + 1, col_display);
         let middle_width = cols.saturating_sub(mode_len + position.len());
 
         // Render status bar: mode | middle section | position
