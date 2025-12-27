@@ -897,20 +897,11 @@ impl<'a> FormState<'a> {
                         self.active_idx += 1;
                     }
                 }
-                // Ctrl+Enter always submits the form
+                // Ctrl+Enter submits the form
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Enter,
                     modifiers: Modifiers::CTRL,
                 }) => {
-                    if self.try_submit() {
-                        break;
-                    }
-                }
-                // Enter on text field submits (selector handles Enter in its own handler)
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Enter,
-                    modifiers: Modifiers::NONE,
-                }) if !is_selector => {
                     if self.try_submit() {
                         break;
                     }
