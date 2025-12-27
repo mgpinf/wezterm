@@ -3978,12 +3978,6 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Position status bar at second last row
-        self.buf.add_changes(vec![Change::CursorPosition {
-            x: Position::Absolute(0),
-            y: Position::Absolute(rows - 2),
-        }]);
-
         // Get mode-specific colors
         let (mode_fg, mode_bg) = match self.mode {
             EditorMode::Normal => (self.colors.normal_mode_fg, self.colors.normal_mode_bg),
@@ -4001,6 +3995,11 @@ impl<'a> EditorState<'a> {
 
         // Render status bar: mode | middle section | position
         self.buf.add_changes(vec![
+            // Position at second last row
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(rows - 2),
+            },
             // Mode section
             Change::Attribute(AttributeChange::Background(mode_bg)),
             Change::Attribute(AttributeChange::Foreground(mode_fg)),
@@ -4376,25 +4375,20 @@ impl<'a> EditorState<'a> {
             let actual_start = seg_match_start.max(last_pos);
             if actual_start < seg_match_end {
                 let matched: String = segment_chars[actual_start..seg_match_end].iter().collect();
-                if is_current {
-                    self.buf.add_changes(vec![
-                        Change::Attribute(AttributeChange::Background(
-                            self.colors.search_current_match_bg,
-                        )),
-                        Change::Attribute(AttributeChange::Foreground(
-                            self.colors.search_current_match_fg,
-                        )),
-                        Change::Text(matched),
-                        Change::AllAttributes(CellAttributes::default()),
-                    ]);
+                let (match_bg, match_fg) = if is_current {
+                    (
+                        self.colors.search_current_match_bg,
+                        self.colors.search_current_match_fg,
+                    )
                 } else {
-                    self.buf.add_changes(vec![
-                        Change::Attribute(AttributeChange::Background(self.colors.search_match_bg)),
-                        Change::Attribute(AttributeChange::Foreground(self.colors.search_match_fg)),
-                        Change::Text(matched),
-                        Change::AllAttributes(CellAttributes::default()),
-                    ]);
-                }
+                    (self.colors.search_match_bg, self.colors.search_match_fg)
+                };
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Background(match_bg)),
+                    Change::Attribute(AttributeChange::Foreground(match_fg)),
+                    Change::Text(matched),
+                    Change::AllAttributes(CellAttributes::default()),
+                ]);
             }
 
             last_pos = seg_match_end;
