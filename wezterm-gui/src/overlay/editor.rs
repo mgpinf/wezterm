@@ -234,6 +234,14 @@ enum TextObjectKind {
     Around, // a - around, includes delimiters/whitespace
 }
 
+/// Screen position for H/M/L commands
+#[derive(Clone, Copy, Debug)]
+enum ScreenPosition {
+    Top(usize),    // H - Nth line from top (1-based)
+    Middle,        // M - middle of screen
+    Bottom(usize), // L - Nth line from bottom (1-based)
+}
+
 /// Text object for inner/around operations (i{obj} / a{obj})
 #[derive(Clone, Debug)]
 enum TextObject {
@@ -1380,6 +1388,50 @@ impl<'a> EditorState<'a> {
     fn move_to_first_non_blank(&mut self) {
         self.cursor = self.get_first_non_blank_pos();
         self.update_desired_col();
+    }
+
+    /// Get visible lines in the current viewport.
+    /// Returns a vector of line indices that are currently visible on screen.
+    fn get_visible_lines(&self) -> Vec<usize> {
+        let (cols, rows) = self.buf.dimensions();
+        let content_start_row = if self.args.title.is_some() { 1 } else { 0 };
+        let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
+        let content_width = cols.saturating_sub(GUTTER_WIDTH);
+
+        if content_width == 0 || content_rows == 0 {
+            return Vec::new();
+        }
+
+        let mut visible_lines = Vec::new();
+        let mut visual_row = 0;
+        let mut line_idx = self.viewport_top;
+
+        while line_idx < self.lines.len() && visual_row < content_rows {
+            visible_lines.push(line_idx);
+            let line_visual_rows =
+                Self::wrapped_line_rows(self.lines[line_idx].chars().count(), content_width);
+            visual_row += line_visual_rows;
+            line_idx += 1;
+        }
+
+        visible_lines
+    }
+
+    /// Move cursor to a screen-relative position (H/M/L commands)
+    fn move_to_screen_position(&mut self, position: ScreenPosition) {
+        let visible = self.get_visible_lines();
+        if visible.is_empty() {
+            return;
+        }
+
+        let idx = match position {
+            ScreenPosition::Top(count) => (count.saturating_sub(1)).min(visible.len() - 1),
+            ScreenPosition::Middle => visible.len() / 2,
+            ScreenPosition::Bottom(count) => visible.len().saturating_sub(count),
+        };
+
+        self.cursor.0 = visible[idx];
+        self.move_to_first_non_blank();
     }
 
     fn get_line_start_pos(&self) -> (usize, usize) {
@@ -7322,6 +7374,18 @@ impl<'a> EditorState<'a> {
                                     line_len.saturating_sub(1)
                                 };
                                 self.cursor.1 = self.desired_col.min(max_col);
+                            }
+                            'H' => {
+                                let count = self.take_count();
+                                self.move_to_screen_position(ScreenPosition::Top(count));
+                            }
+                            'M' => {
+                                self.count_prefix = None; // M ignores count
+                                self.move_to_screen_position(ScreenPosition::Middle);
+                            }
+                            'L' => {
+                                let count = self.take_count();
+                                self.move_to_screen_position(ScreenPosition::Bottom(count));
                             }
                             'D' => {
                                 self.delete_to_end_of_line();
