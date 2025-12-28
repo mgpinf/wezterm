@@ -583,6 +583,15 @@ impl<'a> EditorState<'a> {
     }
 
     fn insert_char(&mut self, c: char) {
+        self.insert_char_no_undo(c);
+        // Only record change if not in insert/replace mode (batch changes)
+        if !self.is_insert_like_mode() {
+            self.record_change();
+        }
+    }
+
+    /// Insert character without recording undo state (for use in batch operations like paste)
+    fn insert_char_no_undo(&mut self, c: char) {
         let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 >= chars.len() {
             chars.push(c);
@@ -592,10 +601,6 @@ impl<'a> EditorState<'a> {
         self.lines[self.cursor.0] = chars.into_iter().collect();
         self.cursor.1 += 1;
         self.lines_version += 1;
-        // Only record change if not in insert/replace mode (batch changes)
-        if !self.is_insert_like_mode() {
-            self.record_change();
-        }
     }
 
     fn delete_char(&mut self) {
@@ -622,6 +627,15 @@ impl<'a> EditorState<'a> {
     }
 
     fn insert_newline(&mut self) {
+        self.insert_newline_no_undo();
+        // Only record change if not in insert/replace mode (batch changes)
+        if !self.is_insert_like_mode() {
+            self.record_change();
+        }
+    }
+
+    /// Insert newline without recording undo state (for use in batch operations like paste)
+    fn insert_newline_no_undo(&mut self) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         let (before, after): (String, String) = if self.cursor.1 < chars.len() {
             (
@@ -636,9 +650,20 @@ impl<'a> EditorState<'a> {
         self.cursor.0 += 1;
         self.cursor.1 = 0;
         self.lines_version += 1;
-        // Only record change if not in insert/replace mode (batch changes)
-        if !self.is_insert_like_mode() {
-            self.record_change();
+    }
+
+    /// Insert text at cursor position, handling newlines properly.
+    /// Does not record undo states - caller should handle undo before/after.
+    fn insert_text(&mut self, text: &str) {
+        for c in text.chars() {
+            if c == '\n' {
+                self.insert_newline_no_undo();
+            } else if c == '\r' {
+                // Skip carriage returns (handle \r\n as just \n)
+                continue;
+            } else {
+                self.insert_char_no_undo(c);
+            }
         }
     }
 
@@ -5995,8 +6020,13 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn delete_visual_selection(&mut self) {
-        self.save_undo_state();
+    /// Delete visual selection.
+    /// If `record_undo` is true, saves undo state before and records change after.
+    /// If false, caller is responsible for managing undo (for compound operations like paste).
+    fn delete_visual_selection(&mut self, record_undo: bool) {
+        if record_undo {
+            self.save_undo_state();
+        }
         let (start, end) = self.get_visual_selection();
 
         if self.mode == EditorMode::VisualLine {
@@ -6075,7 +6105,9 @@ impl<'a> EditorState<'a> {
         }
         self.clamp_cursor();
         self.update_desired_col();
-        self.record_change();
+        if record_undo {
+            self.record_change();
+        }
     }
 
     fn yank_visual_selection(&mut self) {
@@ -7569,6 +7601,23 @@ impl<'a> EditorState<'a> {
                         self.search_pattern.clear();
                         self.current_match = None;
                     }
+                    InputEvent::Paste(text) => {
+                        // In Normal mode, paste inserts after cursor (like vim p)
+                        // Move cursor right first (to insert after current position)
+                        let line = &self.lines[self.cursor.0];
+                        let line_len = line.chars().count();
+                        if line_len > 0 && self.cursor.1 < line_len {
+                            self.cursor.1 += 1;
+                        }
+                        self.insert_text(&text);
+                        // Move cursor back to last inserted char (vim behavior)
+                        if self.cursor.1 > 0 {
+                            self.cursor.1 -= 1;
+                        }
+                        self.clamp_cursor();
+                        // Record the change so undo works correctly
+                        self.record_change();
+                    }
                     _ => {}
                 },
                 EditorMode::Insert => match event {
@@ -7636,6 +7685,10 @@ impl<'a> EditorState<'a> {
                         self.insert_newline();
                         self.insert_buffer.push('\n');
                     }
+                    InputEvent::Paste(text) => {
+                        self.insert_text(&text);
+                        self.insert_buffer.push_str(&text);
+                    }
                     _ => {}
                 },
                 EditorMode::Replace => match event {
@@ -7702,6 +7755,23 @@ impl<'a> EditorState<'a> {
                         self.insert_newline();
                         self.insert_buffer.push('\n');
                     }
+                    InputEvent::Paste(text) => {
+                        // In Replace mode, paste replaces characters
+                        for c in text.chars() {
+                            if c == '\n' {
+                                self.replace_originals.push(None);
+                                self.insert_newline();
+                                self.insert_buffer.push('\n');
+                            } else if c == '\r' {
+                                // Skip carriage returns
+                                continue;
+                            } else {
+                                let original = self.replace_char_at_cursor(c);
+                                self.replace_originals.push(original);
+                                self.insert_buffer.push(c);
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 EditorMode::Search => match event {
@@ -7767,6 +7837,15 @@ impl<'a> EditorState<'a> {
                             // Incremental search: update as we type
                             self.perform_incremental_search();
                         }
+                    }
+                    InputEvent::Paste(text) => {
+                        // In Search mode, paste text into search input (skip newlines)
+                        for c in text.chars() {
+                            if c != '\n' && c != '\r' {
+                                self.search_input.push(c);
+                            }
+                        }
+                        self.perform_incremental_search();
                     }
                     _ => {}
                 },
@@ -8100,7 +8179,7 @@ impl<'a> EditorState<'a> {
                                 }
                                 // Operations on selection
                                 'd' | 'x' => {
-                                    self.delete_visual_selection();
+                                    self.delete_visual_selection(true);
                                     self.mode = EditorMode::Normal;
                                 }
                                 'y' => {
@@ -8108,7 +8187,7 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Normal;
                                 }
                                 'c' => {
-                                    self.delete_visual_selection();
+                                    self.delete_visual_selection(true);
                                     self.mode = EditorMode::Insert;
                                     self.insert_buffer.clear();
                                 }
@@ -8216,6 +8295,20 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::RightArrow,
                         ..
                     }) => self.move_cursor(0, 1),
+                    InputEvent::Paste(text) => {
+                        // In Visual mode, paste replaces the selected text
+                        // Use record_undo=false to avoid intermediate undo states
+                        self.delete_visual_selection(false);
+                        self.insert_text(&text);
+                        // Move cursor back to last inserted char
+                        if self.cursor.1 > 0 {
+                            self.cursor.1 -= 1;
+                        }
+                        self.clamp_cursor();
+                        self.mode = EditorMode::Normal;
+                        // Record the change so undo restores to pre-delete state
+                        self.record_change();
+                    }
                     _ => {}
                 },
             }
