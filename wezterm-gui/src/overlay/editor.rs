@@ -3471,8 +3471,8 @@ impl<'a> EditorState<'a> {
                 }
                 self.record_change();
             }
-            LastChange::IncrementNumber => self.increment_number(),
-            LastChange::DecrementNumber => self.decrement_number(),
+            LastChange::IncrementNumber => self.increment_number(use_count),
+            LastChange::DecrementNumber => self.decrement_number(use_count),
             LastChange::PasteAfter => {
                 self.paste_after_count(use_count);
                 self.update_desired_col();
@@ -4005,12 +4005,12 @@ impl<'a> EditorState<'a> {
         })
     }
 
-    fn increment_number(&mut self) {
-        self.modify_number(1);
+    fn increment_number(&mut self, count: usize) {
+        self.modify_number(count as i64);
     }
 
-    fn decrement_number(&mut self) {
-        self.modify_number(-1);
+    fn decrement_number(&mut self, count: usize) {
+        self.modify_number(-(count as i64));
     }
 
     fn modify_number(&mut self, delta: i64) {
@@ -6178,15 +6178,17 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char('A'),
                         modifiers: Modifiers::CTRL,
                     }) => {
-                        self.increment_number();
-                        self.last_change = LastChange::IncrementNumber;
+                        let count = self.take_count();
+                        self.increment_number(count);
+                        self.set_last_change(LastChange::IncrementNumber, count);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('X'),
                         modifiers: Modifiers::CTRL,
                     }) => {
-                        self.decrement_number();
-                        self.last_change = LastChange::DecrementNumber;
+                        let count = self.take_count();
+                        self.decrement_number(count);
+                        self.set_last_change(LastChange::DecrementNumber, count);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('E'),
@@ -9223,6 +9225,238 @@ mod tests {
             self.clamp_cursor();
             self.maybe_record_change();
         }
+
+        // ============ Number Manipulation Methods ============
+
+        fn increment_number(&mut self, count: usize) {
+            self.modify_number(count as i64);
+        }
+
+        fn decrement_number(&mut self, count: usize) {
+            self.modify_number(-(count as i64));
+        }
+
+        fn modify_number(&mut self, delta: i64) {
+            let Some(num) = self.find_number_at_cursor() else {
+                return;
+            };
+
+            let new_num_str = if num.is_hex {
+                self.format_hex_number(&num.digits, delta)
+            } else {
+                self.format_decimal_number(&num.digits, num.is_negative, delta)
+            };
+
+            // Replace in line
+            self.save_undo_state();
+            self.lines_version += 1;
+            let line = &mut self.lines[self.cursor.0];
+            let chars: Vec<char> = line.chars().collect();
+            let before: String = chars[..num.start].iter().collect();
+            let after: String = chars[num.end..].iter().collect();
+            *line = format!("{}{}{}", before, new_num_str, after);
+
+            // Position cursor at the last digit of the new number
+            let new_end = num.start + new_num_str.chars().count();
+            self.cursor.1 = new_end.saturating_sub(1);
+            self.record_change();
+        }
+
+        fn find_number_at_cursor(&self) -> Option<NumberAtCursor> {
+            let line = &self.lines[self.cursor.0];
+            let chars: Vec<char> = line.chars().collect();
+
+            // Try to find hex number first (0x prefix)
+            if let Some(num) = self.try_find_hex_number(&chars, self.cursor.1) {
+                return Some(num);
+            }
+
+            // Try decimal number at cursor
+            if let Some(num) = self.try_find_decimal_number(&chars, self.cursor.1) {
+                return Some(num);
+            }
+
+            // Search forward for a number
+            for pos in self.cursor.1..chars.len() {
+                if let Some(num) = self.try_find_hex_number(&chars, pos) {
+                    return Some(num);
+                }
+                if let Some(num) = self.try_find_decimal_number(&chars, pos) {
+                    return Some(num);
+                }
+            }
+
+            None
+        }
+
+        fn try_find_hex_number(&self, chars: &[char], pos: usize) -> Option<NumberAtCursor> {
+            if pos >= chars.len() {
+                return None;
+            }
+
+            // Check if we're on a hex digit or 'x'
+            let c = chars[pos];
+            if !c.is_ascii_hexdigit() && c != 'x' && c != 'X' {
+                return None;
+            }
+
+            // Search backward for 0x prefix
+            let mut prefix_start = pos;
+            while prefix_start > 0 {
+                let prev = chars[prefix_start - 1];
+                if prev.is_ascii_hexdigit() || prev == 'x' || prev == 'X' {
+                    prefix_start -= 1;
+                } else if prev == '0' && prefix_start >= 1 {
+                    // Check if this is the 0 of 0x
+                    prefix_start -= 1;
+                    break;
+                } else {
+                    break;
+                }
+            }
+
+            // Verify we have 0x prefix
+            if prefix_start + 1 >= chars.len() {
+                return None;
+            }
+            if chars[prefix_start] != '0'
+                || (chars[prefix_start + 1] != 'x' && chars[prefix_start + 1] != 'X')
+            {
+                return None;
+            }
+
+            // Find end of hex digits
+            let mut end = prefix_start + 2;
+            while end < chars.len() && chars[end].is_ascii_hexdigit() {
+                end += 1;
+            }
+
+            if end <= prefix_start + 2 {
+                return None; // No digits after 0x
+            }
+
+            let digits: String = chars[prefix_start + 2..end].iter().collect();
+
+            Some(NumberAtCursor {
+                start: prefix_start,
+                end,
+                digits,
+                is_hex: true,
+                is_negative: false,
+            })
+        }
+
+        fn try_find_decimal_number(&self, chars: &[char], pos: usize) -> Option<NumberAtCursor> {
+            if pos >= chars.len() {
+                return None;
+            }
+
+            let c = chars[pos];
+            let is_negative = c == '-';
+
+            // Must be on a digit or negative sign followed by digit
+            if !c.is_ascii_digit() && !is_negative {
+                return None;
+            }
+
+            if is_negative {
+                if pos + 1 >= chars.len() || !chars[pos + 1].is_ascii_digit() {
+                    return None;
+                }
+            }
+
+            // Check if this digit is part of a hex number
+            if self.try_find_hex_number(chars, pos).is_some() {
+                return None;
+            }
+
+            // Find start of decimal number
+            let mut num_start = pos;
+            while num_start > 0 && chars[num_start - 1].is_ascii_digit() {
+                num_start -= 1;
+            }
+
+            // Check for negative sign
+            let is_negative = if !is_negative && num_start > 0 && chars[num_start - 1] == '-' {
+                true
+            } else {
+                is_negative
+            };
+
+            // Find end of decimal number
+            let mut end = pos;
+            while end < chars.len() && chars[end].is_ascii_digit() {
+                end += 1;
+            }
+
+            let digits: String = chars[num_start..end].iter().collect();
+            if digits.is_empty() {
+                return None;
+            }
+
+            let start = if is_negative && num_start > 0 && chars[num_start - 1] == '-' {
+                num_start - 1
+            } else {
+                num_start
+            };
+
+            Some(NumberAtCursor {
+                start,
+                end,
+                digits,
+                is_hex: false,
+                is_negative,
+            })
+        }
+
+        fn format_hex_number(&self, digits: &str, delta: i64) -> String {
+            let width = digits.len();
+            let parsed = u64::from_str_radix(digits, 16).unwrap_or(0);
+            let new_value = if delta >= 0 {
+                parsed.wrapping_add(delta as u64)
+            } else {
+                parsed.wrapping_sub((-delta) as u64)
+            };
+            format!("0x{:0>width$x}", new_value, width = width)
+        }
+
+        fn format_decimal_number(&self, digits: &str, is_negative: bool, delta: i64) -> String {
+            let parsed = digits.parse::<i64>().unwrap_or(0);
+            let value = if is_negative { -parsed } else { parsed };
+            let new_value = value + delta;
+
+            // Only preserve width if original number has leading zeros
+            let has_leading_zeros = digits.len() > 1 && digits.starts_with('0');
+
+            if has_leading_zeros {
+                let width = digits.len();
+                if new_value >= 0 {
+                    format!("{:0>width$}", new_value, width = width)
+                } else {
+                    format!("-{:0>width$}", -new_value, width = width)
+                }
+            } else {
+                format!("{}", new_value)
+            }
+        }
+
+        fn repeat_last_change(&mut self) {
+            let has_explicit_count = self.count_prefix.is_some();
+            let explicit_count = self.take_count();
+            let use_count = if has_explicit_count {
+                self.last_count = explicit_count;
+                explicit_count
+            } else {
+                self.last_count
+            };
+
+            match self.last_change.clone() {
+                LastChange::None => {}
+                LastChange::IncrementNumber => self.increment_number(use_count),
+                LastChange::DecrementNumber => self.decrement_number(use_count),
+                _ => {}
+            }
+        }
     }
 
     // ============ Basic Cursor Tests ============
@@ -10387,5 +10621,172 @@ mod tests {
         editor.scroll_up(3);
         assert_eq!(editor.viewport_top, 1);
         assert_eq!(editor.cursor.0, 3); // Cursor adjusted to last visible
+    }
+
+    // ============ Increment/Decrement Number Tests ============
+
+    #[test]
+    fn test_increment_number_basic() {
+        let mut editor = TestEditor::new("value = 42").with_cursor(0, 8);
+        editor.increment_number(1);
+        assert_eq!(editor.text(), "value = 43");
+    }
+
+    #[test]
+    fn test_decrement_number_basic() {
+        let mut editor = TestEditor::new("value = 42").with_cursor(0, 8);
+        editor.decrement_number(1);
+        assert_eq!(editor.text(), "value = 41");
+    }
+
+    #[test]
+    fn test_increment_number_with_count() {
+        let mut editor = TestEditor::new("value = 10").with_cursor(0, 8);
+        editor.increment_number(5);
+        assert_eq!(editor.text(), "value = 15");
+    }
+
+    #[test]
+    fn test_decrement_number_with_count() {
+        let mut editor = TestEditor::new("value = 20").with_cursor(0, 8);
+        editor.decrement_number(7);
+        assert_eq!(editor.text(), "value = 13");
+    }
+
+    #[test]
+    fn test_increment_number_large_count() {
+        let mut editor = TestEditor::new("x = 0").with_cursor(0, 4);
+        editor.increment_number(100);
+        assert_eq!(editor.text(), "x = 100");
+    }
+
+    #[test]
+    fn test_decrement_number_to_negative() {
+        let mut editor = TestEditor::new("val = 5").with_cursor(0, 6);
+        editor.decrement_number(10);
+        assert_eq!(editor.text(), "val = -5");
+    }
+
+    #[test]
+    fn test_increment_negative_number() {
+        let mut editor = TestEditor::new("temp = -10").with_cursor(0, 7);
+        editor.increment_number(3);
+        assert_eq!(editor.text(), "temp = -7");
+    }
+
+    #[test]
+    fn test_increment_negative_to_positive() {
+        let mut editor = TestEditor::new("x = -5").with_cursor(0, 4);
+        editor.increment_number(10);
+        assert_eq!(editor.text(), "x = 5");
+    }
+
+    #[test]
+    fn test_increment_hex_number() {
+        let mut editor = TestEditor::new("addr = 0x0f").with_cursor(0, 9);
+        editor.increment_number(1);
+        assert_eq!(editor.text(), "addr = 0x10");
+    }
+
+    #[test]
+    fn test_decrement_hex_number() {
+        let mut editor = TestEditor::new("val = 0x10").with_cursor(0, 8);
+        editor.decrement_number(1);
+        assert_eq!(editor.text(), "val = 0x0f");
+    }
+
+    #[test]
+    fn test_increment_hex_with_count() {
+        let mut editor = TestEditor::new("x = 0x00").with_cursor(0, 6);
+        editor.increment_number(16);
+        assert_eq!(editor.text(), "x = 0x10");
+    }
+
+    #[test]
+    fn test_increment_preserves_leading_zeros() {
+        let mut editor = TestEditor::new("code = 007").with_cursor(0, 9);
+        editor.increment_number(1);
+        assert_eq!(editor.text(), "code = 008");
+    }
+
+    #[test]
+    fn test_increment_cursor_on_number() {
+        // Cursor anywhere on the number should work
+        let mut editor = TestEditor::new("num = 123").with_cursor(0, 6);
+        editor.increment_number(1);
+        assert_eq!(editor.text(), "num = 124");
+    }
+
+    #[test]
+    fn test_increment_finds_number_after_cursor() {
+        // Cursor before the number should find it
+        let mut editor = TestEditor::new("x = 42").with_cursor(0, 0);
+        editor.increment_number(1);
+        assert_eq!(editor.text(), "x = 43");
+    }
+
+    #[test]
+    fn test_increment_no_number_no_change() {
+        let mut editor = TestEditor::new("hello world").with_cursor(0, 0);
+        editor.increment_number(1);
+        assert_eq!(editor.text(), "hello world");
+    }
+
+    #[test]
+    fn test_repeat_increment_with_same_count() {
+        let mut editor = TestEditor::new("x = 10").with_cursor(0, 4);
+        editor.increment_number(5);
+        editor.set_last_change(LastChange::IncrementNumber, 5);
+        assert_eq!(editor.text(), "x = 15");
+
+        // Repeat without explicit count should use last count
+        editor.cursor = (0, 4);
+        editor.repeat_last_change();
+        assert_eq!(editor.text(), "x = 20");
+    }
+
+    #[test]
+    fn test_repeat_increment_with_new_count() {
+        let mut editor = TestEditor::new("x = 10").with_cursor(0, 4);
+        editor.increment_number(5);
+        editor.set_last_change(LastChange::IncrementNumber, 5);
+        assert_eq!(editor.text(), "x = 15");
+
+        // Repeat with explicit count should use new count
+        editor.cursor = (0, 4);
+        editor.count_prefix = Some(3);
+        editor.repeat_last_change();
+        assert_eq!(editor.text(), "x = 18");
+    }
+
+    #[test]
+    fn test_repeat_decrement_with_same_count() {
+        let mut editor = TestEditor::new("x = 100").with_cursor(0, 4);
+        editor.decrement_number(10);
+        editor.set_last_change(LastChange::DecrementNumber, 10);
+        assert_eq!(editor.text(), "x = 90");
+
+        // Repeat without explicit count
+        editor.cursor = (0, 4);
+        editor.repeat_last_change();
+        assert_eq!(editor.text(), "x = 80");
+    }
+
+    #[test]
+    fn test_increment_cursor_position() {
+        let mut editor = TestEditor::new("x = 9").with_cursor(0, 4);
+        editor.increment_number(1);
+        assert_eq!(editor.text(), "x = 10");
+        // Cursor should be on the last digit
+        assert_eq!(editor.cursor.1, 5);
+    }
+
+    #[test]
+    fn test_decrement_cursor_position() {
+        let mut editor = TestEditor::new("x = 10").with_cursor(0, 4);
+        editor.decrement_number(1);
+        assert_eq!(editor.text(), "x = 9");
+        // Cursor should be on the last digit
+        assert_eq!(editor.cursor.1, 4);
     }
 }
