@@ -4857,6 +4857,16 @@ impl<'a> EditorState<'a> {
                 Change::Text(selected),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
+        } else if chars.is_empty() && start_col == 0 {
+            // Blank line within selection - show highlighted space like neovim does
+            // We know line_in_selection is true (this function is only called for selected lines),
+            // and on a blank line the cursor can only be at column 0, so the entire line is selected
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
+                Change::Text(" ".to_string()),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
         }
 
         // After selection (in segment)
