@@ -6020,13 +6020,17 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Delete visual selection.
-    /// If `record_undo` is true, saves undo state before and records change after.
-    /// If false, caller is responsible for managing undo (for compound operations like paste).
-    fn delete_visual_selection(&mut self, record_undo: bool) {
-        if record_undo {
-            self.save_undo_state();
-        }
+    /// Delete visual selection with full undo handling.
+    /// Saves undo state (preserving cursor position) before deletion and records change after.
+    fn delete_visual_selection(&mut self) {
+        self.save_undo_state();
+        self.delete_visual_selection_no_undo();
+        self.record_change();
+    }
+
+    /// Delete visual selection without recording undo state.
+    /// Used for compound operations like paste where caller manages undo.
+    fn delete_visual_selection_no_undo(&mut self) {
         let (start, end) = self.get_visual_selection();
 
         if self.mode == EditorMode::VisualLine {
@@ -6105,9 +6109,6 @@ impl<'a> EditorState<'a> {
         }
         self.clamp_cursor();
         self.update_desired_col();
-        if record_undo {
-            self.record_change();
-        }
     }
 
     fn yank_visual_selection(&mut self) {
@@ -8179,7 +8180,7 @@ impl<'a> EditorState<'a> {
                                 }
                                 // Operations on selection
                                 'd' | 'x' => {
-                                    self.delete_visual_selection(true);
+                                    self.delete_visual_selection();
                                     self.mode = EditorMode::Normal;
                                 }
                                 'y' => {
@@ -8187,7 +8188,10 @@ impl<'a> EditorState<'a> {
                                     self.mode = EditorMode::Normal;
                                 }
                                 'c' => {
-                                    self.delete_visual_selection(true);
+                                    // Save cursor position, delete without recording
+                                    // (record_change called when exiting insert mode)
+                                    self.save_undo_state();
+                                    self.delete_visual_selection_no_undo();
                                     self.mode = EditorMode::Insert;
                                     self.insert_buffer.clear();
                                 }
@@ -8297,8 +8301,9 @@ impl<'a> EditorState<'a> {
                     }) => self.move_cursor(0, 1),
                     InputEvent::Paste(text) => {
                         // In Visual mode, paste replaces the selected text
-                        // Use record_undo=false to avoid intermediate undo states
-                        self.delete_visual_selection(false);
+                        // Save cursor position, then delete+insert as one undo unit
+                        self.save_undo_state();
+                        self.delete_visual_selection_no_undo();
                         self.insert_text(&text);
                         // Move cursor back to last inserted char
                         if self.cursor.1 > 0 {
@@ -8306,7 +8311,6 @@ impl<'a> EditorState<'a> {
                         }
                         self.clamp_cursor();
                         self.mode = EditorMode::Normal;
-                        // Record the change so undo restores to pre-delete state
                         self.record_change();
                     }
                     _ => {}
