@@ -40,6 +40,7 @@ struct EditorColors {
     command_mode_text: String,
     visual_mode_text: String,
     visual_line_mode_text: String,
+    visual_block_mode_text: String,
 }
 
 impl EditorColors {
@@ -168,6 +169,7 @@ impl EditorColors {
             command_mode_text: config.input_text_command_mode_text.clone(),
             visual_mode_text: config.input_text_visual_mode_text.clone(),
             visual_line_mode_text: config.input_text_visual_line_mode_text.clone(),
+            visual_block_mode_text: config.input_text_visual_block_mode_text.clone(),
         }
     }
 }
@@ -178,8 +180,9 @@ enum EditorMode {
     Insert,
     Replace, // Replace mode (R) - overwrite characters
     Search,
-    Visual,     // Character-wise visual selection (v)
-    VisualLine, // Line-wise visual selection (V)
+    Visual,      // Character-wise visual selection (v)
+    VisualLine,  // Line-wise visual selection (V)
+    VisualBlock, // Block-wise visual selection (Ctrl-V)
 }
 
 /// Direction for search and motion operations
@@ -279,6 +282,22 @@ enum LastChange {
     DecrementNumber,    // Ctrl-X
     PasteAfter,         // p
     PasteBefore,        // P
+    /// Visual block delete: (num_rows, col_width) - for repeating with .
+    DeleteBlock(usize, usize),
+    /// Visual block change: (num_rows, col_width, text) - delete block and insert text on all lines
+    ChangeBlock(usize, usize, String),
+    /// Visual block insert (I): (num_rows, text) - insert at cursor column on all lines
+    InsertBlock(usize, String),
+    /// Visual block append (A): (num_rows, col_offset, text) - append at cursor + offset on all lines
+    AppendBlock(usize, usize, String),
+}
+
+/// Type of block insert operation for tracking when exiting insert mode
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BlockInsertType {
+    Change(usize), // col_width of deleted block
+    Insert,        // I command
+    Append(usize), // A command with col_offset from left edge of selection
 }
 
 /// Information about a number found at cursor position
@@ -331,15 +350,18 @@ struct EditorState<'a> {
     last_count: usize,         // Count used with last change (for . repeat)
     insert_buffer: String,     // Buffer to track text inserted in insert mode
     insert_style: InsertStyle, // Style of insert (i, a, I, A)
+    /// Block insert info: (start_row, num_rows, insert_col, type) for visual block change/insert/append
+    block_insert_info: Option<(usize, usize, usize, BlockInsertType)>,
     last_char_search: Option<(char, char)>, // (search_type: f/F/t/T, character)
-    yank_buffer: String,       // Buffer to store yanked text
-    yank_is_linewise: bool,    // Whether the yank was linewise (yy, dG, etc.)
-    search_pattern: String,    // Current search pattern
-    search_direction: Direction, // Original search direction (/ or ?)
-    search_display_direction: Direction, // Direction to display in status bar (updated by n/N)
-    search_input: String,      // Input buffer for search mode
-    search_highlight: bool,    // Whether to highlight search matches
-    current_match: Option<(usize, usize)>, // Current match position (row, col)
+    yank_buffer: String,                    // Buffer to store yanked text
+    yank_is_linewise: bool,                 // Whether the yank was linewise (yy, dG, etc.)
+    yank_is_block: bool,                    // Whether the yank was from visual block mode
+    search_pattern: String,                 // Current search pattern
+    search_direction: Direction,            // Original search direction (/ or ?)
+    search_display_direction: Direction,    // Direction to display in status bar (updated by n/N)
+    search_input: String,                   // Input buffer for search mode
+    search_highlight: bool,                 // Whether to highlight search matches
+    current_match: Option<(usize, usize)>,  // Current match position (row, col)
     search_start_pos: (usize, usize), // Cursor position when search started (for incremental search)
     search_saved_pattern: String,     // Previous search pattern (restored on Escape)
     visual_start: (usize, usize),     // Anchor point for visual selection (row, col)
@@ -384,9 +406,11 @@ impl<'a> EditorState<'a> {
             last_count: 1,
             insert_buffer: String::new(),
             insert_style: InsertStyle::Before,
+            block_insert_info: None,
             last_char_search: None,
             yank_buffer: String::new(),
             yank_is_linewise: false,
+            yank_is_block: false,
             search_pattern: String::new(),
             search_direction: Direction::Forward,
             search_display_direction: Direction::Forward,
@@ -495,6 +519,13 @@ impl<'a> EditorState<'a> {
 
     /// Save current state before making changes (for undo to restore to)
     fn save_undo_state(&mut self) {
+        self.save_undo_state_with_cursor(self.cursor);
+    }
+
+    /// Save undo state with a specific cursor position.
+    /// Used when undo should restore cursor to a different position than current
+    /// (e.g., visual block operations restore to top-left of selection).
+    fn save_undo_state_with_cursor(&mut self, cursor: (usize, usize)) {
         // Truncate redo history
         if self.history_idx < self.history.len() - 1 {
             self.history.truncate(self.history_idx + 1);
@@ -504,12 +535,12 @@ impl<'a> EditorState<'a> {
         // O(1) comparison using version numbers instead of O(n) content comparison
         if self.lines_version == self.history_version {
             if let Some(entry) = self.history.last_mut() {
-                entry.1 = self.cursor;
+                entry.1 = cursor;
             }
             return;
         }
         // Lines are different, push new entry
-        self.history.push((self.lines.clone(), self.cursor));
+        self.history.push((self.lines.clone(), cursor));
         self.history_idx = self.history.len() - 1;
         self.history_version = self.lines_version;
     }
@@ -3481,7 +3512,207 @@ impl<'a> EditorState<'a> {
                 self.paste_before_count(use_count);
                 self.update_desired_col();
             }
+            LastChange::DeleteBlock(num_rows, col_width) => {
+                // Repeat visual block delete at current cursor position
+                self.delete_block_at_cursor(num_rows, col_width);
+            }
+            LastChange::ChangeBlock(num_rows, col_width, ref text) => {
+                // Repeat visual block change: delete block then insert text on all lines
+                let text = text.clone();
+                self.change_block_at_cursor(num_rows, col_width, &text);
+            }
+            LastChange::InsertBlock(num_rows, ref text) => {
+                // Repeat visual block insert: insert text at cursor column on all lines
+                let text = text.clone();
+                self.insert_block_at_cursor(num_rows, &text);
+            }
+            LastChange::AppendBlock(num_rows, col_offset, ref text) => {
+                // Repeat visual block append: insert text at cursor + offset on all lines
+                let text = text.clone();
+                self.insert_block_at_cursor_with_offset(num_rows, col_offset, &text);
+            }
         }
+    }
+
+    /// Delete a block of text at the current cursor position
+    /// Used for repeating visual block delete with .
+    fn delete_block_at_cursor(&mut self, num_rows: usize, col_width: usize) {
+        self.save_undo_state();
+        self.lines_version += 1;
+
+        let start_row = self.cursor.0;
+        let start_col = self.cursor.1;
+        let end_col = start_col + col_width;
+
+        // Yank the block first
+        let mut yanked_lines = Vec::new();
+        for i in 0..num_rows {
+            let row = start_row + i;
+            if row >= self.lines.len() {
+                break;
+            }
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let line_len = chars.len();
+            let sel_start = start_col.min(line_len);
+            let sel_end = end_col.min(line_len);
+            if sel_start < sel_end {
+                yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
+            } else {
+                yanked_lines.push(String::new());
+            }
+        }
+        self.yank_buffer = yanked_lines.join("\n");
+        self.yank_is_linewise = false;
+        self.yank_is_block = true;
+
+        // Delete the block
+        for i in 0..num_rows {
+            let row = start_row + i;
+            if row >= self.lines.len() {
+                break;
+            }
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let line_len = chars.len();
+            let sel_start = start_col.min(line_len);
+            let sel_end = end_col.min(line_len);
+            if sel_start < sel_end {
+                let new_line: String = chars[..sel_start].iter().chain(&chars[sel_end..]).collect();
+                self.lines[row] = new_line;
+            }
+        }
+
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    /// Change a block of text at the current cursor position and insert text on all lines
+    /// Used for repeating visual block change with .
+    fn change_block_at_cursor(&mut self, num_rows: usize, col_width: usize, text: &str) {
+        self.save_undo_state();
+        self.lines_version += 1;
+
+        let start_row = self.cursor.0;
+        let start_col = self.cursor.1;
+        let end_col = start_col + col_width;
+
+        // Delete the block and insert text on each row
+        for i in 0..num_rows {
+            let row = start_row + i;
+            if row >= self.lines.len() {
+                break;
+            }
+            let mut chars: Vec<char> = self.lines[row].chars().collect();
+            let line_len = chars.len();
+            let sel_start = start_col.min(line_len);
+            let sel_end = end_col.min(line_len);
+
+            // Delete the block portion
+            if sel_start < sel_end {
+                chars.drain(sel_start..sel_end);
+            }
+
+            // Insert the text at sel_start
+            let mut offset = 0;
+            for c in text.chars() {
+                if c == '\n' {
+                    continue;
+                }
+                chars.insert(sel_start + offset, c);
+                offset += 1;
+            }
+            self.lines[row] = chars.into_iter().collect();
+        }
+
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    /// Insert text at current cursor column on multiple lines
+    /// Used for repeating visual block insert (I) with .
+    fn insert_block_at_cursor(&mut self, num_rows: usize, text: &str) {
+        self.save_undo_state();
+        self.lines_version += 1;
+
+        let start_row = self.cursor.0;
+        let insert_col = self.cursor.1;
+
+        // Insert text on each row
+        for i in 0..num_rows {
+            let row = start_row + i;
+            if row >= self.lines.len() {
+                break;
+            }
+            let chars: Vec<char> = self.lines[row].chars().collect();
+
+            // Skip lines that don't reach the insert column (left edge of selection)
+            if chars.len() < insert_col {
+                continue;
+            }
+
+            let mut chars = chars;
+
+            // Insert the text
+            let mut offset = 0;
+            for c in text.chars() {
+                if c == '\n' {
+                    continue;
+                }
+                chars.insert(insert_col + offset, c);
+                offset += 1;
+            }
+            self.lines[row] = chars.into_iter().collect();
+        }
+
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    /// Insert text at current cursor column + offset on multiple lines
+    /// Used for repeating visual block append (A) with .
+    /// For A (append), lines are padded with spaces to reach insert position.
+    fn insert_block_at_cursor_with_offset(
+        &mut self,
+        num_rows: usize,
+        col_offset: usize,
+        text: &str,
+    ) {
+        self.save_undo_state();
+        self.lines_version += 1;
+
+        let start_row = self.cursor.0;
+        let insert_col = self.cursor.1 + col_offset;
+
+        // Insert text on each row
+        for i in 0..num_rows {
+            let row = start_row + i;
+            if row >= self.lines.len() {
+                break;
+            }
+            let mut chars: Vec<char> = self.lines[row].chars().collect();
+
+            // Pad with spaces if needed to reach insert position
+            while chars.len() < insert_col {
+                chars.push(' ');
+            }
+
+            // Insert the text
+            let mut offset = 0;
+            for c in text.chars() {
+                if c == '\n' {
+                    continue;
+                }
+                chars.insert(insert_col + offset, c);
+                offset += 1;
+            }
+            self.lines[row] = chars.into_iter().collect();
+        }
+
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
     }
 
     /// Execute a delete operation on the given target with count
@@ -4088,6 +4319,7 @@ impl<'a> EditorState<'a> {
             EditorMode::Search => &self.colors.command_mode_text,
             EditorMode::Visual => &self.colors.visual_mode_text,
             EditorMode::VisualLine => &self.colors.visual_line_mode_text,
+            EditorMode::VisualBlock => &self.colors.visual_block_mode_text,
         };
         let mode_text = format!(" {} ", mode_text_raw);
         let mode_len = mode_text_raw.len() + 2; // +2 for leading/trailing spaces
@@ -4113,7 +4345,7 @@ impl<'a> EditorState<'a> {
             EditorMode::Insert => (self.colors.insert_mode_fg, self.colors.insert_mode_bg),
             EditorMode::Replace => (self.colors.replace_mode_fg, self.colors.replace_mode_bg),
             EditorMode::Search => (self.colors.command_mode_fg, self.colors.command_mode_bg),
-            EditorMode::Visual | EditorMode::VisualLine => {
+            EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
                 (self.colors.visual_mode_fg, self.colors.visual_mode_bg)
             }
         };
@@ -4293,7 +4525,10 @@ impl<'a> EditorState<'a> {
         }
 
         // Calculate selection range if in visual mode
-        let selection = if self.mode == EditorMode::Visual || self.mode == EditorMode::VisualLine {
+        let selection = if self.mode == EditorMode::Visual
+            || self.mode == EditorMode::VisualLine
+            || self.mode == EditorMode::VisualBlock
+        {
             let (start, end) = if self.visual_start.0 < self.cursor.0
                 || (self.visual_start.0 == self.cursor.0 && self.visual_start.1 <= self.cursor.1)
             {
@@ -4302,6 +4537,15 @@ impl<'a> EditorState<'a> {
                 (self.cursor, self.visual_start)
             };
             Some((start, end))
+        } else {
+            None
+        };
+
+        // For block selection, compute column bounds
+        let block_col_bounds = if self.mode == EditorMode::VisualBlock {
+            let min_col = self.visual_start.1.min(self.cursor.1);
+            let max_col = self.visual_start.1.max(self.cursor.1);
+            Some((min_col, max_col))
         } else {
             None
         };
@@ -4392,6 +4636,20 @@ impl<'a> EditorState<'a> {
                         }),
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
+                } else if line_in_selection && self.mode == EditorMode::VisualBlock {
+                    // Block-wise selection: highlight rectangular region
+                    let (min_col, max_col) = block_col_bounds.unwrap();
+                    let (sel_start, sel_end) = selection.unwrap();
+                    // Check if this line is at the edge of selection (start or end row)
+                    let is_edge_line = line_idx == sel_start.0 || line_idx == sel_end.0;
+                    self.render_wrapped_segment_with_block_selection(
+                        &chars,
+                        start_col,
+                        end_col,
+                        min_col,
+                        max_col,
+                        is_edge_line,
+                    );
                 } else if line_in_selection && self.mode == EditorMode::Visual {
                     // Character-wise selection within segment
                     let (sel_start, sel_end) = selection.unwrap();
@@ -4429,7 +4687,9 @@ impl<'a> EditorState<'a> {
                     EditorMode::Insert => CursorShape::SteadyBar,
                     EditorMode::Replace => CursorShape::SteadyUnderline,
                     EditorMode::Search => CursorShape::SteadyBar, // won't reach here
-                    EditorMode::Visual | EditorMode::VisualLine => CursorShape::SteadyBlock,
+                    EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
+                        CursorShape::SteadyBlock
+                    }
                 }
             };
             (x, y, shape)
@@ -4598,6 +4858,65 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
+
+        // After selection (in segment)
+        if seg_sel_end < end_col {
+            let after: String = chars[seg_sel_end..end_col].iter().collect();
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(after),
+            ]);
+        }
+
+        self.buf
+            .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
+    }
+
+    /// Render a wrapped segment with visual block selection highlighting
+    fn render_wrapped_segment_with_block_selection(
+        &mut self,
+        chars: &[char],
+        start_col: usize,
+        end_col: usize,
+        block_min_col: usize,
+        block_max_col: usize,
+        is_edge_line: bool,
+    ) {
+        // Block selection column bounds (inclusive)
+        let sel_col_start = block_min_col;
+        let sel_col_end = block_max_col + 1; // +1 to make it exclusive for slicing
+
+        // Clip to segment bounds
+        let seg_sel_start = sel_col_start.max(start_col).min(end_col);
+        let seg_sel_end = sel_col_end.max(start_col).min(end_col);
+
+        // Before selection (in segment)
+        if start_col < seg_sel_start {
+            let before: String = chars[start_col..seg_sel_start].iter().collect();
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(before),
+            ]);
+        }
+
+        // Selected portion (in segment) - only highlight actual content, not beyond line end
+        if seg_sel_start < seg_sel_end {
+            let selected: String = chars[seg_sel_start..seg_sel_end].iter().collect();
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
+                Change::Text(selected),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        } else if chars.is_empty() && is_edge_line {
+            // Empty/blank line at the edge of selection (start or end row) - show indicator
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
+                Change::Text(" ".to_string()),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        }
+        // Note: We don't highlight virtual spaces beyond line end, or empty lines in the middle
 
         // After selection (in segment)
         if seg_sel_end < end_col {
@@ -5539,7 +5858,49 @@ impl<'a> EditorState<'a> {
             return;
         }
 
-        if self.yank_is_linewise {
+        if self.yank_is_block {
+            // Block-wise paste: insert each line on corresponding rows
+            let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            let start_row = self.cursor.0;
+
+            for (i, paste_line) in paste_lines.iter().enumerate() {
+                let target_row = start_row + i;
+                if target_row >= self.lines.len() {
+                    // Create new lines if needed
+                    self.lines.push(String::new());
+                }
+
+                let mut chars: Vec<char> = self.lines[target_row].chars().collect();
+                let insert_pos = if chars.is_empty() {
+                    0
+                } else {
+                    (self.cursor.1 + 1).min(chars.len())
+                };
+
+                // Pad with spaces if insert_pos is beyond line length
+                while chars.len() < insert_pos {
+                    chars.push(' ');
+                }
+
+                // Repeat paste content `count` times
+                let repeated_paste: String = paste_line.repeat(count);
+                let paste_chars: Vec<char> = repeated_paste.chars().collect();
+
+                for (j, c) in paste_chars.iter().enumerate() {
+                    chars.insert(insert_pos + j, *c);
+                }
+                self.lines[target_row] = chars.into_iter().collect();
+            }
+
+            // Move cursor to first pasted character position
+            let first_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let insert_pos = if first_line_chars.is_empty() {
+                0
+            } else {
+                (self.cursor.1 + 1).min(first_line_chars.len())
+            };
+            self.cursor.1 = insert_pos;
+        } else if self.yank_is_linewise {
             // For linewise, repeat the lines `count` times
             let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let mut all_lines: Vec<String> = Vec::new();
@@ -5634,7 +5995,39 @@ impl<'a> EditorState<'a> {
             return;
         }
 
-        if self.yank_is_linewise {
+        if self.yank_is_block {
+            // Block-wise paste: insert each line on corresponding rows (before cursor)
+            let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            let start_row = self.cursor.0;
+            let insert_col = self.cursor.1;
+
+            for (i, paste_line) in paste_lines.iter().enumerate() {
+                let target_row = start_row + i;
+                if target_row >= self.lines.len() {
+                    // Create new lines if needed
+                    self.lines.push(String::new());
+                }
+
+                let mut chars: Vec<char> = self.lines[target_row].chars().collect();
+                let insert_pos = insert_col.min(chars.len());
+
+                // Pad with spaces if insert_pos is beyond line length
+                while chars.len() < insert_pos {
+                    chars.push(' ');
+                }
+
+                // Repeat paste content `count` times
+                let repeated_paste: String = paste_line.repeat(count);
+                let paste_chars: Vec<char> = repeated_paste.chars().collect();
+
+                for (j, c) in paste_chars.iter().enumerate() {
+                    chars.insert(insert_pos + j, *c);
+                }
+                self.lines[target_row] = chars.into_iter().collect();
+            }
+
+            // Cursor stays at the insert position
+        } else if self.yank_is_linewise {
             // For linewise, repeat the lines `count` times
             let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let mut all_lines: Vec<String> = Vec::new();
@@ -6020,10 +6413,29 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Get visual block bounds: (min_row, max_row, min_col, max_col)
+    fn get_visual_block_bounds(&self) -> (usize, usize, usize, usize) {
+        let min_row = self.visual_start.0.min(self.cursor.0);
+        let max_row = self.visual_start.0.max(self.cursor.0);
+        let min_col = self.visual_start.1.min(self.cursor.1);
+        let max_col = self.visual_start.1.max(self.cursor.1);
+        (min_row, max_row, min_col, max_col)
+    }
+
     /// Delete visual selection with full undo handling.
     /// Saves undo state (preserving cursor position) before deletion and records change after.
     fn delete_visual_selection(&mut self) {
-        self.save_undo_state();
+        // Calculate the cursor position for undo (top-left of selection)
+        let undo_cursor = if self.mode == EditorMode::VisualBlock {
+            let (min_row, _, min_col, _) = self.get_visual_block_bounds();
+            (min_row, min_col)
+        } else {
+            let (start, _) = self.get_visual_selection();
+            start
+        };
+
+        // Save undo state with the top-left cursor position
+        self.save_undo_state_with_cursor(undo_cursor);
         self.delete_visual_selection_no_undo();
         self.record_change();
     }
@@ -6033,7 +6445,47 @@ impl<'a> EditorState<'a> {
     fn delete_visual_selection_no_undo(&mut self) {
         let (start, end) = self.get_visual_selection();
 
-        if self.mode == EditorMode::VisualLine {
+        if self.mode == EditorMode::VisualBlock {
+            // Block-wise deletion: remove rectangular region from each line
+            let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
+
+            // Yank the block
+            let mut yanked_lines = Vec::new();
+            for row in min_row..=max_row {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = min_col.min(line_len);
+                let sel_end = (max_col + 1).min(line_len);
+                if sel_start < sel_end {
+                    yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
+                } else {
+                    yanked_lines.push(String::new());
+                }
+            }
+            self.yank_buffer = yanked_lines.join("\n");
+            self.yank_is_linewise = false;
+            self.yank_is_block = true;
+
+            // Delete the block
+            self.lines_version += 1;
+            for row in min_row..=max_row {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = min_col.min(line_len);
+                let sel_end = (max_col + 1).min(line_len);
+                if sel_start < sel_end {
+                    let new_line: String =
+                        chars[..sel_start].iter().chain(&chars[sel_end..]).collect();
+                    self.lines[row] = new_line;
+                }
+            }
+
+            // Position cursor at top-left of block
+            self.cursor = (min_row, min_col);
+            self.clamp_cursor();
+            self.update_desired_col();
+            return;
+        } else if self.mode == EditorMode::VisualLine {
             // Delete entire lines
             let yanked: Vec<&str> = self.lines[start.0..=end.0]
                 .iter()
@@ -6041,6 +6493,7 @@ impl<'a> EditorState<'a> {
                 .collect();
             self.yank_buffer = yanked.join("\n");
             self.yank_is_linewise = true;
+            self.yank_is_block = false;
 
             self.lines_version += 1;
             for _ in start.0..=end.0 {
@@ -6114,7 +6567,28 @@ impl<'a> EditorState<'a> {
     fn yank_visual_selection(&mut self) {
         let (start, end) = self.get_visual_selection();
 
-        if self.mode == EditorMode::VisualLine {
+        if self.mode == EditorMode::VisualBlock {
+            // Block-wise yank: collect rectangular region from each line
+            let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
+
+            let mut yanked_lines = Vec::new();
+            for row in min_row..=max_row {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = min_col.min(line_len);
+                let sel_end = (max_col + 1).min(line_len);
+                if sel_start < sel_end {
+                    yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
+                } else {
+                    yanked_lines.push(String::new());
+                }
+            }
+            self.yank_buffer = yanked_lines.join("\n");
+            self.yank_is_linewise = false;
+            self.yank_is_block = true;
+            // Move cursor to top-left of block
+            self.cursor = (min_row, min_col);
+        } else if self.mode == EditorMode::VisualLine {
             // Yank entire lines
             let yanked: Vec<&str> = self.lines[start.0..=end.0]
                 .iter()
@@ -6122,8 +6596,12 @@ impl<'a> EditorState<'a> {
                 .collect();
             self.yank_buffer = yanked.join("\n");
             self.yank_is_linewise = true;
+            self.yank_is_block = false;
+            // Move cursor to start of selection (Vim behavior)
+            self.cursor = start;
         } else {
             // Character-wise yank
+            self.yank_is_block = false;
             if start.0 == end.0 {
                 // Same line
                 let chars: Vec<char> = self.lines[start.0].chars().collect();
@@ -6146,9 +6624,9 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
             }
+            // Move cursor to start of selection (Vim behavior)
+            self.cursor = start;
         }
-        // Move cursor to start of selection (Vim behavior)
-        self.cursor = start;
     }
 
     fn run_loop(&mut self) -> anyhow::Result<()> {
@@ -6203,6 +6681,14 @@ impl<'a> EditorState<'a> {
                     }) => {
                         let count = self.take_count();
                         self.scroll_up(count);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('V'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        // Enter block-wise visual mode
+                        self.mode = EditorMode::VisualBlock;
+                        self.visual_start = self.cursor;
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
@@ -7628,28 +8114,113 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Escape,
                         ..
                     }) => {
-                        self.mode = EditorMode::Normal;
-                        // Move cursor left first (Vim behavior when leaving Insert mode)
-                        if self.cursor.1 > 0 {
-                            self.cursor.1 -= 1;
-                        }
-                        // Then clamp to ensure we're within line bounds
-                        self.clamp_cursor();
-                        // Update desired_col after insert
-                        self.update_desired_col();
-                        // Record state after insert session and cursor adjustment for redo to work
-                        self.record_change();
-                        // Save insert buffer as last change if we have text and it's not a change operation
-                        if !self.insert_buffer.is_empty() {
-                            match &self.last_change {
-                                LastChange::Change(_) => {
-                                    // Keep the change operation as last_change
+                        // Handle block insert: insert text on all affected rows
+                        let block_info = self.block_insert_info.take();
+                        if let Some((start_row, num_rows, insert_col, block_type)) = block_info {
+                            // Insert the typed text on rows 1..num_rows (row 0 already has the text)
+                            let text_to_insert = self.insert_buffer.clone();
+                            if !text_to_insert.is_empty() {
+                                for i in 1..num_rows {
+                                    let row = start_row + i;
+                                    if row >= self.lines.len() {
+                                        break;
+                                    }
+                                    let chars: Vec<char> = self.lines[row].chars().collect();
+
+                                    // For I (Insert): skip lines shorter than insert_col
+                                    // For A (Append): pad with spaces to reach insert_col
+                                    // For Change: skip lines shorter than insert_col
+                                    match block_type {
+                                        BlockInsertType::Insert | BlockInsertType::Change(_) => {
+                                            if chars.len() < insert_col {
+                                                continue;
+                                            }
+                                        }
+                                        BlockInsertType::Append(_) => {
+                                            // Don't skip - we'll pad with spaces below
+                                        }
+                                    }
+
+                                    let mut chars = chars;
+
+                                    // Pad with spaces if needed (for A command)
+                                    while chars.len() < insert_col {
+                                        chars.push(' ');
+                                    }
+
+                                    // Insert the text
+                                    let mut offset = 0;
+                                    for c in text_to_insert.chars() {
+                                        if c == '\n' {
+                                            // Skip newlines in block insert
+                                            continue;
+                                        }
+                                        chars.insert(insert_col + offset, c);
+                                        offset += 1;
+                                    }
+                                    self.lines[row] = chars.into_iter().collect();
                                 }
-                                _ => {
-                                    self.last_change = LastChange::InsertText(
-                                        self.insert_buffer.clone(),
-                                        self.insert_style,
-                                    );
+                            }
+
+                            // Record the appropriate LastChange for repeat
+                            if !text_to_insert.is_empty() {
+                                match block_type {
+                                    BlockInsertType::Change(col_width) => {
+                                        self.last_change = LastChange::ChangeBlock(
+                                            num_rows,
+                                            col_width,
+                                            text_to_insert,
+                                        );
+                                        self.last_count = 1;
+                                    }
+                                    BlockInsertType::Insert => {
+                                        self.last_change =
+                                            LastChange::InsertBlock(num_rows, text_to_insert);
+                                        self.last_count = 1;
+                                    }
+                                    BlockInsertType::Append(col_offset) => {
+                                        self.last_change = LastChange::AppendBlock(
+                                            num_rows,
+                                            col_offset,
+                                            text_to_insert,
+                                        );
+                                        self.last_count = 1;
+                                    }
+                                }
+                            }
+
+                            self.mode = EditorMode::Normal;
+                            // Move cursor left first (Vim behavior when leaving Insert mode)
+                            if self.cursor.1 > 0 {
+                                self.cursor.1 -= 1;
+                            }
+                            self.clamp_cursor();
+                            self.update_desired_col();
+                            self.record_change();
+                        } else {
+                            self.mode = EditorMode::Normal;
+                            // Move cursor left first (Vim behavior when leaving Insert mode)
+                            if self.cursor.1 > 0 {
+                                self.cursor.1 -= 1;
+                            }
+                            // Then clamp to ensure we're within line bounds
+                            self.clamp_cursor();
+                            // Update desired_col after insert
+                            self.update_desired_col();
+                            // Record state after insert session and cursor adjustment for redo to work
+                            self.record_change();
+                            // Save insert buffer as last change if we have text and it's not a change operation
+                            if !self.insert_buffer.is_empty() {
+                                match &self.last_change {
+                                    LastChange::Change(_) => {
+                                        // Keep the change operation as last_change
+                                    }
+                                    _ => {
+                                        self.last_change = LastChange::InsertText(
+                                            self.insert_buffer.clone(),
+                                            self.insert_style,
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -7852,471 +8423,689 @@ impl<'a> EditorState<'a> {
                     }
                     _ => {}
                 },
-                EditorMode::Visual | EditorMode::VisualLine => match event {
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::Escape,
-                        ..
-                    }) => {
-                        self.mode = EditorMode::Normal;
-                    }
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::Char(c),
-                        ..
-                    }) => {
-                        // Check for pending text object keys FIRST
-                        if let Some(KeyCode::Char(pending)) = self.pending_keys.first().copied() {
-                            let handled = match (pending, c) {
-                                ('i', '(' | ')') => {
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('(')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', '(' | ')') => {
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('(')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', '[' | ']') => {
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('[')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', '[' | ']') => {
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('[')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', '{' | '}') => {
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('{')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', '{' | '}') => {
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('{')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', '<' | '>') => {
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('<')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', '<' | '>') => {
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('<')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', '"') => {
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('"')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', '"') => {
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('"')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', '\'') => {
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('\'')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', '\'') => {
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('\'')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', '`') => {
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('`')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', '`') => {
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('`')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', 'w') => {
-                                    let (start, end) = self.get_inner_word_bounds();
-                                    self.visual_start = (self.cursor.0, start);
-                                    self.cursor.1 = end.saturating_sub(1);
-                                    true
-                                }
-                                ('a', 'w') => {
-                                    let (start, end) = self.get_a_word_bounds();
-                                    self.visual_start = (self.cursor.0, start);
-                                    self.cursor.1 = end.saturating_sub(1);
-                                    true
-                                }
-                                ('i', 'W') => {
-                                    let (start, end) = self.get_inner_long_word_bounds();
-                                    self.visual_start = (self.cursor.0, start);
-                                    self.cursor.1 = end.saturating_sub(1);
-                                    true
-                                }
-                                ('a', 'W') => {
-                                    let (start, end) = self.get_a_long_word_bounds();
-                                    self.visual_start = (self.cursor.0, start);
-                                    self.cursor.1 = end.saturating_sub(1);
-                                    true
-                                }
-                                ('i', 'b') => {
-                                    // ib is same as i(
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('(')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', 'b') => {
-                                    // ab is same as a(
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('(')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('i', 'B') => {
-                                    // iB is same as i{
-                                    if let Some((open_pos, close_pos)) = self.find_pair_bounds('{')
-                                    {
-                                        let (start, end) =
-                                            self.get_inner_pair_visual_bounds(open_pos, close_pos);
-                                        self.visual_start = start;
-                                        self.cursor = end;
-                                    }
-                                    true
-                                }
-                                ('a', 'B') => {
-                                    // aB is same as a{
-                                    if let Some(((open_row, open_col), (close_row, close_col))) =
-                                        self.find_pair_bounds('{')
-                                    {
-                                        self.visual_start = (open_row, open_col);
-                                        self.cursor = (close_row, close_col);
-                                    }
-                                    true
-                                }
-                                ('g', 'g') => {
-                                    // gg - go to first line
-                                    self.cursor.0 = 0;
-                                    let line_len = self.lines[self.cursor.0].chars().count();
-                                    let max_col = line_len.saturating_sub(1);
-                                    self.cursor.1 = self.desired_col.min(max_col);
-                                    true
-                                }
-                                ('i', 'p') => {
-                                    // ip - inner paragraph
-                                    if let Some((start_row, end_row)) =
-                                        self.get_paragraph_bounds(TextObjectKind::Inner)
-                                    {
-                                        self.visual_start = (start_row, 0);
-                                        let end_col =
-                                            self.lines[end_row].chars().count().saturating_sub(1);
-                                        self.cursor = (end_row, end_col);
-                                        // Switch to linewise visual mode for paragraph selection
-                                        self.mode = EditorMode::VisualLine;
-                                    }
-                                    true
-                                }
-                                ('a', 'p') => {
-                                    // ap - a paragraph (includes trailing/leading blank lines)
-                                    if let Some((start_row, end_row)) =
-                                        self.get_paragraph_bounds(TextObjectKind::Around)
-                                    {
-                                        self.visual_start = (start_row, 0);
-                                        let end_col =
-                                            self.lines[end_row].chars().count().saturating_sub(1);
-                                        self.cursor = (end_row, end_col);
-                                        // Switch to linewise visual mode for paragraph selection
-                                        self.mode = EditorMode::VisualLine;
-                                    }
-                                    true
-                                }
-                                ('i', 's') => {
-                                    // is - inner sentence
-                                    let (start_row, start_col, end_row, end_col) =
-                                        self.get_sentence_bounds(TextObjectKind::Inner);
-                                    self.visual_start = (start_row, start_col);
-                                    self.cursor = (end_row, end_col);
-                                    // Keep in character visual mode for sentence selection
-                                    self.mode = EditorMode::Visual;
-                                    true
-                                }
-                                ('a', 's') => {
-                                    // as - a sentence (includes trailing whitespace)
-                                    let (start_row, start_col, end_row, end_col) =
-                                        self.get_sentence_bounds(TextObjectKind::Around);
-                                    self.visual_start = (start_row, start_col);
-                                    self.cursor = (end_row, end_col);
-                                    // Keep in character visual mode for sentence selection
-                                    self.mode = EditorMode::Visual;
-                                    true
-                                }
-                                _ => false,
-                            };
-                            self.pending_keys.clear();
-                            if handled {
-                                // Text object was handled, skip normal key processing
+                EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
+                    match event {
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Escape,
+                            ..
+                        }) => {
+                            self.mode = EditorMode::Normal;
+                        }
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('V'),
+                            modifiers: Modifiers::CTRL,
+                        }) => {
+                            // Switch to/from visual block mode
+                            if self.mode == EditorMode::VisualBlock {
+                                self.mode = EditorMode::Normal;
                             } else {
-                                // Unknown text object, ignore
+                                self.mode = EditorMode::VisualBlock;
                             }
-                        } else {
-                            // No pending key - handle as normal keys
-                            match c {
-                                // Movement keys extend selection
-                                'h' => self.move_cursor(0, -1),
-                                'j' => self.move_cursor(1, 0),
-                                'k' => self.move_cursor(-1, 0),
-                                'l' => self.move_cursor(0, 1),
-                                'w' => self.move_word_forward(WordType::Word),
-                                'W' => self.move_word_forward(WordType::LongWord),
-                                'b' => self.move_word_backward(WordType::Word),
-                                'B' => self.move_word_backward(WordType::LongWord),
-                                'e' => self.move_to_word_end(WordType::Word),
-                                'E' => self.move_to_word_end(WordType::LongWord),
-                                '0' => {
-                                    self.cursor.1 = 0;
-                                    self.update_desired_col();
-                                }
-                                '^' => self.move_to_first_non_blank(),
-                                '$' => {
-                                    self.cursor.1 =
-                                        self.lines[self.cursor.0].chars().count().saturating_sub(1);
-                                    self.update_desired_col();
-                                }
-                                'G' => {
-                                    self.cursor.0 = self.lines.len() - 1;
-                                    // Use desired_col like vertical movement
-                                    let line_len = self.lines[self.cursor.0].chars().count();
-                                    let max_col = if self.mode == EditorMode::Insert {
-                                        line_len
-                                    } else {
-                                        line_len.saturating_sub(1)
-                                    };
-                                    self.cursor.1 = self.desired_col.min(max_col);
-                                }
-                                '%' => {
-                                    self.jump_to_matching_bracket();
-                                    self.update_desired_col();
-                                }
-                                '{' => {
-                                    self.move_paragraph_backward();
-                                }
-                                '}' => {
-                                    self.move_paragraph_forward();
-                                }
-                                '(' => {
-                                    self.move_sentence_backward();
-                                }
-                                ')' => {
-                                    self.move_sentence_forward();
-                                }
-                                // Operations on selection
-                                'd' | 'x' => {
-                                    self.delete_visual_selection();
-                                    self.mode = EditorMode::Normal;
-                                }
-                                'y' => {
-                                    self.yank_visual_selection();
-                                    self.mode = EditorMode::Normal;
-                                }
-                                'c' => {
-                                    // Save cursor position, delete without recording
-                                    // (record_change called when exiting insert mode)
-                                    self.save_undo_state();
-                                    self.delete_visual_selection_no_undo();
-                                    self.mode = EditorMode::Insert;
-                                    self.insert_buffer.clear();
-                                }
-                                // Toggle case
-                                '~' => {
-                                    let (start, end) = self.get_visual_selection();
-                                    self.save_undo_state();
-                                    self.lines_version += 1;
-                                    if self.mode == EditorMode::VisualLine {
-                                        for row in start.0..=end.0 {
-                                            let toggled: String = self.lines[row]
-                                                .chars()
-                                                .map(|c| {
-                                                    if c.is_uppercase() {
-                                                        c.to_lowercase().next().unwrap_or(c)
-                                                    } else {
-                                                        c.to_uppercase().next().unwrap_or(c)
-                                                    }
-                                                })
-                                                .collect();
-                                            self.lines[row] = toggled;
+                        }
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char(c),
+                            ..
+                        }) => {
+                            // Check for pending text object keys FIRST
+                            if let Some(KeyCode::Char(pending)) = self.pending_keys.first().copied()
+                            {
+                                let handled = match (pending, c) {
+                                    ('i', '(' | ')') => {
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('(')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
                                         }
-                                    } else {
-                                        // Character-wise toggle
-                                        for row in start.0..=end.0 {
-                                            let chars: Vec<char> =
-                                                self.lines[row].chars().collect();
-                                            let col_start =
-                                                if row == start.0 { start.1 } else { 0 };
-                                            let col_end = if row == end.0 {
-                                                (end.1 + 1).min(chars.len())
-                                            } else {
-                                                chars.len()
-                                            };
-                                            let toggled: String = chars
-                                                .iter()
-                                                .enumerate()
-                                                .map(|(i, &c)| {
-                                                    if i >= col_start && i < col_end {
+                                        true
+                                    }
+                                    ('a', '(' | ')') => {
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('(')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', '[' | ']') => {
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('[')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', '[' | ']') => {
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('[')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', '{' | '}') => {
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('{')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', '{' | '}') => {
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('{')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', '<' | '>') => {
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('<')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', '<' | '>') => {
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('<')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', '"') => {
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('"')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', '"') => {
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('"')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', '\'') => {
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('\'')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', '\'') => {
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('\'')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', '`') => {
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('`')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', '`') => {
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('`')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', 'w') => {
+                                        let (start, end) = self.get_inner_word_bounds();
+                                        self.visual_start = (self.cursor.0, start);
+                                        self.cursor.1 = end.saturating_sub(1);
+                                        true
+                                    }
+                                    ('a', 'w') => {
+                                        let (start, end) = self.get_a_word_bounds();
+                                        self.visual_start = (self.cursor.0, start);
+                                        self.cursor.1 = end.saturating_sub(1);
+                                        true
+                                    }
+                                    ('i', 'W') => {
+                                        let (start, end) = self.get_inner_long_word_bounds();
+                                        self.visual_start = (self.cursor.0, start);
+                                        self.cursor.1 = end.saturating_sub(1);
+                                        true
+                                    }
+                                    ('a', 'W') => {
+                                        let (start, end) = self.get_a_long_word_bounds();
+                                        self.visual_start = (self.cursor.0, start);
+                                        self.cursor.1 = end.saturating_sub(1);
+                                        true
+                                    }
+                                    ('i', 'b') => {
+                                        // ib is same as i(
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('(')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', 'b') => {
+                                        // ab is same as a(
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('(')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('i', 'B') => {
+                                        // iB is same as i{
+                                        if let Some((open_pos, close_pos)) =
+                                            self.find_pair_bounds('{')
+                                        {
+                                            let (start, end) = self
+                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
+                                            self.visual_start = start;
+                                            self.cursor = end;
+                                        }
+                                        true
+                                    }
+                                    ('a', 'B') => {
+                                        // aB is same as a{
+                                        if let Some((
+                                            (open_row, open_col),
+                                            (close_row, close_col),
+                                        )) = self.find_pair_bounds('{')
+                                        {
+                                            self.visual_start = (open_row, open_col);
+                                            self.cursor = (close_row, close_col);
+                                        }
+                                        true
+                                    }
+                                    ('g', 'g') => {
+                                        // gg - go to first line
+                                        self.cursor.0 = 0;
+                                        let line_len = self.lines[self.cursor.0].chars().count();
+                                        let max_col = line_len.saturating_sub(1);
+                                        self.cursor.1 = self.desired_col.min(max_col);
+                                        true
+                                    }
+                                    ('i', 'p') => {
+                                        // ip - inner paragraph
+                                        if let Some((start_row, end_row)) =
+                                            self.get_paragraph_bounds(TextObjectKind::Inner)
+                                        {
+                                            self.visual_start = (start_row, 0);
+                                            let end_col = self.lines[end_row]
+                                                .chars()
+                                                .count()
+                                                .saturating_sub(1);
+                                            self.cursor = (end_row, end_col);
+                                            // Switch to linewise visual mode for paragraph selection
+                                            self.mode = EditorMode::VisualLine;
+                                        }
+                                        true
+                                    }
+                                    ('a', 'p') => {
+                                        // ap - a paragraph (includes trailing/leading blank lines)
+                                        if let Some((start_row, end_row)) =
+                                            self.get_paragraph_bounds(TextObjectKind::Around)
+                                        {
+                                            self.visual_start = (start_row, 0);
+                                            let end_col = self.lines[end_row]
+                                                .chars()
+                                                .count()
+                                                .saturating_sub(1);
+                                            self.cursor = (end_row, end_col);
+                                            // Switch to linewise visual mode for paragraph selection
+                                            self.mode = EditorMode::VisualLine;
+                                        }
+                                        true
+                                    }
+                                    ('i', 's') => {
+                                        // is - inner sentence
+                                        let (start_row, start_col, end_row, end_col) =
+                                            self.get_sentence_bounds(TextObjectKind::Inner);
+                                        self.visual_start = (start_row, start_col);
+                                        self.cursor = (end_row, end_col);
+                                        // Keep in character visual mode for sentence selection
+                                        self.mode = EditorMode::Visual;
+                                        true
+                                    }
+                                    ('a', 's') => {
+                                        // as - a sentence (includes trailing whitespace)
+                                        let (start_row, start_col, end_row, end_col) =
+                                            self.get_sentence_bounds(TextObjectKind::Around);
+                                        self.visual_start = (start_row, start_col);
+                                        self.cursor = (end_row, end_col);
+                                        // Keep in character visual mode for sentence selection
+                                        self.mode = EditorMode::Visual;
+                                        true
+                                    }
+                                    _ => false,
+                                };
+                                self.pending_keys.clear();
+                                if handled {
+                                    // Text object was handled, skip normal key processing
+                                } else {
+                                    // Unknown text object, ignore
+                                }
+                            } else {
+                                // No pending key - handle as normal keys
+                                match c {
+                                    // Movement keys extend selection
+                                    'h' => self.move_cursor(0, -1),
+                                    'j' => self.move_cursor(1, 0),
+                                    'k' => self.move_cursor(-1, 0),
+                                    'l' => self.move_cursor(0, 1),
+                                    'w' => self.move_word_forward(WordType::Word),
+                                    'W' => self.move_word_forward(WordType::LongWord),
+                                    'b' => self.move_word_backward(WordType::Word),
+                                    'B' => self.move_word_backward(WordType::LongWord),
+                                    'e' => self.move_to_word_end(WordType::Word),
+                                    'E' => self.move_to_word_end(WordType::LongWord),
+                                    '0' => {
+                                        self.cursor.1 = 0;
+                                        self.update_desired_col();
+                                    }
+                                    '^' => self.move_to_first_non_blank(),
+                                    '$' => {
+                                        self.cursor.1 = self.lines[self.cursor.0]
+                                            .chars()
+                                            .count()
+                                            .saturating_sub(1);
+                                        self.update_desired_col();
+                                    }
+                                    'G' => {
+                                        self.cursor.0 = self.lines.len() - 1;
+                                        // Use desired_col like vertical movement
+                                        let line_len = self.lines[self.cursor.0].chars().count();
+                                        let max_col = if self.mode == EditorMode::Insert {
+                                            line_len
+                                        } else {
+                                            line_len.saturating_sub(1)
+                                        };
+                                        self.cursor.1 = self.desired_col.min(max_col);
+                                    }
+                                    '%' => {
+                                        self.jump_to_matching_bracket();
+                                        self.update_desired_col();
+                                    }
+                                    '{' => {
+                                        self.move_paragraph_backward();
+                                    }
+                                    '}' => {
+                                        self.move_paragraph_forward();
+                                    }
+                                    '(' => {
+                                        self.move_sentence_backward();
+                                    }
+                                    ')' => {
+                                        self.move_sentence_forward();
+                                    }
+                                    // Operations on selection
+                                    'd' | 'x' => {
+                                        // Record block dimensions for repeat if in block mode
+                                        if self.mode == EditorMode::VisualBlock {
+                                            let (start, end) = self.get_visual_selection();
+                                            let num_rows = end.0 - start.0 + 1;
+                                            let min_col = self.visual_start.1.min(self.cursor.1);
+                                            let max_col = self.visual_start.1.max(self.cursor.1);
+                                            let col_width = max_col - min_col + 1;
+                                            self.delete_visual_selection();
+                                            self.set_last_change(
+                                                LastChange::DeleteBlock(num_rows, col_width),
+                                                1,
+                                            );
+                                        } else {
+                                            self.delete_visual_selection();
+                                        }
+                                        self.mode = EditorMode::Normal;
+                                    }
+                                    'y' => {
+                                        self.yank_visual_selection();
+                                        self.mode = EditorMode::Normal;
+                                    }
+                                    'c' => {
+                                        // Save cursor position, delete without recording
+                                        // (record_change called when exiting insert mode)
+                                        if self.mode == EditorMode::VisualBlock {
+                                            // Track block info for inserting on all lines
+                                            let (start, end) = self.get_visual_selection();
+                                            let num_rows = end.0 - start.0 + 1;
+                                            let min_col = self.visual_start.1.min(self.cursor.1);
+                                            let max_col = self.visual_start.1.max(self.cursor.1);
+                                            let col_width = max_col - min_col + 1;
+                                            self.save_undo_state();
+                                            self.delete_visual_selection_no_undo();
+                                            // Store block info for insert with col_width for repeat
+                                            self.block_insert_info = Some((
+                                                start.0,
+                                                num_rows,
+                                                min_col,
+                                                BlockInsertType::Change(col_width),
+                                            ));
+                                            self.mode = EditorMode::Insert;
+                                            self.insert_buffer.clear();
+                                            // Position cursor at insert column
+                                            self.cursor = (start.0, min_col);
+                                        } else {
+                                            self.save_undo_state();
+                                            self.delete_visual_selection_no_undo();
+                                            self.mode = EditorMode::Insert;
+                                            self.insert_buffer.clear();
+                                        }
+                                    }
+                                    'I' => {
+                                        // Insert at left edge of block on all lines
+                                        if self.mode == EditorMode::VisualBlock {
+                                            let (start, end) = self.get_visual_selection();
+                                            let num_rows = end.0 - start.0 + 1;
+                                            let insert_col = self.visual_start.1.min(self.cursor.1);
+                                            self.save_undo_state();
+                                            // Store block info for insert (no deletion)
+                                            self.block_insert_info = Some((
+                                                start.0,
+                                                num_rows,
+                                                insert_col,
+                                                BlockInsertType::Insert,
+                                            ));
+                                            self.mode = EditorMode::Insert;
+                                            self.insert_buffer.clear();
+                                            // Position cursor at insert column
+                                            self.cursor = (start.0, insert_col);
+                                        }
+                                    }
+                                    'A' => {
+                                        // Append at right edge of block on all lines
+                                        if self.mode == EditorMode::VisualBlock {
+                                            let (start, end) = self.get_visual_selection();
+                                            let num_rows = end.0 - start.0 + 1;
+                                            let min_col = self.visual_start.1.min(self.cursor.1);
+                                            let max_col = self.visual_start.1.max(self.cursor.1);
+                                            let insert_col = max_col + 1;
+                                            // Calculate offset from left edge of selection
+                                            let col_offset = insert_col - min_col;
+                                            self.save_undo_state();
+                                            // Store block info for insert (no deletion)
+                                            self.block_insert_info = Some((
+                                                start.0,
+                                                num_rows,
+                                                insert_col,
+                                                BlockInsertType::Append(col_offset),
+                                            ));
+                                            self.mode = EditorMode::Insert;
+                                            self.insert_buffer.clear();
+                                            // Position cursor at insert column
+                                            self.cursor = (start.0, insert_col);
+                                        }
+                                    }
+                                    'D' => {
+                                        // Delete from left edge of block to end of line for all lines
+                                        if self.mode == EditorMode::VisualBlock {
+                                            let (start, end) = self.get_visual_selection();
+                                            let min_col = self.visual_start.1.min(self.cursor.1);
+                                            self.save_undo_state();
+                                            self.lines_version += 1;
+
+                                            // Delete from min_col to end of each line
+                                            let mut yanked_lines = Vec::new();
+                                            for row in start.0..=end.0 {
+                                                let chars: Vec<char> =
+                                                    self.lines[row].chars().collect();
+                                                if min_col < chars.len() {
+                                                    yanked_lines.push(
+                                                        chars[min_col..].iter().collect::<String>(),
+                                                    );
+                                                    self.lines[row] =
+                                                        chars[..min_col].iter().collect();
+                                                } else {
+                                                    yanked_lines.push(String::new());
+                                                }
+                                            }
+                                            self.yank_buffer = yanked_lines.join("\n");
+                                            self.yank_is_linewise = false;
+                                            self.yank_is_block = true;
+
+                                            self.cursor = (start.0, min_col);
+                                            self.clamp_cursor();
+                                            self.record_change();
+                                            self.mode = EditorMode::Normal;
+                                        }
+                                    }
+                                    'C' => {
+                                        // Delete from left edge of block to end of line, then insert
+                                        if self.mode == EditorMode::VisualBlock {
+                                            let (start, end) = self.get_visual_selection();
+                                            let num_rows = end.0 - start.0 + 1;
+                                            let min_col = self.visual_start.1.min(self.cursor.1);
+                                            self.save_undo_state();
+                                            self.lines_version += 1;
+
+                                            // Delete from min_col to end of each line
+                                            let mut yanked_lines = Vec::new();
+                                            for row in start.0..=end.0 {
+                                                let chars: Vec<char> =
+                                                    self.lines[row].chars().collect();
+                                                if min_col < chars.len() {
+                                                    yanked_lines.push(
+                                                        chars[min_col..].iter().collect::<String>(),
+                                                    );
+                                                    self.lines[row] =
+                                                        chars[..min_col].iter().collect();
+                                                } else {
+                                                    yanked_lines.push(String::new());
+                                                }
+                                            }
+                                            self.yank_buffer = yanked_lines.join("\n");
+                                            self.yank_is_linewise = false;
+                                            self.yank_is_block = true;
+
+                                            // Store block info for insert
+                                            self.block_insert_info = Some((
+                                                start.0,
+                                                num_rows,
+                                                min_col,
+                                                BlockInsertType::Insert,
+                                            ));
+                                            self.mode = EditorMode::Insert;
+                                            self.insert_buffer.clear();
+                                            self.cursor = (start.0, min_col);
+                                        }
+                                    }
+                                    // Toggle case
+                                    '~' => {
+                                        let (start, end) = self.get_visual_selection();
+                                        self.save_undo_state();
+                                        self.lines_version += 1;
+                                        if self.mode == EditorMode::VisualLine {
+                                            for row in start.0..=end.0 {
+                                                let toggled: String = self.lines[row]
+                                                    .chars()
+                                                    .map(|c| {
                                                         if c.is_uppercase() {
                                                             c.to_lowercase().next().unwrap_or(c)
                                                         } else {
                                                             c.to_uppercase().next().unwrap_or(c)
                                                         }
-                                                    } else {
-                                                        c
-                                                    }
-                                                })
-                                                .collect();
-                                            self.lines[row] = toggled;
+                                                    })
+                                                    .collect();
+                                                self.lines[row] = toggled;
+                                            }
+                                        } else {
+                                            // Character-wise toggle
+                                            for row in start.0..=end.0 {
+                                                let chars: Vec<char> =
+                                                    self.lines[row].chars().collect();
+                                                let col_start =
+                                                    if row == start.0 { start.1 } else { 0 };
+                                                let col_end = if row == end.0 {
+                                                    (end.1 + 1).min(chars.len())
+                                                } else {
+                                                    chars.len()
+                                                };
+                                                let toggled: String = chars
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(i, &c)| {
+                                                        if i >= col_start && i < col_end {
+                                                            if c.is_uppercase() {
+                                                                c.to_lowercase().next().unwrap_or(c)
+                                                            } else {
+                                                                c.to_uppercase().next().unwrap_or(c)
+                                                            }
+                                                        } else {
+                                                            c
+                                                        }
+                                                    })
+                                                    .collect();
+                                                self.lines[row] = toggled;
+                                            }
+                                        }
+                                        self.cursor = start;
+                                        self.record_change();
+                                        self.mode = EditorMode::Normal;
+                                    }
+                                    // Switch visual modes
+                                    'v' => {
+                                        if self.mode == EditorMode::Visual {
+                                            self.mode = EditorMode::Normal;
+                                        } else {
+                                            self.mode = EditorMode::Visual;
                                         }
                                     }
-                                    self.cursor = start;
-                                    self.record_change();
-                                    self.mode = EditorMode::Normal;
-                                }
-                                // Switch visual modes
-                                'v' => {
-                                    if self.mode == EditorMode::Visual {
-                                        self.mode = EditorMode::Normal;
-                                    } else {
-                                        self.mode = EditorMode::Visual;
+                                    'V' => {
+                                        if self.mode == EditorMode::VisualLine {
+                                            self.mode = EditorMode::Normal;
+                                        } else {
+                                            self.mode = EditorMode::VisualLine;
+                                        }
                                     }
-                                }
-                                'V' => {
-                                    if self.mode == EditorMode::VisualLine {
-                                        self.mode = EditorMode::Normal;
-                                    } else {
-                                        self.mode = EditorMode::VisualLine;
+                                    // Swap anchor and cursor
+                                    'o' => {
+                                        std::mem::swap(&mut self.cursor, &mut self.visual_start);
+                                        self.update_desired_col();
                                     }
-                                }
-                                // Swap anchor and cursor
-                                'o' => {
-                                    std::mem::swap(&mut self.cursor, &mut self.visual_start);
-                                    self.update_desired_col();
-                                }
-                                // Text object selection - 'i' for inner, 'a' for around
-                                'i' | 'a' => {
-                                    self.pending_keys.push(KeyCode::Char(c));
-                                }
-                                // 'g' prefix for gg command
-                                'g' => {
-                                    self.pending_keys.push(KeyCode::Char('g'));
-                                }
-                                _ => {
-                                    // Clear pending keys on unrecognized input
-                                    self.pending_keys.clear();
-                                }
-                            } // close match c
-                        } // close else
-                    } // close => for Char(c)
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::UpArrow,
-                        ..
-                    }) => self.move_cursor(-1, 0),
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::DownArrow,
-                        ..
-                    }) => self.move_cursor(1, 0),
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::LeftArrow,
-                        ..
-                    }) => self.move_cursor(0, -1),
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::RightArrow,
-                        ..
-                    }) => self.move_cursor(0, 1),
-                    InputEvent::Paste(text) => {
-                        // In Visual mode, paste replaces the selected text
-                        // Save cursor position, then delete+insert as one undo unit
-                        self.save_undo_state();
-                        self.delete_visual_selection_no_undo();
-                        self.insert_text(&text);
-                        // Move cursor back to last inserted char
-                        if self.cursor.1 > 0 {
-                            self.cursor.1 -= 1;
+                                    // Swap to opposite horizontal end (visual block mode)
+                                    'O' => {
+                                        if self.mode == EditorMode::VisualBlock {
+                                            // In block mode, swap only the column positions
+                                            std::mem::swap(
+                                                &mut self.cursor.1,
+                                                &mut self.visual_start.1,
+                                            );
+                                            self.update_desired_col();
+                                        } else {
+                                            // In other visual modes, O behaves like o
+                                            std::mem::swap(
+                                                &mut self.cursor,
+                                                &mut self.visual_start,
+                                            );
+                                            self.update_desired_col();
+                                        }
+                                    }
+                                    // Text object selection - 'i' for inner, 'a' for around
+                                    'i' | 'a' => {
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                    }
+                                    // 'g' prefix for gg command
+                                    'g' => {
+                                        self.pending_keys.push(KeyCode::Char('g'));
+                                    }
+                                    _ => {
+                                        // Clear pending keys on unrecognized input
+                                        self.pending_keys.clear();
+                                    }
+                                } // close match c
+                            } // close else
+                        } // close => for Char(c)
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::UpArrow,
+                            ..
+                        }) => self.move_cursor(-1, 0),
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::DownArrow,
+                            ..
+                        }) => self.move_cursor(1, 0),
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::LeftArrow,
+                            ..
+                        }) => self.move_cursor(0, -1),
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::RightArrow,
+                            ..
+                        }) => self.move_cursor(0, 1),
+                        InputEvent::Paste(text) => {
+                            // In Visual mode, paste replaces the selected text
+                            // Save cursor position, then delete+insert as one undo unit
+                            self.save_undo_state();
+                            self.delete_visual_selection_no_undo();
+                            self.insert_text(&text);
+                            // Move cursor back to last inserted char
+                            if self.cursor.1 > 0 {
+                                self.cursor.1 -= 1;
+                            }
+                            self.clamp_cursor();
+                            self.mode = EditorMode::Normal;
+                            self.record_change();
                         }
-                        self.clamp_cursor();
-                        self.mode = EditorMode::Normal;
-                        self.record_change();
+                        _ => {}
                     }
-                    _ => {}
-                },
+                }
             }
             self.render()?;
         }
@@ -8413,6 +9202,7 @@ mod tests {
         mode: EditorMode,
         yank_buffer: String,
         yank_is_linewise: bool,
+        yank_is_block: bool,
         history: Vec<(Vec<String>, (usize, usize))>,
         history_idx: usize,
         lines_version: u64,
@@ -8421,7 +9211,8 @@ mod tests {
         last_change: LastChange,
         last_count: usize,
         viewport_top: usize,
-        screen_height: usize, // Number of visible lines for H/M/L tests
+        screen_height: usize,         // Number of visible lines for H/M/L tests
+        visual_start: (usize, usize), // Anchor point for visual selection
     }
 
     impl TestEditor {
@@ -8438,6 +9229,7 @@ mod tests {
                 mode: EditorMode::Normal,
                 yank_buffer: String::new(),
                 yank_is_linewise: false,
+                yank_is_block: false,
                 history: vec![(lines, (0, 0))],
                 history_idx: 0,
                 lines_version: 0,
@@ -8446,7 +9238,8 @@ mod tests {
                 last_change: LastChange::None,
                 last_count: 1,
                 viewport_top: 0,
-                screen_height: 24, // Default screen height for tests
+                screen_height: 24,    // Default screen height for tests
+                visual_start: (0, 0), // Default visual start
             }
         }
 
@@ -9224,6 +10017,296 @@ mod tests {
 
             self.clamp_cursor();
             self.maybe_record_change();
+        }
+
+        // ============ Visual Block Mode Methods ============
+
+        fn get_visual_selection(&self) -> ((usize, usize), (usize, usize)) {
+            if self.visual_start.0 < self.cursor.0
+                || (self.visual_start.0 == self.cursor.0 && self.visual_start.1 <= self.cursor.1)
+            {
+                (self.visual_start, self.cursor)
+            } else {
+                (self.cursor, self.visual_start)
+            }
+        }
+
+        fn delete_visual_block(&mut self) {
+            let (start, end) = self.get_visual_selection();
+            let min_col = self.visual_start.1.min(self.cursor.1);
+            let max_col = self.visual_start.1.max(self.cursor.1);
+            let min_row = start.0;
+            let max_row = end.0;
+
+            // Yank the block
+            let mut yanked_lines = Vec::new();
+            for row in min_row..=max_row {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = min_col.min(line_len);
+                let sel_end = (max_col + 1).min(line_len);
+                if sel_start < sel_end {
+                    yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
+                } else {
+                    yanked_lines.push(String::new());
+                }
+            }
+            self.yank_buffer = yanked_lines.join("\n");
+            self.yank_is_linewise = false;
+            self.yank_is_block = true;
+
+            // Move cursor to top-left BEFORE saving undo state (Neovim behavior)
+            self.cursor = (min_row, min_col);
+            self.save_undo_state();
+
+            // Delete the block
+            self.lines_version += 1;
+            for row in min_row..=max_row {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = min_col.min(line_len);
+                let sel_end = (max_col + 1).min(line_len);
+                if sel_start < sel_end {
+                    let new_line: String =
+                        chars[..sel_start].iter().chain(&chars[sel_end..]).collect();
+                    self.lines[row] = new_line;
+                }
+            }
+
+            self.clamp_cursor();
+            self.record_change();
+        }
+
+        fn yank_visual_block(&mut self) {
+            let (start, end) = self.get_visual_selection();
+            let min_col = self.visual_start.1.min(self.cursor.1);
+            let max_col = self.visual_start.1.max(self.cursor.1);
+            let min_row = start.0;
+            let max_row = end.0;
+
+            let mut yanked_lines = Vec::new();
+            for row in min_row..=max_row {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = min_col.min(line_len);
+                let sel_end = (max_col + 1).min(line_len);
+                if sel_start < sel_end {
+                    yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
+                } else {
+                    yanked_lines.push(String::new());
+                }
+            }
+            self.yank_buffer = yanked_lines.join("\n");
+            self.yank_is_linewise = false;
+            self.yank_is_block = true;
+            self.cursor = (min_row, min_col);
+        }
+
+        fn paste_block_after(&mut self) {
+            if self.yank_buffer.is_empty() || !self.yank_is_block {
+                return;
+            }
+            self.save_undo_state();
+            self.lines_version += 1;
+
+            let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
+            let start_row = self.cursor.0;
+
+            for (i, paste_line) in paste_lines.iter().enumerate() {
+                let target_row = start_row + i;
+                if target_row >= self.lines.len() {
+                    self.lines.push(String::new());
+                }
+
+                let mut chars: Vec<char> = self.lines[target_row].chars().collect();
+                let insert_pos = if chars.is_empty() {
+                    0
+                } else {
+                    (self.cursor.1 + 1).min(chars.len())
+                };
+
+                // Pad with spaces if needed
+                while chars.len() < insert_pos {
+                    chars.push(' ');
+                }
+
+                let paste_chars: Vec<char> = paste_line.chars().collect();
+                for (j, c) in paste_chars.iter().enumerate() {
+                    chars.insert(insert_pos + j, *c);
+                }
+                self.lines[target_row] = chars.into_iter().collect();
+            }
+
+            self.record_change();
+        }
+
+        fn delete_block_at_cursor(&mut self, num_rows: usize, col_width: usize) {
+            self.save_undo_state();
+            self.lines_version += 1;
+
+            let start_row = self.cursor.0;
+            let start_col = self.cursor.1;
+            let end_col = start_col + col_width;
+
+            // Yank the block first
+            let mut yanked_lines = Vec::new();
+            for i in 0..num_rows {
+                let row = start_row + i;
+                if row >= self.lines.len() {
+                    break;
+                }
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = start_col.min(line_len);
+                let sel_end = end_col.min(line_len);
+                if sel_start < sel_end {
+                    yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
+                } else {
+                    yanked_lines.push(String::new());
+                }
+            }
+            self.yank_buffer = yanked_lines.join("\n");
+            self.yank_is_linewise = false;
+            self.yank_is_block = true;
+
+            // Delete the block
+            for i in 0..num_rows {
+                let row = start_row + i;
+                if row >= self.lines.len() {
+                    break;
+                }
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = start_col.min(line_len);
+                let sel_end = end_col.min(line_len);
+                if sel_start < sel_end {
+                    let new_line: String =
+                        chars[..sel_start].iter().chain(&chars[sel_end..]).collect();
+                    self.lines[row] = new_line;
+                }
+            }
+
+            self.clamp_cursor();
+            self.record_change();
+        }
+
+        fn change_block_at_cursor(&mut self, num_rows: usize, col_width: usize, text: &str) {
+            self.save_undo_state();
+            self.lines_version += 1;
+
+            let start_row = self.cursor.0;
+            let start_col = self.cursor.1;
+            let end_col = start_col + col_width;
+
+            // Delete the block and insert text on each row
+            for i in 0..num_rows {
+                let row = start_row + i;
+                if row >= self.lines.len() {
+                    break;
+                }
+                let mut chars: Vec<char> = self.lines[row].chars().collect();
+                let line_len = chars.len();
+                let sel_start = start_col.min(line_len);
+                let sel_end = end_col.min(line_len);
+
+                // Delete the block portion
+                if sel_start < sel_end {
+                    chars.drain(sel_start..sel_end);
+                }
+
+                // Insert the text at sel_start
+                let mut offset = 0;
+                for c in text.chars() {
+                    if c == '\n' {
+                        continue;
+                    }
+                    chars.insert(sel_start + offset, c);
+                    offset += 1;
+                }
+                self.lines[row] = chars.into_iter().collect();
+            }
+
+            self.clamp_cursor();
+            self.record_change();
+        }
+
+        fn insert_block_at_cursor(&mut self, num_rows: usize, text: &str) {
+            self.save_undo_state();
+            self.lines_version += 1;
+
+            let start_row = self.cursor.0;
+            let insert_col = self.cursor.1;
+
+            // Insert text on each row
+            for i in 0..num_rows {
+                let row = start_row + i;
+                if row >= self.lines.len() {
+                    break;
+                }
+                let chars: Vec<char> = self.lines[row].chars().collect();
+
+                // Skip lines that don't reach the insert column
+                if chars.len() < insert_col {
+                    continue;
+                }
+
+                let mut chars = chars;
+
+                // Insert the text
+                let mut offset = 0;
+                for c in text.chars() {
+                    if c == '\n' {
+                        continue;
+                    }
+                    chars.insert(insert_col + offset, c);
+                    offset += 1;
+                }
+                self.lines[row] = chars.into_iter().collect();
+            }
+
+            self.clamp_cursor();
+            self.record_change();
+        }
+
+        fn insert_block_at_cursor_with_offset(
+            &mut self,
+            num_rows: usize,
+            col_offset: usize,
+            text: &str,
+        ) {
+            self.save_undo_state();
+            self.lines_version += 1;
+
+            let start_row = self.cursor.0;
+            let insert_col = self.cursor.1 + col_offset;
+
+            // Insert text on each row
+            for i in 0..num_rows {
+                let row = start_row + i;
+                if row >= self.lines.len() {
+                    break;
+                }
+                let mut chars: Vec<char> = self.lines[row].chars().collect();
+
+                // Pad with spaces if needed to reach insert position
+                while chars.len() < insert_col {
+                    chars.push(' ');
+                }
+
+                // Insert the text
+                let mut offset = 0;
+                for c in text.chars() {
+                    if c == '\n' {
+                        continue;
+                    }
+                    chars.insert(insert_col + offset, c);
+                    offset += 1;
+                }
+                self.lines[row] = chars.into_iter().collect();
+            }
+
+            self.clamp_cursor();
+            self.record_change();
         }
 
         // ============ Number Manipulation Methods ============
@@ -10788,5 +11871,578 @@ mod tests {
         assert_eq!(editor.text(), "x = 9");
         // Cursor should be on the last digit
         assert_eq!(editor.cursor.1, 4);
+    }
+
+    // ============ Visual Block Mode Tests ============
+
+    #[test]
+    fn test_visual_block_yank_single_column() {
+        let mut editor = TestEditor::new("abc\ndef\nghi");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 1);
+        editor.yank_visual_block();
+        assert_eq!(editor.yank_buffer, "b\ne\nh");
+        assert!(!editor.yank_is_linewise);
+    }
+
+    #[test]
+    fn test_visual_block_yank_multiple_columns() {
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 2);
+        editor.yank_visual_block();
+        assert_eq!(editor.yank_buffer, "bc\nfg\njk");
+    }
+
+    #[test]
+    fn test_visual_block_yank_with_short_lines() {
+        let mut editor = TestEditor::new("abcdef\nab\nabcdef");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 2);
+        editor.cursor = (2, 4);
+        editor.yank_visual_block();
+        // Second line is shorter, so it contributes empty string
+        assert_eq!(editor.yank_buffer, "cde\n\ncde");
+    }
+
+    #[test]
+    fn test_visual_block_delete_single_column() {
+        let mut editor = TestEditor::new("abc\ndef\nghi");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 1);
+        editor.delete_visual_block();
+        assert_eq!(editor.text(), "ac\ndf\ngi");
+        assert_eq!(editor.yank_buffer, "b\ne\nh");
+    }
+
+    #[test]
+    fn test_visual_block_delete_multiple_columns() {
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 2);
+        editor.delete_visual_block();
+        assert_eq!(editor.text(), "ad\neh\nil");
+        assert_eq!(editor.yank_buffer, "bc\nfg\njk");
+    }
+
+    #[test]
+    fn test_visual_block_delete_with_short_lines() {
+        let mut editor = TestEditor::new("abcdef\nab\nabcdef");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 2);
+        editor.cursor = (2, 4);
+        editor.delete_visual_block();
+        // First line: abcdef -> abf (columns 2-4 removed)
+        // Second line: ab -> ab (nothing in columns 2-4)
+        // Third line: abcdef -> abf
+        assert_eq!(editor.text(), "abf\nab\nabf");
+    }
+
+    #[test]
+    fn test_visual_block_cursor_position_after_delete() {
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 2);
+        editor.delete_visual_block();
+        // Cursor should be at top-left of block
+        assert_eq!(editor.cursor, (0, 1));
+    }
+
+    #[test]
+    fn test_visual_block_reverse_selection() {
+        // Selection from bottom-right to top-left
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (2, 2);
+        editor.cursor = (0, 1);
+        editor.yank_visual_block();
+        assert_eq!(editor.yank_buffer, "bc\nfg\njk");
+    }
+
+    #[test]
+    fn test_visual_block_single_line() {
+        let mut editor = TestEditor::new("abcdef");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (0, 3);
+        editor.yank_visual_block();
+        assert_eq!(editor.yank_buffer, "bcd");
+    }
+
+    #[test]
+    fn test_visual_block_delete_at_end_of_lines() {
+        let mut editor = TestEditor::new("ab\ncd\nef");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 1);
+        editor.delete_visual_block();
+        assert_eq!(editor.text(), "a\nc\ne");
+    }
+
+    #[test]
+    fn test_visual_block_swap_horizontal_end() {
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 3);
+
+        // O swaps only column positions in block mode
+        std::mem::swap(&mut editor.cursor.1, &mut editor.visual_start.1);
+
+        // Now cursor column should be 1, visual_start column should be 3
+        assert_eq!(editor.cursor, (2, 1));
+        assert_eq!(editor.visual_start, (0, 3));
+
+        // The block selection should still cover the same area
+        editor.yank_visual_block();
+        assert_eq!(editor.yank_buffer, "bcd\nfgh\njkl");
+    }
+
+    #[test]
+    fn test_visual_block_o_swaps_diagonally() {
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 3);
+
+        // o swaps entire positions
+        std::mem::swap(&mut editor.cursor, &mut editor.visual_start);
+
+        assert_eq!(editor.cursor, (0, 1));
+        assert_eq!(editor.visual_start, (2, 3));
+    }
+
+    #[test]
+    fn test_visual_block_paste_distributes_across_lines() {
+        // User's scenario: yank 'sti' from all rows, paste at end of line 1
+        // testing1\ntesting2\ntesting3
+        // Select 'sti' (columns 2-4) in visual block mode from all rows
+        // Then paste at end of testing1
+        // Expected: testing1sti\ntesting2sti\ntesting3sti
+
+        let mut editor = TestEditor::new("testing1\ntesting2\ntesting3");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 2);
+        editor.cursor = (2, 4);
+        editor.yank_visual_block();
+        assert_eq!(editor.yank_buffer, "sti\nsti\nsti");
+        assert!(editor.yank_is_block);
+
+        // Now move cursor to end of first line (testing1 = 8 chars, last char at index 7)
+        editor.mode = EditorMode::Normal;
+        editor.cursor = (0, 7);
+
+        // Paste after cursor (p command)
+        editor.paste_block_after();
+
+        assert_eq!(editor.text(), "testing1sti\ntesting2sti\ntesting3sti");
+    }
+
+    #[test]
+    fn test_visual_block_paste_creates_lines_if_needed() {
+        // Paste a 3-line block when there are only 2 lines
+        let mut editor = TestEditor::new("line1\nline2");
+        editor.yank_buffer = "aa\nbb\ncc".to_string();
+        editor.yank_is_block = true;
+        editor.yank_is_linewise = false;
+        editor.cursor = (0, 4); // End of line1
+
+        editor.paste_block_after();
+
+        assert_eq!(editor.text(), "line1aa\nline2bb\ncc");
+    }
+
+    #[test]
+    fn test_visual_block_paste_pads_with_spaces() {
+        // Paste block at column beyond line length
+        let mut editor = TestEditor::new("ab\ncd\nef");
+        editor.yank_buffer = "x\ny\nz".to_string();
+        editor.yank_is_block = true;
+        editor.yank_is_linewise = false;
+        editor.cursor = (0, 1); // After 'b' in "ab"
+
+        editor.paste_block_after();
+
+        assert_eq!(editor.text(), "abx\ncdy\nefz");
+    }
+
+    #[test]
+    fn test_visual_block_delete_repeat() {
+        // Test that . repeats a visual block delete
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl\nmnop");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (1, 2);
+
+        // Delete block (columns 1-2, rows 0-1) -> "bc" and "fg"
+        editor.delete_visual_block();
+        // Set last change for repeat
+        editor.last_change = LastChange::DeleteBlock(2, 2);
+
+        assert_eq!(editor.text(), "ad\neh\nijkl\nmnop");
+
+        // Now move cursor to row 2, col 1 and repeat
+        editor.mode = EditorMode::Normal;
+        editor.cursor = (2, 1);
+        editor.delete_block_at_cursor(2, 2);
+
+        // Should delete "jk" and "no" (columns 1-2, rows 2-3)
+        assert_eq!(editor.text(), "ad\neh\nil\nmp");
+    }
+
+    #[test]
+    fn test_visual_block_change_inserts_on_all_lines() {
+        // User's scenario: visual block change should insert text on all affected lines
+        // testing1\ntesting2\ntesting3
+        // Select 'sti' (columns 2-4) and change to 'ABC'
+        // Expected: teABCng1\nteABCng2\nteABCng3
+
+        let mut editor = TestEditor::new("testing1\ntesting2\ntesting3");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 2);
+        editor.cursor = (2, 4);
+
+        // Simulate 'c' command: delete block and store block info
+        let (start, end) = editor.get_visual_selection();
+        let num_rows = end.0 - start.0 + 1;
+        let insert_col = editor.visual_start.1.min(editor.cursor.1);
+
+        // Delete the block (simulating delete_visual_selection_no_undo)
+        editor.delete_visual_block();
+
+        // First line should now be "teng1" (sti removed)
+        // Second line: "teng2"
+        // Third line: "teng3"
+        assert_eq!(editor.text(), "teng1\nteng2\nteng3");
+
+        // Now simulate typing "ABC" on first line (which happens during insert mode)
+        let insert_text = "ABC";
+        {
+            let mut chars: Vec<char> = editor.lines[start.0].chars().collect();
+            for (j, c) in insert_text.chars().enumerate() {
+                chars.insert(insert_col + j, c);
+            }
+            editor.lines[start.0] = chars.into_iter().collect();
+        }
+
+        // Now simulate exiting insert mode - insert on remaining rows
+        for i in 1..num_rows {
+            let row = start.0 + i;
+            if row >= editor.lines.len() {
+                break;
+            }
+            let mut chars: Vec<char> = editor.lines[row].chars().collect();
+            let pos = insert_col.min(chars.len());
+            for (j, c) in insert_text.chars().enumerate() {
+                chars.insert(pos + j, c);
+            }
+            editor.lines[row] = chars.into_iter().collect();
+        }
+
+        assert_eq!(editor.text(), "teABCng1\nteABCng2\nteABCng3");
+    }
+
+    #[test]
+    fn test_visual_block_insert_i() {
+        // Test I command: insert at left edge of block on all lines
+        // abc\ndef\nghi -> select columns 1-2 on all rows -> press I -> type "X"
+        // Expected: aXbc\ndXef\ngXhi
+
+        let mut editor = TestEditor::new("abc\ndef\nghi");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 2);
+
+        // Simulate 'I' command
+        let (start, end) = editor.get_visual_selection();
+        let num_rows = end.0 - start.0 + 1;
+        let insert_col = editor.visual_start.1.min(editor.cursor.1); // left edge = 1
+
+        // Simulate typing "X" on first line
+        let insert_text = "X";
+        {
+            let mut chars: Vec<char> = editor.lines[start.0].chars().collect();
+            for (j, c) in insert_text.chars().enumerate() {
+                chars.insert(insert_col + j, c);
+            }
+            editor.lines[start.0] = chars.into_iter().collect();
+        }
+
+        // Simulate exiting insert mode - insert on remaining rows
+        for i in 1..num_rows {
+            let row = start.0 + i;
+            let mut chars: Vec<char> = editor.lines[row].chars().collect();
+            let pos = insert_col.min(chars.len());
+            for (j, c) in insert_text.chars().enumerate() {
+                chars.insert(pos + j, c);
+            }
+            editor.lines[row] = chars.into_iter().collect();
+        }
+
+        assert_eq!(editor.text(), "aXbc\ndXef\ngXhi");
+    }
+
+    #[test]
+    fn test_visual_block_insert_skips_short_lines() {
+        // Test that I command skips lines shorter than the selection's left edge
+        // testing1\nte\ntesting3 -> select col 7 on all rows -> press I -> type "ABC"
+        // Expected: testingABC1\nte\ntestingABC3 (middle line skipped)
+
+        let mut editor = TestEditor::new("testing1\nte\ntesting3");
+        editor.cursor = (0, 7); // cursor at col 7
+
+        // Simulate the repeat of a block insert at col 7
+        editor.insert_block_at_cursor(3, "ABC");
+
+        // Line "te" (len=2) should be skipped because 2 < 7
+        assert_eq!(editor.text(), "testingABC1\nte\ntestingABC3");
+    }
+
+    #[test]
+    fn test_visual_block_append_pads_short_lines() {
+        // Test that A command pads short lines with spaces instead of skipping
+        // testing1\nte\ntesting3 -> select col 7 on all rows -> press A -> type "ABC"
+        // Expected: testing1ABC\nte      ABC\ntesting3ABC (middle line padded)
+
+        let mut editor = TestEditor::new("testing1\nte\ntesting3");
+        editor.cursor = (0, 7); // cursor at col 7 (left edge of selection)
+
+        // For A, offset = 1 (insert at col 8, which is col 7 + 1)
+        editor.insert_block_at_cursor_with_offset(3, 1, "ABC");
+
+        // Line "te" should be padded with spaces to col 8, then ABC inserted
+        // "te" + 6 spaces = "te      " (8 chars), then "ABC" = "te      ABC"
+        assert_eq!(editor.text(), "testing1ABC\nte      ABC\ntesting3ABC");
+    }
+
+    #[test]
+    fn test_visual_block_append_a() {
+        // Test A command: append at right edge of block on all lines
+        // abc\ndef\nghi -> select columns 1-2 on all rows -> press A -> type "X"
+        // Expected: abcX\ndefX\nghiX
+
+        let mut editor = TestEditor::new("abc\ndef\nghi");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 2);
+
+        // Simulate 'A' command
+        let (start, end) = editor.get_visual_selection();
+        let num_rows = end.0 - start.0 + 1;
+        let insert_col = editor.visual_start.1.max(editor.cursor.1) + 1; // right edge + 1 = 3
+
+        // Simulate typing "X" on first line
+        let insert_text = "X";
+        {
+            let mut chars: Vec<char> = editor.lines[start.0].chars().collect();
+            // Pad if needed
+            while chars.len() < insert_col {
+                chars.push(' ');
+            }
+            for (j, c) in insert_text.chars().enumerate() {
+                chars.insert(insert_col + j, c);
+            }
+            editor.lines[start.0] = chars.into_iter().collect();
+        }
+
+        // Simulate exiting insert mode - insert on remaining rows
+        for i in 1..num_rows {
+            let row = start.0 + i;
+            let mut chars: Vec<char> = editor.lines[row].chars().collect();
+            // Pad if needed
+            while chars.len() < insert_col {
+                chars.push(' ');
+            }
+            for (j, c) in insert_text.chars().enumerate() {
+                chars.insert(insert_col + j, c);
+            }
+            editor.lines[row] = chars.into_iter().collect();
+        }
+
+        assert_eq!(editor.text(), "abcX\ndefX\nghiX");
+    }
+
+    #[test]
+    fn test_visual_block_change_repeat() {
+        // Test that . repeats a visual block change on all lines
+        // Initial: "testing1\ntesting2\ntesting3"
+        // Block select 'sti' (cols 2-4) on all lines, press c, type ABC, press Esc
+        // Result: "teABCng1\nteABCng2\nteABCng3"
+        // Move to row 0, col 5 and press . to repeat
+        // Expected: "teABCABC1\nteABCABC2\nteABCABC3" (delete 3 chars at col 5-7, insert ABC)
+
+        let mut editor = TestEditor::new("teABCng1\nteABCng2\nteABCng3");
+
+        // Set up last change as if we had done a block change
+        editor.last_change = LastChange::ChangeBlock(3, 3, "ABC".to_string());
+        editor.last_count = 1;
+        editor.cursor = (0, 5); // Position at 'n'
+
+        // Repeat the change
+        editor.change_block_at_cursor(3, 3, "ABC");
+
+        // ng1, ng2, ng3 at cols 5-7 become ABC on each line
+        assert_eq!(editor.text(), "teABCABC\nteABCABC\nteABCABC");
+    }
+
+    #[test]
+    fn test_visual_block_insert_repeat() {
+        // Test that . repeats a visual block insert on all lines
+        // Initial: "abc\ndef\nghi"
+        // Block select col 1 on all lines, press I, type XX, press Esc
+        // Result: "aXXbc\ndXXef\ngXXhi"
+        // Move to row 0, col 0 and press . to repeat
+        // Expected: "XXaXXbc\nXXdXXef\nXXgXXhi"
+
+        let mut editor = TestEditor::new("aXXbc\ndXXef\ngXXhi");
+
+        // Set up last change as if we had done a block insert
+        editor.last_change = LastChange::InsertBlock(3, "XX".to_string());
+        editor.last_count = 1;
+        editor.cursor = (0, 0);
+
+        // Repeat the insert
+        editor.insert_block_at_cursor(3, "XX");
+
+        assert_eq!(editor.text(), "XXaXXbc\nXXdXXef\nXXgXXhi");
+    }
+
+    #[test]
+    fn test_visual_block_append_repeat() {
+        // Test that . repeats a visual block append on all lines at correct offset
+        // User's scenario:
+        // 1. Original text: "testing1\ntesting2\ntesting3"
+        // 2. Cursor at 's' (col 2), visual block select 'sti' (cols 2-4) on all lines
+        // 3. Press A, type "ABC", press Esc
+        // 4. Result: "testiABCng1\ntestiABCng2\ntestiABCng3"
+        // 5. Go to new text, cursor at 's' (col 2), press .
+        // 6. Expected: same result (insert at col 2 + offset 3 = col 5)
+
+        let mut editor = TestEditor::new("testing1\ntesting2\ntesting3");
+
+        // Set up last change as if we had done a block append
+        // Original selection: cols 2-4, so offset = (4 + 1) - 2 = 3
+        editor.last_change = LastChange::AppendBlock(3, 3, "ABC".to_string());
+        editor.last_count = 1;
+        editor.cursor = (0, 2); // cursor at 's'
+
+        // Repeat the append (insert at cursor + offset = col 5)
+        editor.insert_block_at_cursor_with_offset(3, 3, "ABC");
+
+        assert_eq!(editor.text(), "testiABCng1\ntestiABCng2\ntestiABCng3");
+    }
+
+    #[test]
+    fn test_visual_block_undo_restores_cursor_to_top_left() {
+        // Test that undo after visual block delete restores cursor to top-left of block
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        // Cursor at bottom-right (row 2, col 2), visual_start at top-left (row 0, col 1)
+        editor.visual_start = (0, 1);
+        editor.cursor = (2, 2);
+
+        // Delete the block - function moves cursor to top-left before saving undo
+        editor.delete_visual_block();
+
+        // Verify deletion worked - columns 1-2 deleted from all rows
+        assert_eq!(editor.text(), "ad\neh\nil");
+
+        // Now undo
+        editor.undo();
+
+        // Text should be restored
+        assert_eq!(editor.text(), "abcd\nefgh\nijkl");
+        // Cursor should be at top-left of the block (row 0, col 1)
+        assert_eq!(editor.cursor, (0, 1));
+    }
+
+    #[test]
+    fn test_visual_block_undo_cursor_when_selecting_upward() {
+        // Test undo when selection goes from bottom to top (visual_start at bottom)
+        let mut editor = TestEditor::new("abcd\nefgh\nijkl");
+        editor.mode = EditorMode::VisualBlock;
+        // visual_start at bottom-right (row 2, col 2), cursor at top-left (row 0, col 1)
+        editor.visual_start = (2, 2);
+        editor.cursor = (0, 1);
+
+        // Delete the block
+        editor.delete_visual_block();
+
+        assert_eq!(editor.text(), "ad\neh\nil");
+
+        // Undo
+        editor.undo();
+
+        assert_eq!(editor.text(), "abcd\nefgh\nijkl");
+        // Cursor should be at top-left (row 0, col 1)
+        assert_eq!(editor.cursor, (0, 1));
+    }
+
+    #[test]
+    fn test_visual_block_d_uppercase_deletes_to_end() {
+        // Test D command: delete from left edge of block to end of line
+        // testing1\ntesting2\ntesting3 -> select cols 4-5 on all rows -> press D
+        // Expected: test\ntest\ntest (delete from col 4 to end)
+
+        let mut editor = TestEditor::new("testing1\ntesting2\ntesting3");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 4);
+        editor.cursor = (2, 5);
+
+        // Simulate D command: delete from min_col (4) to end of each line
+        let (start, end) = editor.get_visual_selection();
+        let min_col = editor.visual_start.1.min(editor.cursor.1);
+
+        editor.save_undo_state();
+        for row in start.0..=end.0 {
+            let chars: Vec<char> = editor.lines[row].chars().collect();
+            if min_col < chars.len() {
+                editor.lines[row] = chars[..min_col].iter().collect();
+            }
+        }
+
+        assert_eq!(editor.text(), "test\ntest\ntest");
+    }
+
+    #[test]
+    fn test_visual_block_c_uppercase_changes_to_end() {
+        // Test C command: delete from left edge to end, then insert on all lines
+        // testing1\ntesting2\ntesting3 -> select cols 4-5 on all rows -> press C -> type "XYZ"
+        // Expected: testXYZ\ntestXYZ\ntestXYZ
+
+        let mut editor = TestEditor::new("testing1\ntesting2\ntesting3");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 4);
+        editor.cursor = (2, 5);
+
+        // Simulate C command: delete from min_col (4) to end of each line
+        let (start, end) = editor.get_visual_selection();
+        let min_col = editor.visual_start.1.min(editor.cursor.1);
+        let num_rows = end.0 - start.0 + 1;
+
+        editor.save_undo_state();
+        for row in start.0..=end.0 {
+            let chars: Vec<char> = editor.lines[row].chars().collect();
+            if min_col < chars.len() {
+                editor.lines[row] = chars[..min_col].iter().collect();
+            }
+        }
+
+        // Now simulate typing "XYZ" on first line
+        let insert_text = "XYZ";
+        editor.lines[start.0].push_str(insert_text);
+
+        // Simulate exiting insert mode - insert on remaining rows
+        for i in 1..num_rows {
+            let row = start.0 + i;
+            editor.lines[row].push_str(insert_text);
+        }
+
+        assert_eq!(editor.text(), "testXYZ\ntestXYZ\ntestXYZ");
     }
 }

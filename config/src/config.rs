@@ -188,6 +188,9 @@ pub struct Config {
     #[dynamic(default = "default_input_text_visual_line_mode_text")]
     pub input_text_visual_line_mode_text: String,
 
+    #[dynamic(default = "default_input_text_visual_block_mode_text")]
+    pub input_text_visual_block_mode_text: String,
+
     /// Font to use for PaneSelect
     #[dynamic(default)]
     pub pane_select_font: Option<TextStyle>,
@@ -1696,6 +1699,10 @@ fn default_input_text_visual_mode_text() -> String {
 
 fn default_input_text_visual_line_mode_text() -> String {
     "VISUAL LINE".to_string()
+}
+
+fn default_input_text_visual_block_mode_text() -> String {
+    "VISUAL BLOCK".to_string()
 }
 
 fn default_swallow_mouse_click_on_window_focus() -> bool {
