@@ -94,7 +94,9 @@ The following keys are handled while the input form is active:
 
 | `Esc` | Cancel the form |
 
-| `Enter` | Submit the form (validates required fields) |
+| `Ctrl-Enter` | Submit the form (validates required fields) |
+
+| `Enter` | For selector fields: open dropdown or select highlighted choice |
 
 | `Tab` | Focus next field (wraps around) |
 
@@ -121,3 +123,5 @@ The following keys are handled while the input form is active:
 | `Ctrl-K` | Kill to end of field |
 
 | `Ctrl-W` | Delete word before cursor |
+
+| `Paste` | Insert clipboard text at cursor |
