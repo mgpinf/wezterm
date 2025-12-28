@@ -6639,6 +6639,123 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Delete entire lines in visual selection (linewise).
+    /// Used by D in Visual/VisualLine mode.
+    fn delete_visual_lines(&mut self) {
+        let (start, end) = self.get_visual_selection();
+        self.save_undo_state_with_cursor((start.0, 0));
+        self.lines_version += 1;
+
+        // Yank the lines first
+        let yanked: Vec<String> = self.lines[start.0..=end.0]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        self.yank_is_block = false;
+
+        // Delete the lines
+        self.lines.drain(start.0..=end.0);
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+
+        self.cursor.0 = start.0.min(self.lines.len().saturating_sub(1));
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.record_change();
+        self.mode = EditorMode::Normal;
+    }
+
+    /// Delete entire lines in visual selection and enter insert mode (linewise).
+    /// Used by C and S in Visual/VisualLine mode.
+    fn change_visual_lines(&mut self) {
+        let (start, end) = self.get_visual_selection();
+        self.save_undo_state_with_cursor((start.0, 0));
+        self.lines_version += 1;
+
+        // Yank the lines first
+        let yanked: Vec<String> = self.lines[start.0..=end.0]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        self.yank_buffer = yanked.join("\n");
+        self.yank_is_linewise = true;
+        self.yank_is_block = false;
+
+        // Delete the lines, leave one empty line for insert
+        self.lines.drain(start.0..=end.0);
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        } else {
+            self.lines.insert(start.0, String::new());
+        }
+
+        self.cursor = (start.0, 0);
+        self.mode = EditorMode::Insert;
+        self.insert_buffer.clear();
+    }
+
+    /// Delete from left edge of block selection to end of line for each row.
+    /// Used by D in VisualBlock mode.
+    fn delete_block_to_eol(&mut self) {
+        let (start, end) = self.get_visual_selection();
+        let min_col = self.visual_start.1.min(self.cursor.1);
+        self.save_undo_state_with_cursor((start.0, min_col));
+        self.lines_version += 1;
+
+        // Delete from min_col to end of each line
+        let mut yanked_lines = Vec::new();
+        for row in start.0..=end.0 {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            if min_col < chars.len() {
+                yanked_lines.push(chars[min_col..].iter().collect::<String>());
+                self.lines[row] = chars[..min_col].iter().collect();
+            } else {
+                yanked_lines.push(String::new());
+            }
+        }
+        self.yank_buffer = yanked_lines.join("\n");
+        self.yank_is_linewise = false;
+        self.yank_is_block = true;
+
+        self.cursor = (start.0, min_col);
+        self.clamp_cursor();
+        self.record_change();
+        self.mode = EditorMode::Normal;
+    }
+
+    /// Delete from left edge of block selection to end of line and enter insert mode.
+    /// Used by C in VisualBlock mode.
+    fn change_block_to_eol(&mut self) {
+        let (start, end) = self.get_visual_selection();
+        let num_rows = end.0 - start.0 + 1;
+        let min_col = self.visual_start.1.min(self.cursor.1);
+        self.save_undo_state_with_cursor((start.0, min_col));
+        self.lines_version += 1;
+
+        // Delete from min_col to end of each line
+        let mut yanked_lines = Vec::new();
+        for row in start.0..=end.0 {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            if min_col < chars.len() {
+                yanked_lines.push(chars[min_col..].iter().collect::<String>());
+                self.lines[row] = chars[..min_col].iter().collect();
+            } else {
+                yanked_lines.push(String::new());
+            }
+        }
+        self.yank_buffer = yanked_lines.join("\n");
+        self.yank_is_linewise = false;
+        self.yank_is_block = true;
+
+        // Store block info for insert
+        self.block_insert_info = Some((start.0, num_rows, min_col, BlockInsertType::Insert));
+        self.mode = EditorMode::Insert;
+        self.insert_buffer.clear();
+        self.cursor = (start.0, min_col);
+    }
+
     fn run_loop(&mut self) -> anyhow::Result<()> {
         self.render()?;
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
@@ -8808,7 +8925,7 @@ impl<'a> EditorState<'a> {
                                         self.move_sentence_forward();
                                     }
                                     // Operations on selection
-                                    'd' | 'x' => {
+                                    'd' | 'x' | 'X' => {
                                         // Record block dimensions for repeat if in block mode
                                         if self.mode == EditorMode::VisualBlock {
                                             let (start, end) = self.get_visual_selection();
@@ -8830,9 +8947,10 @@ impl<'a> EditorState<'a> {
                                         self.yank_visual_selection();
                                         self.mode = EditorMode::Normal;
                                     }
-                                    'c' => {
+                                    'c' | 's' => {
                                         // Save cursor position, delete without recording
                                         // (record_change called when exiting insert mode)
+                                        // 's' in visual mode is the same as 'c' (substitute)
                                         if self.mode == EditorMode::VisualBlock {
                                             // Track block info for inserting on all lines
                                             let (start, end) = self.get_visual_selection();
@@ -8840,7 +8958,8 @@ impl<'a> EditorState<'a> {
                                             let min_col = self.visual_start.1.min(self.cursor.1);
                                             let max_col = self.visual_start.1.max(self.cursor.1);
                                             let col_width = max_col - min_col + 1;
-                                            self.save_undo_state();
+                                            // Save undo state with top-left of selection
+                                            self.save_undo_state_with_cursor((start.0, min_col));
                                             self.delete_visual_selection_no_undo();
                                             // Store block info for insert with col_width for repeat
                                             self.block_insert_info = Some((
@@ -8854,7 +8973,9 @@ impl<'a> EditorState<'a> {
                                             // Position cursor at insert column
                                             self.cursor = (start.0, min_col);
                                         } else {
-                                            self.save_undo_state();
+                                            // Save undo state with start of selection
+                                            let (start, _) = self.get_visual_selection();
+                                            self.save_undo_state_with_cursor(start);
                                             self.delete_visual_selection_no_undo();
                                             self.mode = EditorMode::Insert;
                                             self.insert_buffer.clear();
@@ -8866,7 +8987,8 @@ impl<'a> EditorState<'a> {
                                             let (start, end) = self.get_visual_selection();
                                             let num_rows = end.0 - start.0 + 1;
                                             let insert_col = self.visual_start.1.min(self.cursor.1);
-                                            self.save_undo_state();
+                                            // Save undo state with top-left of selection
+                                            self.save_undo_state_with_cursor((start.0, insert_col));
                                             // Store block info for insert (no deletion)
                                             self.block_insert_info = Some((
                                                 start.0,
@@ -8890,7 +9012,8 @@ impl<'a> EditorState<'a> {
                                             let insert_col = max_col + 1;
                                             // Calculate offset from left edge of selection
                                             let col_offset = insert_col - min_col;
-                                            self.save_undo_state();
+                                            // Save undo state with top-left of selection
+                                            self.save_undo_state_with_cursor((start.0, min_col));
                                             // Store block info for insert (no deletion)
                                             self.block_insert_info = Some((
                                                 start.0,
@@ -8905,82 +9028,33 @@ impl<'a> EditorState<'a> {
                                         }
                                     }
                                     'D' => {
-                                        // Delete from left edge of block to end of line for all lines
+                                        // In Visual/VisualLine mode, D deletes entire lines (linewise)
+                                        // In VisualBlock mode, delete from left edge to end of line
                                         if self.mode == EditorMode::VisualBlock {
-                                            let (start, end) = self.get_visual_selection();
-                                            let min_col = self.visual_start.1.min(self.cursor.1);
-                                            self.save_undo_state();
-                                            self.lines_version += 1;
-
-                                            // Delete from min_col to end of each line
-                                            let mut yanked_lines = Vec::new();
-                                            for row in start.0..=end.0 {
-                                                let chars: Vec<char> =
-                                                    self.lines[row].chars().collect();
-                                                if min_col < chars.len() {
-                                                    yanked_lines.push(
-                                                        chars[min_col..].iter().collect::<String>(),
-                                                    );
-                                                    self.lines[row] =
-                                                        chars[..min_col].iter().collect();
-                                                } else {
-                                                    yanked_lines.push(String::new());
-                                                }
-                                            }
-                                            self.yank_buffer = yanked_lines.join("\n");
-                                            self.yank_is_linewise = false;
-                                            self.yank_is_block = true;
-
-                                            self.cursor = (start.0, min_col);
-                                            self.clamp_cursor();
-                                            self.record_change();
-                                            self.mode = EditorMode::Normal;
+                                            self.delete_block_to_eol();
+                                        } else {
+                                            self.delete_visual_lines();
                                         }
                                     }
                                     'C' => {
-                                        // Delete from left edge of block to end of line, then insert
+                                        // In Visual/VisualLine mode, C deletes entire lines and enters insert
+                                        // In VisualBlock mode, delete from left edge to end of line, then insert
                                         if self.mode == EditorMode::VisualBlock {
-                                            let (start, end) = self.get_visual_selection();
-                                            let num_rows = end.0 - start.0 + 1;
-                                            let min_col = self.visual_start.1.min(self.cursor.1);
-                                            self.save_undo_state();
-                                            self.lines_version += 1;
-
-                                            // Delete from min_col to end of each line
-                                            let mut yanked_lines = Vec::new();
-                                            for row in start.0..=end.0 {
-                                                let chars: Vec<char> =
-                                                    self.lines[row].chars().collect();
-                                                if min_col < chars.len() {
-                                                    yanked_lines.push(
-                                                        chars[min_col..].iter().collect::<String>(),
-                                                    );
-                                                    self.lines[row] =
-                                                        chars[..min_col].iter().collect();
-                                                } else {
-                                                    yanked_lines.push(String::new());
-                                                }
-                                            }
-                                            self.yank_buffer = yanked_lines.join("\n");
-                                            self.yank_is_linewise = false;
-                                            self.yank_is_block = true;
-
-                                            // Store block info for insert
-                                            self.block_insert_info = Some((
-                                                start.0,
-                                                num_rows,
-                                                min_col,
-                                                BlockInsertType::Insert,
-                                            ));
-                                            self.mode = EditorMode::Insert;
-                                            self.insert_buffer.clear();
-                                            self.cursor = (start.0, min_col);
+                                            self.change_block_to_eol();
+                                        } else {
+                                            self.change_visual_lines();
                                         }
+                                    }
+                                    'S' => {
+                                        // S in visual mode: delete entire lines and enter insert mode
+                                        // This is linewise regardless of current visual mode
+                                        self.change_visual_lines();
                                     }
                                     // Toggle case
                                     '~' => {
                                         let (start, end) = self.get_visual_selection();
-                                        self.save_undo_state();
+                                        // Save undo state with start of selection
+                                        self.save_undo_state_with_cursor(start);
                                         self.lines_version += 1;
                                         if self.mode == EditorMode::VisualLine {
                                             for row in start.0..=end.0 {
@@ -9471,6 +9545,24 @@ mod tests {
             }
             // Lines are different, push new entry
             self.history.push((self.lines.clone(), self.cursor));
+            self.history_idx = self.history.len() - 1;
+            self.history_version = self.lines_version;
+        }
+
+        fn save_undo_state_with_cursor(&mut self, cursor: (usize, usize)) {
+            // Truncate redo history
+            if self.history_idx < self.history.len() - 1 {
+                self.history.truncate(self.history_idx + 1);
+            }
+            // If lines haven't changed since last history push, just update cursor
+            if self.lines_version == self.history_version {
+                if let Some(entry) = self.history.last_mut() {
+                    entry.1 = cursor;
+                }
+                return;
+            }
+            // Lines are different, push new entry with specified cursor
+            self.history.push((self.lines.clone(), cursor));
             self.history_idx = self.history.len() - 1;
             self.history_version = self.lines_version;
         }
@@ -10317,6 +10409,159 @@ mod tests {
 
             self.clamp_cursor();
             self.record_change();
+        }
+
+        // ============ Visual Mode Helper Methods ============
+
+        fn delete_visual_selection(&mut self) {
+            let (start, end) = self.get_visual_selection();
+
+            if self.mode == EditorMode::VisualLine {
+                // Delete entire lines
+                let yanked: Vec<&str> = self.lines[start.0..=end.0]
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                self.yank_buffer = yanked.join("\n");
+                self.yank_is_linewise = true;
+                self.yank_is_block = false;
+
+                self.save_undo_state_with_cursor(start);
+                self.lines_version += 1;
+                for _ in start.0..=end.0 {
+                    if self.lines.len() > 1 {
+                        self.lines.remove(start.0);
+                    } else {
+                        self.lines[0].clear();
+                    }
+                }
+                if self.lines.is_empty() {
+                    self.lines.push(String::new());
+                }
+                self.cursor.0 = start.0.min(self.lines.len().saturating_sub(1));
+                self.cursor.1 = 0;
+            } else {
+                // Character-wise deletion
+                let line = &self.lines[start.0];
+                let chars: Vec<char> = line.chars().collect();
+                let sel_end = (end.1 + 1).min(chars.len());
+                self.yank_buffer = chars[start.1..sel_end].iter().collect();
+                self.yank_is_linewise = false;
+                self.yank_is_block = false;
+
+                self.save_undo_state_with_cursor(start);
+                self.lines_version += 1;
+                let new_line: String = chars[..start.1].iter().chain(&chars[sel_end..]).collect();
+                self.lines[start.0] = new_line;
+                self.cursor = start;
+            }
+            self.clamp_cursor();
+            self.mode = EditorMode::Normal;
+            self.record_change();
+        }
+
+        fn delete_visual_lines(&mut self) {
+            let (start, end) = self.get_visual_selection();
+            self.save_undo_state_with_cursor((start.0, 0));
+            self.lines_version += 1;
+
+            // Yank the lines first
+            let yanked: Vec<String> = self.lines[start.0..=end.0]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            self.yank_buffer = yanked.join("\n");
+            self.yank_is_linewise = true;
+            self.yank_is_block = false;
+
+            // Delete the lines
+            self.lines.drain(start.0..=end.0);
+            if self.lines.is_empty() {
+                self.lines.push(String::new());
+            }
+
+            self.cursor.0 = start.0.min(self.lines.len().saturating_sub(1));
+            self.cursor.1 = 0;
+            self.record_change();
+            self.mode = EditorMode::Normal;
+        }
+
+        fn change_visual_lines(&mut self) {
+            let (start, end) = self.get_visual_selection();
+            self.save_undo_state_with_cursor((start.0, 0));
+            self.lines_version += 1;
+
+            // Yank the lines first
+            let yanked: Vec<String> = self.lines[start.0..=end.0]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            self.yank_buffer = yanked.join("\n");
+            self.yank_is_linewise = true;
+            self.yank_is_block = false;
+
+            // Delete the lines, leave one empty line for insert
+            self.lines.drain(start.0..=end.0);
+            if self.lines.is_empty() {
+                self.lines.push(String::new());
+            } else {
+                self.lines.insert(start.0, String::new());
+            }
+
+            self.cursor = (start.0, 0);
+            self.mode = EditorMode::Insert;
+        }
+
+        fn delete_block_to_eol(&mut self) {
+            let (start, end) = self.get_visual_selection();
+            let min_col = self.visual_start.1.min(self.cursor.1);
+            self.save_undo_state_with_cursor((start.0, min_col));
+            self.lines_version += 1;
+
+            // Delete from min_col to end of each line
+            let mut yanked_lines = Vec::new();
+            for row in start.0..=end.0 {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                if min_col < chars.len() {
+                    yanked_lines.push(chars[min_col..].iter().collect::<String>());
+                    self.lines[row] = chars[..min_col].iter().collect();
+                } else {
+                    yanked_lines.push(String::new());
+                }
+            }
+            self.yank_buffer = yanked_lines.join("\n");
+            self.yank_is_linewise = false;
+            self.yank_is_block = true;
+
+            self.cursor = (start.0, min_col);
+            self.clamp_cursor();
+            self.record_change();
+            self.mode = EditorMode::Normal;
+        }
+
+        fn change_block_to_eol(&mut self) {
+            let (start, end) = self.get_visual_selection();
+            let min_col = self.visual_start.1.min(self.cursor.1);
+            self.save_undo_state_with_cursor((start.0, min_col));
+            self.lines_version += 1;
+
+            // Delete from min_col to end of each line
+            let mut yanked_lines = Vec::new();
+            for row in start.0..=end.0 {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                if min_col < chars.len() {
+                    yanked_lines.push(chars[min_col..].iter().collect::<String>());
+                    self.lines[row] = chars[..min_col].iter().collect();
+                } else {
+                    yanked_lines.push(String::new());
+                }
+            }
+            self.yank_buffer = yanked_lines.join("\n");
+            self.yank_is_linewise = false;
+            self.yank_is_block = true;
+
+            self.cursor = (start.0, min_col);
+            self.mode = EditorMode::Insert;
         }
 
         // ============ Number Manipulation Methods ============
@@ -12454,5 +12699,195 @@ mod tests {
         }
 
         assert_eq!(editor.text(), "testXYZ\ntestXYZ\ntestXYZ");
+    }
+
+    // ============ Visual Mode (non-block) Tests ============
+
+    #[test]
+    fn test_visual_d_deletes_selection() {
+        // Character-wise visual mode: d deletes selected text
+        let mut editor = TestEditor::new("hello world");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 0);
+        editor.cursor = (0, 4); // Select "hello"
+        editor.delete_visual_selection();
+        assert_eq!(editor.text(), " world");
+        assert_eq!(editor.mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn test_visual_line_d_deletes_lines() {
+        // Line-wise visual mode: d deletes entire lines
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.mode = EditorMode::VisualLine;
+        editor.visual_start = (0, 0);
+        editor.cursor = (1, 0); // Select lines 1 and 2
+        editor.delete_visual_selection();
+        assert_eq!(editor.text(), "line3");
+        assert_eq!(editor.mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn test_visual_d_uppercase_deletes_entire_lines() {
+        // D in Visual mode deletes entire lines (linewise behavior)
+        let mut editor = TestEditor::new("hello world\nfoo bar\nbaz qux");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 3);
+        editor.cursor = (1, 2); // Select partial text across two lines
+        editor.delete_visual_lines();
+        // D should delete entire lines 0 and 1, not just the selected text
+        assert_eq!(editor.text(), "baz qux");
+        assert_eq!(editor.mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn test_visual_line_d_uppercase_deletes_lines() {
+        // D in VisualLine mode behaves like d
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4");
+        editor.mode = EditorMode::VisualLine;
+        editor.visual_start = (1, 0);
+        editor.cursor = (2, 0); // Select lines 2 and 3
+        editor.delete_visual_lines();
+        assert_eq!(editor.text(), "line1\nline4");
+        assert_eq!(editor.mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn test_visual_c_uppercase_changes_entire_lines() {
+        // C in Visual mode deletes entire lines and enters insert mode
+        let mut editor = TestEditor::new("hello world\nfoo bar\nbaz qux");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 3);
+        editor.cursor = (1, 2); // Select partial text across two lines
+        editor.change_visual_lines();
+        // C should delete entire lines 0 and 1, leave empty line for insert
+        assert_eq!(editor.text(), "\nbaz qux");
+        assert_eq!(editor.mode, EditorMode::Insert);
+        assert_eq!(editor.cursor, (0, 0));
+    }
+
+    #[test]
+    fn test_visual_s_uppercase_changes_entire_lines() {
+        // S in Visual mode deletes entire lines and enters insert mode (same as C)
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 2);
+        editor.cursor = (1, 3);
+        editor.change_visual_lines();
+        assert_eq!(editor.text(), "\nline3");
+        assert_eq!(editor.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn test_visual_line_s_uppercase_changes_lines() {
+        // S in VisualLine mode
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.mode = EditorMode::VisualLine;
+        editor.visual_start = (0, 0);
+        editor.cursor = (1, 0);
+        editor.change_visual_lines();
+        assert_eq!(editor.text(), "\nline3");
+        assert_eq!(editor.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn test_visual_delete_undo_cursor_position() {
+        // Undo after visual delete should restore cursor to start of selection
+        let mut editor = TestEditor::new("hello world");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 6); // Start at 'w'
+        editor.cursor = (0, 10); // End at 'd' - select "world"
+        editor.delete_visual_selection();
+        assert_eq!(editor.text(), "hello ");
+
+        // Undo should restore text and cursor to start of selection
+        editor.undo();
+        assert_eq!(editor.text(), "hello world");
+        assert_eq!(editor.cursor, (0, 6)); // Cursor at start of selection
+    }
+
+    #[test]
+    fn test_visual_lines_delete_undo_cursor_position() {
+        // Undo after D (linewise delete) should restore cursor to start
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 2);
+        editor.cursor = (1, 3);
+        editor.delete_visual_lines();
+        assert_eq!(editor.text(), "line3");
+
+        editor.undo();
+        assert_eq!(editor.text(), "line1\nline2\nline3");
+        assert_eq!(editor.cursor.0, 0); // Cursor on first line of selection
+    }
+
+    #[test]
+    fn test_visual_lines_change_undo_cursor_position() {
+        // Undo after C (linewise change) should restore cursor to start
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (1, 0);
+        editor.cursor = (2, 0);
+        editor.change_visual_lines();
+        assert_eq!(editor.text(), "line1\n");
+        assert_eq!(editor.mode, EditorMode::Insert);
+
+        // Simulate exiting insert mode (which records the change)
+        editor.mode = EditorMode::Normal;
+        editor.record_change();
+        editor.undo();
+        assert_eq!(editor.text(), "line1\nline2\nline3");
+        assert_eq!(editor.cursor.0, 1); // Cursor on first line of selection
+    }
+
+    #[test]
+    fn test_visual_block_delete_to_eol() {
+        // D in VisualBlock mode deletes from left edge to end of line
+        let mut editor = TestEditor::new("testing1\ntesting2\ntesting3");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 4);
+        editor.cursor = (2, 6);
+        editor.delete_block_to_eol();
+        assert_eq!(editor.text(), "test\ntest\ntest");
+        assert_eq!(editor.mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn test_visual_block_change_to_eol() {
+        // C in VisualBlock mode deletes from left edge to EOL and enters insert
+        let mut editor = TestEditor::new("testing1\ntesting2\ntesting3");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 4);
+        editor.cursor = (2, 6);
+        editor.change_block_to_eol();
+        assert_eq!(editor.text(), "test\ntest\ntest");
+        assert_eq!(editor.mode, EditorMode::Insert);
+        assert_eq!(editor.cursor, (0, 4)); // Cursor at insert position
+    }
+
+    #[test]
+    fn test_visual_yank_buffer_is_linewise_for_d_uppercase() {
+        // D in Visual mode should set yank_is_linewise = true
+        let mut editor = TestEditor::new("line1\nline2\nline3");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 2);
+        editor.cursor = (1, 3);
+        editor.delete_visual_lines();
+        assert!(editor.yank_is_linewise);
+        assert!(!editor.yank_is_block);
+        assert_eq!(editor.yank_buffer, "line1\nline2");
+    }
+
+    #[test]
+    fn test_visual_block_to_eol_yank_is_block() {
+        // D in VisualBlock mode should set yank_is_block = true
+        let mut editor = TestEditor::new("testing1\ntesting2");
+        editor.mode = EditorMode::VisualBlock;
+        editor.visual_start = (0, 4);
+        editor.cursor = (1, 6);
+        editor.delete_block_to_eol();
+        assert!(editor.yank_is_block);
+        assert!(!editor.yank_is_linewise);
+        assert_eq!(editor.yank_buffer, "ing1\ning2");
     }
 }
