@@ -685,6 +685,23 @@ impl<'a> FormState<'a> {
     /// Handle text field specific input. Returns true if handled, false otherwise.
     fn handle_text_field_input(&mut self, event: &InputEvent) -> bool {
         match event {
+            InputEvent::Paste(text) => {
+                // Filter out control characters and newlines for single-line text fields
+                let filtered: String = text
+                    .chars()
+                    .filter(|c| !c.is_control() && *c != '\n' && *c != '\r')
+                    .collect();
+                if !filtered.is_empty() {
+                    let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
+                    let pos = self.field_cursors[self.active_idx];
+                    for (i, c) in filtered.chars().enumerate() {
+                        chars.insert(pos + i, c);
+                    }
+                    self.field_values[self.active_idx] = chars.into_iter().collect();
+                    self.field_cursors[self.active_idx] += filtered.chars().count();
+                }
+                true
+            }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::LeftArrow,
                 ..
