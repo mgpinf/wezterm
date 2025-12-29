@@ -24,6 +24,7 @@ config.keys = {
     action = act.InputText {
       title = 'Edit and Send to Terminal',
       action = wezterm.action_callback(function(window, pane, result)
+        -- result is nil if cancelled with ZQ or Ctrl-C
         if result and result.text ~= '' then
           pane:send_text(result.text)
         end
@@ -37,14 +38,12 @@ The `InputText` struct takes the following fields:
 
 * `title` - (Optional) The title displayed at the top of the editor.
 * `initial_value` - (Optional) The starting content of the editor.
-* `action` - A `wezterm.action_callback` that receives `(window, pane, result)` where:
-    * `window` - The [Window](../window/index.md) object
-    * `pane` - The [Pane](../pane/index.md) object
-    * `result` - A table containing:
-        * `text`: The full text content as a string (lines joined with `\n`)
-
-When the user submits with `ZZ` (Vim-style save and quit), the callback is triggered.
-If the user cancels with `ZQ` or `Ctrl-C`, the callback is not invoked.
+* `action` - an event callback registered via `wezterm.action_callback`. The
+  callback's function signature is `(window, pane, result)` where `window` and
+  `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md)
+  objects from the current pane and window, and `result` is a table containing
+  the `text` field with the full text content as a string (lines joined with `\n`).
+  `result` will be `nil` if the user cancels with `ZQ` or `Ctrl-C`.
 
 ## Modes
 
@@ -66,9 +65,9 @@ The editor supports Vim-style modal editing:
 
 | Key | Action |
 |-----|--------|
-| `ZZ` | Submit the text and trigger callback (Vim-style :wq) |
-| `ZQ` | Quit without submitting (Vim-style :q!) |
-| `Ctrl-C` | Quit without submitting |
+| `ZZ` | Submit the text and trigger callback with `result` (Vim-style :wq) |
+| `ZQ` | Cancel and trigger callback with `nil` (Vim-style :q!) |
+| `Ctrl-C` | Cancel and trigger callback with `nil` |
 | `Escape` | Exit current mode (in Normal mode, does nothing) |
 
 ### Navigation (Normal/Visual modes)
