@@ -13,6 +13,7 @@ pub mod debug;
 pub mod display;
 pub mod editor;
 pub mod form;
+pub mod image_selector;
 pub mod launcher;
 pub mod prompt;
 pub mod quickselect;

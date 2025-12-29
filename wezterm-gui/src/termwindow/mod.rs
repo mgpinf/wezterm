@@ -2301,6 +2301,32 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
+    fn show_image_selector(&mut self, args: &config::keyassignment::ImageSelector) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        // Ignore any current overlay: we're going to cancel it out below
+        // and we don't want this new one to reference that cancelled pane
+        let pane = match self.get_active_pane_no_overlay() {
+            Some(pane) => pane,
+            None => return,
+        };
+
+        let args = args.clone();
+
+        let gui_win = GuiWin::new(self);
+        let pane = MuxPane(pane.pane_id());
+
+        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::image_selector::image_selector(term, args, gui_win, pane)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
     fn show_prompt_input_line(&mut self, args: &PromptInputLine) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
@@ -3293,6 +3319,7 @@ impl TermWindow {
             }
             PromptInputLine(line) => self.show_prompt_input_line(line),
             InputSelector(selector) => self.show_input_selector(selector),
+            ImageSelector(selector) => self.show_image_selector(selector),
             InputForm(form) => self.show_input_form(form),
             InputText(text) => self.show_input_text(text),
             Confirmation(conf) => self.show_confirmation(conf),

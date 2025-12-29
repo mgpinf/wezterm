@@ -823,6 +823,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: None,
         },
+        ImageSelector(_) => CommandDef {
+            brief: "Select an image from a list with preview".into(),
+            doc: "Activates the image selector overlay with preview pane".into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &[],
+            icon: Some("md_image"),
+        },
         InputForm(_) => CommandDef {
             brief: "Prompt the user to fill out a form".into(),
             doc: "Activates the form overlay and wait for input".into(),

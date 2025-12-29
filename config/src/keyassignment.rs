@@ -756,6 +756,36 @@ pub struct DisplayText {
     pub text: String,
 }
 
+/// An entry for the ImageSelector overlay
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct ImageSelectorEntry {
+    /// Display label for the image (defaults to filename if not specified)
+    #[dynamic(default)]
+    pub label: Option<String>,
+    /// Path to the image file
+    pub path: String,
+}
+
+/// Configuration for the ImageSelector overlay
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct ImageSelector {
+    /// Callback action when an image is selected
+    pub action: Box<KeyAssignment>,
+    /// Title for the overlay
+    #[dynamic(default)]
+    pub title: String,
+    /// List of image choices
+    pub choices: Vec<ImageSelectorEntry>,
+    /// Whether to start in fuzzy finding mode
+    #[dynamic(default)]
+    pub fuzzy: bool,
+    /// Description shown in the overlay (required)
+    pub description: String,
+    /// Description shown in fuzzy mode (falls back to description if not provided)
+    #[dynamic(default)]
+    pub fuzzy_description: Option<String>,
+}
+
 /// A choice option for selector fields in InputForm
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct FormFieldChoice {
@@ -916,6 +946,7 @@ pub enum KeyAssignment {
     ActivateWindowRelativeNoWrap(isize),
     PromptInputLine(PromptInputLine),
     InputSelector(InputSelector),
+    ImageSelector(ImageSelector),
     InputForm(InputForm),
     InputText(InputText),
     Confirmation(Confirmation),
