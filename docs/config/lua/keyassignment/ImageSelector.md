@@ -43,9 +43,9 @@ palette colors in your configuration:
 
 ```lua
 config.colors = {
-  image_selector_description_fg = "#89b4fa",
-  image_selector_error_fg = "#f38ba8",
-  image_selector_separator_fg = "#6c7086",
+  image_selector_description_fg = '#89b4fa',
+  image_selector_error_fg = '#f38ba8',
+  image_selector_separator_fg = '#6c7086',
 }
 ```
 
@@ -82,33 +82,22 @@ terminal background:
 local wezterm = require 'wezterm'
 local config = wezterm.config_builder()
 
-local function find_images(directory)
-  local images = {}
-  local patterns = {
-    '**/*.png',
-    '**/*.jpg',
-    '**/*.jpeg',
-    '**/*.gif',
-    '**/*.webp',
-  }
-
-  for _, pattern in ipairs(patterns) do
-    local matches = wezterm.glob(directory .. '/' .. pattern)
-    for _, path in ipairs(matches) do
-      table.insert(images, { path = path })
-    end
-  end
-
-  return images
-end
-
 config.keys = {
   {
     key = 'B',
     mods = 'CTRL|SHIFT',
     action = wezterm.action_callback(function(window, pane)
       local images_dir = wezterm.home_dir .. '/Pictures/Wallpapers'
-      local choices = find_images(images_dir)
+
+      -- Use find_files for efficient recursive search
+      local files = wezterm.find_files(images_dir, {
+        extensions = { 'png', 'jpg', 'jpeg', 'gif', 'webp' },
+      })
+
+      local choices = {}
+      for _, path in ipairs(files) do
+        table.insert(choices, { path = path })
+      end
 
       if #choices == 0 then
         wezterm.log_warn('No images found in ' .. images_dir)
@@ -117,17 +106,19 @@ config.keys = {
 
       window:perform_action(
         wezterm.action.ImageSelector {
-          action = wezterm.action_callback(function(window, pane, label, path)
-            if path then
-              window:set_config_overrides {
-                window_background_image = path,
-                window_background_image_hsb = {
-                  brightness = 0.1,
-                  saturation = 0.5,
-                },
-              }
+          action = wezterm.action_callback(
+            function(window, pane, label, path)
+              if path then
+                window:set_config_overrides {
+                  window_background_image = path,
+                  window_background_image_hsb = {
+                    brightness = 0.1,
+                    saturation = 0.5,
+                  },
+                }
+              end
             end
-          end),
+          ),
           title = 'Select Background',
           description = 'Choose a wallpaper',
           fuzzy_description = 'Search wallpapers',

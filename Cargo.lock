@@ -1735,6 +1735,7 @@ dependencies = [
  "filenamegen",
  "luahelper",
  "smol",
+ "wezterm-dynamic",
 ]
 
 [[package]]

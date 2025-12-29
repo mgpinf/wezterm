@@ -12,3 +12,4 @@ config.workspace = true
 filenamegen.workspace = true
 luahelper.workspace = true
 smol.workspace = true
+wezterm-dynamic.workspace = true
