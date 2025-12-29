@@ -1520,6 +1520,35 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Scroll half page down (Ctrl-D)
+    /// Both viewport and cursor move down by half a page
+    fn scroll_half_page_down(&mut self, count: usize) {
+        let (_cols, rows) = self.buf.dimensions();
+        let content_start_row = if self.args.title.is_some() { 1 } else { 0 };
+        let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
+        let half_page = (content_rows / 2).max(1) * count;
+
+        let max_viewport = self.lines.len().saturating_sub(1);
+        self.viewport_top = (self.viewport_top + half_page).min(max_viewport);
+        self.cursor.0 = (self.cursor.0 + half_page).min(self.lines.len().saturating_sub(1));
+        self.clamp_cursor();
+        self.update_desired_col();
+    }
+
+    /// Scroll half page up (Ctrl-U)
+    /// Both viewport and cursor move up by half a page
+    fn scroll_half_page_up(&mut self, count: usize) {
+        let (_cols, rows) = self.buf.dimensions();
+        let content_start_row = if self.args.title.is_some() { 1 } else { 0 };
+        let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
+        let half_page = (content_rows / 2).max(1) * count;
+
+        self.viewport_top = self.viewport_top.saturating_sub(half_page);
+        self.cursor.0 = self.cursor.0.saturating_sub(half_page);
+        self.clamp_cursor();
+        self.update_desired_col();
+    }
+
     fn get_line_start_pos(&self) -> (usize, usize) {
         (self.cursor.0, 0)
     }
@@ -6810,6 +6839,20 @@ impl<'a> EditorState<'a> {
                         self.scroll_up(count);
                     }
                     InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('D'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        let count = self.take_count();
+                        self.scroll_half_page_down(count);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('U'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        let count = self.take_count();
+                        self.scroll_half_page_up(count);
+                    }
+                    InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('V'),
                         modifiers: Modifiers::CTRL,
                     }) => {
@@ -8568,6 +8611,20 @@ impl<'a> EditorState<'a> {
                             } else {
                                 self.mode = EditorMode::VisualBlock;
                             }
+                        }
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('D'),
+                            modifiers: Modifiers::CTRL,
+                        }) => {
+                            let count = self.take_count();
+                            self.scroll_half_page_down(count);
+                        }
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('U'),
+                            modifiers: Modifiers::CTRL,
+                        }) => {
+                            let count = self.take_count();
+                            self.scroll_half_page_up(count);
                         }
                         InputEvent::Key(KeyEvent {
                             key: KeyCode::Char(c),
