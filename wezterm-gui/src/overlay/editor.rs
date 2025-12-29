@@ -33,7 +33,6 @@ struct EditorColors {
     search_match_fg: ColorAttribute,
     search_current_match_bg: ColorAttribute,
     search_current_match_fg: ColorAttribute,
-    // Mode text strings
     normal_mode_text: String,
     insert_mode_text: String,
     replace_mode_text: String,
@@ -142,7 +141,6 @@ impl EditorColors {
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::White.into()), |c| {
                     ColorAttribute::TrueColorWithDefaultFallback(c.into())
                 }),
-            // Search match colors (yellow bg for matches, navy for current)
             search_match_fg: colors
                 .input_text_search_match_fg
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Black.into()), |c| {
@@ -162,7 +160,6 @@ impl EditorColors {
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Navy.into()), |c| {
                     c.into()
                 }),
-            // Mode text strings
             normal_mode_text: config.input_text_normal_mode_text.clone(),
             insert_mode_text: config.input_text_insert_mode_text.clone(),
             replace_mode_text: config.input_text_replace_mode_text.clone(),
@@ -178,11 +175,11 @@ impl EditorColors {
 enum EditorMode {
     Normal,
     Insert,
-    Replace, // Replace mode (R) - overwrite characters
+    Replace,
     Search,
-    Visual,      // Character-wise visual selection (v)
-    VisualLine,  // Line-wise visual selection (V)
-    VisualBlock, // Block-wise visual selection (Ctrl-V)
+    Visual,
+    VisualLine,
+    VisualBlock,
 }
 
 /// Direction for search and motion operations
@@ -213,119 +210,99 @@ enum WordType {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum InsertStyle {
-    Before,       // i - insert before cursor
-    After,        // a - insert after cursor
-    LineStart,    // I - insert at first non-blank of line
-    LineEnd,      // A - insert at end of line
-    NewLineBelow, // o - open new line below
-    NewLineAbove, // O - open new line above
+    Before,
+    After,
+    LineStart,
+    LineEnd,
+    NewLineBelow,
+    NewLineAbove,
 }
 
-/// Type of character search motion
+/// Inclusive (f/F) lands on character, exclusive (t/T) lands before/after
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum CharSearchType {
-    /// f/F - find character (inclusive, lands on the character)
     Find,
-    /// t/T - to/till character (exclusive, lands before/after the character)
     To,
 }
 
-/// Kind of text object selection (inner vs around)
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum TextObjectKind {
-    Inner,  // i - inside, excludes delimiters/whitespace
-    Around, // a - around, includes delimiters/whitespace
+    Inner,
+    Around,
 }
 
-/// Screen position for H/M/L commands
 #[derive(Clone, Copy, Debug)]
 enum ScreenPosition {
-    Top(usize),    // H - Nth line from top (1-based)
-    Middle,        // M - middle of screen
-    Bottom(usize), // L - Nth line from bottom (1-based)
+    Top(usize),
+    Middle,
+    Bottom(usize),
 }
 
-/// Text object for inner/around operations (i{obj} / a{obj})
 #[derive(Clone, Debug)]
 enum TextObject {
-    Word(WordType), // iw, iW, aw, aW
-    Pair(char),     // i(, i{, a(, a{ etc.
-    Paragraph,      // ip, ap
-    Sentence,       // is, as
+    Word(WordType),
+    Pair(char),
+    Paragraph,
+    Sentence,
 }
 
-/// Target of a delete or change operation
 #[derive(Clone, Debug)]
 enum EditTarget {
-    Char,                                    // x / s
-    CharBackward,                            // X - delete char before cursor
-    Line,                                    // dd / cc (S)
-    WordStart(WordType, Direction),          // dw, dW, db, dB / cw, cW, cb, cB
-    WordEnd(WordType, Direction),            // de, dE, dge, dgE / ce, cE, cge, cgE
-    ToEndOfLine,                             // D / C
-    Inner(TextObject),                       // di{obj} / ci{obj}
-    Around(TextObject),                      // da{obj} / ca{obj}
-    ToChar(char, CharSearchType, Direction), // df{char}, dt{char}, etc. / cf{char}, ct{char}, etc.
+    Char,
+    CharBackward,
+    Line,
+    WordStart(WordType, Direction),
+    WordEnd(WordType, Direction),
+    ToEndOfLine,
+    Inner(TextObject),
+    Around(TextObject),
+    ToChar(char, CharSearchType, Direction),
 }
 
 #[derive(Clone, Debug)]
 enum LastChange {
     None,
-    Delete(EditTarget), // d{motion} - delete without entering insert mode
-    Change(EditTarget), // c{motion} - delete and enter insert mode
-    InsertText(String, InsertStyle), // Text inserted in insert mode
-    ToggleCase,         // ~
-    JoinLines,          // J
-    ReplaceChar(char),  // r{char}
-    ReplaceMode(String), // R - text entered in replace mode
-    IncrementNumber,    // Ctrl-A
-    DecrementNumber,    // Ctrl-X
-    PasteAfter,         // p
-    PasteBefore,        // P
-    /// Visual block delete: (num_rows, col_width) - for repeating with .
+    Delete(EditTarget),
+    Change(EditTarget),
+    InsertText(String, InsertStyle),
+    ToggleCase,
+    JoinLines,
+    ReplaceChar(char),
+    ReplaceMode(String),
+    IncrementNumber,
+    DecrementNumber,
+    PasteAfter,
+    PasteBefore,
+    /// (num_rows, col_width)
     DeleteBlock(usize, usize),
-    /// Visual block change: (num_rows, col_width, text) - delete block and insert text on all lines
+    /// (num_rows, col_width, text)
     ChangeBlock(usize, usize, String),
-    /// Visual block insert (I): (num_rows, text) - insert at cursor column on all lines
+    /// (num_rows, text)
     InsertBlock(usize, String),
-    /// Visual block append (A): (num_rows, col_offset, text) - append at cursor + offset on all lines
+    /// (num_rows, col_offset, text)
     AppendBlock(usize, usize, String),
 }
 
-/// Type of block insert operation for tracking when exiting insert mode
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum BlockInsertType {
-    Change(usize), // col_width of deleted block
-    Insert,        // I command
-    Append(usize), // A command with col_offset from left edge of selection
+    Change(usize),
+    Insert,
+    Append(usize),
 }
 
-/// Information about a number found at cursor position
 struct NumberAtCursor {
-    /// Start column (includes negative sign if present)
     start: usize,
-    /// End column (exclusive)
     end: usize,
-    /// The digits of the number (without prefix or sign)
     digits: String,
-    /// Whether this is a hexadecimal number
     is_hex: bool,
-    /// Whether the number is negative
     is_negative: bool,
 }
 
-/// Width of the line number gutter (2 padding + 3 digits + 1 space)
 const GUTTER_WIDTH: usize = 6;
-/// Empty gutter string for wrapped line continuations
 const EMPTY_GUTTER: &str = "      ";
-/// Indicator when line continues from above (smooth scroll)
 const LINE_CONTINUES_ABOVE: &str = "  <<< ";
-/// Rows reserved at bottom for status bar and command line
 const RESERVED_ROWS: usize = 2;
-/// Right padding for pending keys display
 const PENDING_KEYS_PADDING: usize = 11;
-
-/// Fixed width for position display from right edge
 const POSITION_WIDTH: usize = 18;
 
 struct EditorState<'a> {
@@ -333,10 +310,10 @@ struct EditorState<'a> {
     window: GuiWin,
     pane: MuxPane,
     lines: Vec<String>,
-    lines_version: u64,     // Increments on any line modification
-    history_version: u64,   // Version when last pushed to history
-    cursor: (usize, usize), // row, col
-    desired_col: usize,     // Desired column for vertical movement (Vim behavior)
+    lines_version: u64,
+    history_version: u64,
+    cursor: (usize, usize),
+    desired_col: usize,
     mode: EditorMode,
     colors: EditorColors,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
@@ -344,29 +321,29 @@ struct EditorState<'a> {
     history_idx: usize,
     viewport_top: usize,
     pending_keys: Vec<KeyCode>,
-    pending_operator: Option<char>, // 'd', 'c', 'y'
-    count_prefix: Option<usize>,    // Numeric prefix for commands (e.g., 5j, 3dd)
+    pending_operator: Option<char>,
+    count_prefix: Option<usize>,
     last_change: LastChange,
-    last_count: usize,         // Count used with last change (for . repeat)
-    insert_buffer: String,     // Buffer to track text inserted in insert mode
-    insert_style: InsertStyle, // Style of insert (i, a, I, A)
-    /// Block insert info: (start_row, num_rows, insert_col, type) for visual block change/insert/append
+    last_count: usize,
+    insert_buffer: String,
+    insert_style: InsertStyle,
+    /// (start_row, num_rows, insert_col, type)
     block_insert_info: Option<(usize, usize, usize, BlockInsertType)>,
-    last_char_search: Option<(char, char)>, // (search_type: f/F/t/T, character)
-    yank_buffer: String,                    // Buffer to store yanked text
-    yank_is_linewise: bool,                 // Whether the yank was linewise (yy, dG, etc.)
-    yank_is_block: bool,                    // Whether the yank was from visual block mode
-    search_pattern: String,                 // Current search pattern
-    search_direction: Direction,            // Original search direction (/ or ?)
-    search_display_direction: Direction,    // Direction to display in status bar (updated by n/N)
-    search_input: String,                   // Input buffer for search mode
-    search_highlight: bool,                 // Whether to highlight search matches
-    current_match: Option<(usize, usize)>,  // Current match position (row, col)
-    search_start_pos: (usize, usize), // Cursor position when search started (for incremental search)
-    search_saved_pattern: String,     // Previous search pattern (restored on Escape)
-    visual_start: (usize, usize),     // Anchor point for visual selection (row, col)
-    replace_originals: Vec<Option<char>>, // Original chars for backspace in Replace mode
-    replace_start_pos: (usize, usize), // Cursor position when Replace mode started
+    last_char_search: Option<(char, char)>,
+    yank_buffer: String,
+    yank_is_linewise: bool,
+    yank_is_block: bool,
+    search_pattern: String,
+    search_direction: Direction,
+    search_display_direction: Direction,
+    search_input: String,
+    search_highlight: bool,
+    current_match: Option<(usize, usize)>,
+    search_start_pos: (usize, usize),
+    search_saved_pattern: String,
+    visual_start: (usize, usize),
+    replace_originals: Vec<Option<char>>,
+    replace_start_pos: (usize, usize),
 }
 
 impl<'a> EditorState<'a> {
@@ -425,24 +402,20 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Get the count prefix (defaults to 1) and reset it
     fn take_count(&mut self) -> usize {
         self.count_prefix.take().unwrap_or(1)
     }
 
-    /// Add a digit to the count prefix
     fn add_count_digit(&mut self, digit: char) {
         let d = digit.to_digit(10).unwrap_or(0) as usize;
         self.count_prefix = Some(self.count_prefix.unwrap_or(0) * 10 + d);
     }
 
-    /// Set the last change and count for repeat (.) command
     fn set_last_change(&mut self, change: LastChange, count: usize) {
         self.last_change = change;
         self.last_count = count;
     }
 
-    /// Calculate how many visual rows a line takes when wrapped
     fn wrapped_line_rows(char_count: usize, content_width: usize) -> usize {
         if content_width == 0 || char_count == 0 {
             1
@@ -451,8 +424,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Get the visual row offset and column within that row for a cursor position
-    /// Returns (visual_row_offset, column_in_visual_row)
     fn cursor_visual_position(cursor_col: usize, content_width: usize) -> (usize, usize) {
         if content_width == 0 {
             (0, cursor_col)
@@ -461,12 +432,10 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Check if mode allows cursor at end of line (Insert or Replace mode)
     fn is_insert_like_mode(&self) -> bool {
         self.mode == EditorMode::Insert || self.mode == EditorMode::Replace
     }
 
-    /// Replace character at cursor position, returns the original character if one existed
     fn replace_char_at_cursor(&mut self, c: char) -> Option<char> {
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
@@ -479,13 +448,11 @@ impl<'a> EditorState<'a> {
             self.lines_version += 1;
             Some(original)
         } else {
-            // At end of line - insert instead
             self.insert_char(c);
             None
         }
     }
 
-    /// Restore character at cursor position (for Replace mode backspace)
     fn restore_char_at_cursor(&mut self, orig_char: char) {
         let line = &self.lines[self.cursor.0];
         let mut chars: Vec<char> = line.chars().collect();
@@ -497,11 +464,9 @@ impl<'a> EditorState<'a> {
     }
 
     fn record_change(&mut self) {
-        // Truncate redo history
         if self.history_idx < self.history.len() - 1 {
             self.history.truncate(self.history_idx + 1);
         }
-        // Push a new entry when lines are modified (O(1) version check)
         if self.lines_version != self.history_version {
             self.history.push((self.lines.clone(), self.cursor));
             self.history_idx = self.history.len() - 1;
@@ -509,37 +474,28 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Record change only if not in Insert/Replace mode.
-    /// For change operations (c, s, C, S, etc.), we defer recording until exiting insert mode.
+    /// Defers recording until exiting insert mode for change operations
     fn maybe_record_change(&mut self) {
         if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
 
-    /// Save current state before making changes (for undo to restore to)
     fn save_undo_state(&mut self) {
         self.save_undo_state_with_cursor(self.cursor);
     }
 
-    /// Save undo state with a specific cursor position.
-    /// Used when undo should restore cursor to a different position than current
-    /// (e.g., visual block operations restore to top-left of selection).
     fn save_undo_state_with_cursor(&mut self, cursor: (usize, usize)) {
-        // Truncate redo history
         if self.history_idx < self.history.len() - 1 {
             self.history.truncate(self.history_idx + 1);
         }
-        // If lines haven't changed since last history push, just update cursor position
-        // (cursor movements alone don't create new undo points)
-        // O(1) comparison using version numbers instead of O(n) content comparison
+        // Cursor movements alone don't create new undo points
         if self.lines_version == self.history_version {
             if let Some(entry) = self.history.last_mut() {
                 entry.1 = cursor;
             }
             return;
         }
-        // Lines are different, push new entry
         self.history.push((self.lines.clone(), cursor));
         self.history_idx = self.history.len() - 1;
         self.history_version = self.lines_version;
@@ -556,14 +512,11 @@ impl<'a> EditorState<'a> {
 
     fn redo(&mut self) {
         if self.history_idx < self.history.len() - 1 {
-            // Save cursor from current entry (where change started) - Vim behavior
             let cursor_at_change_start = self.history[self.history_idx].1;
             self.history_idx += 1;
             let (lines, _) = &self.history[self.history_idx];
             self.lines = lines.clone();
-            // Use cursor from previous entry (start of change), not destination entry
             self.cursor = cursor_at_change_start;
-            // Clamp cursor to valid position in case change start is past end of line
             self.clamp_cursor();
         }
     }
@@ -580,28 +533,23 @@ impl<'a> EditorState<'a> {
         };
 
         if col != 0 {
-            // Horizontal movement - update desired_col to actual position
             let new_col = (self.cursor.1 as isize + col).max(0).min(max_col as isize) as usize;
             self.cursor = (new_row, new_col);
             self.desired_col = new_col;
         } else {
-            // Vertical movement - try to reach desired_col
             let new_col = self.desired_col.min(max_col);
             self.cursor = (new_row, new_col);
         }
     }
 
-    /// Update desired_col to current cursor position (call after explicit column changes)
     fn update_desired_col(&mut self) {
         self.desired_col = self.cursor.1;
     }
 
     fn clamp_cursor(&mut self) {
-        // Clamp row first
         if self.cursor.0 >= self.lines.len() {
             self.cursor.0 = self.lines.len().saturating_sub(1);
         }
-        // Then clamp column
         let line_len = self.lines[self.cursor.0].chars().count();
         let max_col = if self.is_insert_like_mode() {
             line_len
@@ -615,13 +563,11 @@ impl<'a> EditorState<'a> {
 
     fn insert_char(&mut self, c: char) {
         self.insert_char_no_undo(c);
-        // Only record change if not in insert/replace mode (batch changes)
         if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
 
-    /// Insert character without recording undo state (for use in batch operations like paste)
     fn insert_char_no_undo(&mut self, c: char) {
         let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 >= chars.len() {
@@ -636,17 +582,14 @@ impl<'a> EditorState<'a> {
 
     fn delete_char(&mut self) {
         self.delete_char_no_undo();
-        // Only record change if not in insert/replace mode (batch changes)
         if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
 
-    /// Delete character without recording undo state (for use in counted operations)
     fn delete_char_no_undo(&mut self) {
         let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if !chars.is_empty() && self.cursor.1 < chars.len() {
-            // Store deleted char in yank buffer
             self.yank_buffer = chars[self.cursor.1].to_string();
             self.yank_is_linewise = false;
             chars.remove(self.cursor.1);
@@ -659,13 +602,11 @@ impl<'a> EditorState<'a> {
 
     fn insert_newline(&mut self) {
         self.insert_newline_no_undo();
-        // Only record change if not in insert/replace mode (batch changes)
         if !self.is_insert_like_mode() {
             self.record_change();
         }
     }
 
-    /// Insert newline without recording undo state (for use in batch operations like paste)
     fn insert_newline_no_undo(&mut self) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         let (before, after): (String, String) = if self.cursor.1 < chars.len() {
@@ -683,14 +624,11 @@ impl<'a> EditorState<'a> {
         self.lines_version += 1;
     }
 
-    /// Insert text at cursor position, handling newlines properly.
-    /// Does not record undo states - caller should handle undo before/after.
     fn insert_text(&mut self, text: &str) {
         for c in text.chars() {
             if c == '\n' {
                 self.insert_newline_no_undo();
             } else if c == '\r' {
-                // Skip carriage returns (handle \r\n as just \n)
                 continue;
             } else {
                 self.insert_char_no_undo(c);
@@ -702,17 +640,13 @@ impl<'a> EditorState<'a> {
         self.delete_lines(1);
     }
 
-    /// Delete `count` lines starting from cursor
     fn delete_lines(&mut self, count: usize) {
-        // Save state before deletion for undo (preserves cursor position)
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Calculate actual lines to delete (don't exceed available lines)
         let end_row = (self.cursor.0 + count).min(self.lines.len());
         let actual_count = end_row - self.cursor.0;
 
-        // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[self.cursor.0..end_row]
             .iter()
             .map(|s| s.as_str())
@@ -731,7 +665,6 @@ impl<'a> EditorState<'a> {
             self.update_desired_col();
             self.record_change();
         } else {
-            // Deleting all lines - leave one empty line
             self.lines.clear();
             self.lines.push(String::new());
             self.cursor = (0, 0);
@@ -741,9 +674,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_to_end_of_file(&mut self) {
-        // Delete from current line to end of file (linewise)
         self.save_undo_state();
-        // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[self.cursor.0..]
             .iter()
             .map(|s| s.as_str())
@@ -758,16 +689,13 @@ impl<'a> EditorState<'a> {
             self.lines.remove(self.cursor.0);
             self.cursor.0 -= 1;
         }
-        // Preserve column position, clamp if line is shorter
         self.clamp_cursor();
         self.update_desired_col();
         self.record_change();
     }
 
     fn delete_to_start_of_file(&mut self) {
-        // Delete from start of file to current line (linewise)
         self.save_undo_state();
-        // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[..=self.cursor.0]
             .iter()
             .map(|s| s.as_str())
@@ -783,23 +711,19 @@ impl<'a> EditorState<'a> {
             self.lines.push(String::new());
         }
         self.cursor.0 = 0;
-        // Preserve column position, clamp if line is shorter
         self.clamp_cursor();
         self.update_desired_col();
         self.record_change();
     }
 
     fn delete_line_and_below(&mut self) {
-        // Delete current line and line below (dj) - linewise
         if self.cursor.0 >= self.lines.len() - 1 {
-            // No line below, just delete current line
             self.delete_line();
             return;
         }
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Store deleted lines in yank buffer
         let end_row = (self.cursor.0 + 1).min(self.lines.len() - 1);
         let yanked: Vec<&str> = self.lines[self.cursor.0..=end_row]
             .iter()
@@ -808,18 +732,15 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        // Remove the two lines
         self.lines.remove(self.cursor.0);
         if self.cursor.0 < self.lines.len() {
             self.lines.remove(self.cursor.0);
         }
 
-        // Ensure at least one line exists
         if self.lines.is_empty() {
             self.lines.push(String::new());
         }
 
-        // Clamp cursor
         if self.cursor.0 >= self.lines.len() {
             self.cursor.0 = self.lines.len() - 1;
         }
@@ -829,16 +750,13 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_line_and_above(&mut self) {
-        // Delete current line and line above (dk) - linewise
         if self.cursor.0 == 0 {
-            // No line above, just delete current line
             self.delete_line();
             return;
         }
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Store deleted lines in yank buffer
         let start_row = self.cursor.0 - 1;
         let yanked: Vec<&str> = self.lines[start_row..=self.cursor.0]
             .iter()
@@ -847,16 +765,13 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        // Remove the two lines (remove upper first, then current which is now at start_row)
         self.lines.remove(start_row);
         self.lines.remove(start_row);
 
-        // Ensure at least one line exists
         if self.lines.is_empty() {
             self.lines.push(String::new());
         }
 
-        // Move cursor up
         self.cursor.0 = start_row.min(self.lines.len() - 1);
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         self.update_desired_col();
@@ -864,16 +779,13 @@ impl<'a> EditorState<'a> {
     }
 
     fn change_line_and_below(&mut self) {
-        // Change current line and line below (cj) - linewise, enter insert mode
         if self.cursor.0 >= self.lines.len() - 1 {
-            // No line below, just substitute current line
             self.substitute_line();
             return;
         }
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Store deleted lines in yank buffer
         let end_row = (self.cursor.0 + 1).min(self.lines.len() - 1);
         let yanked: Vec<&str> = self.lines[self.cursor.0..=end_row]
             .iter()
@@ -882,13 +794,11 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        // Remove the two lines
         self.lines.remove(self.cursor.0);
         if self.cursor.0 < self.lines.len() {
             self.lines.remove(self.cursor.0);
         }
 
-        // Insert blank line for typing
         self.lines.insert(self.cursor.0, String::new());
         self.cursor.1 = 0;
         self.update_desired_col();
@@ -897,16 +807,13 @@ impl<'a> EditorState<'a> {
     }
 
     fn change_line_and_above(&mut self) {
-        // Change current line and line above (ck) - linewise, enter insert mode
         if self.cursor.0 == 0 {
-            // No line above, just substitute current line
             self.substitute_line();
             return;
         }
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Store deleted lines in yank buffer
         let start_row = self.cursor.0 - 1;
         let yanked: Vec<&str> = self.lines[start_row..=self.cursor.0]
             .iter()
@@ -915,11 +822,9 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        // Remove the two lines
         self.lines.remove(start_row);
         self.lines.remove(start_row);
 
-        // Insert blank line for typing at start_row
         self.lines.insert(start_row, String::new());
         self.cursor.0 = start_row;
         self.cursor.1 = 0;
@@ -929,13 +834,11 @@ impl<'a> EditorState<'a> {
     }
 
     fn change_to_start_of_file(&mut self) {
-        // Delete from start of file to current line, insert blank line for typing
         self.save_undo_state();
         self.lines_version += 1;
         for _ in 0..=self.cursor.0 {
             self.lines.remove(0);
         }
-        // Insert blank line at the top for typing
         self.lines.insert(0, String::new());
         self.cursor.0 = 0;
         self.cursor.1 = 0;
@@ -944,7 +847,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn change_to_end_of_file(&mut self) {
-        // Delete from current line to end, leave blank line for typing
         self.save_undo_state();
         self.lines_version += 1;
         self.lines.truncate(self.cursor.0);
@@ -955,7 +857,6 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    /// Yank `count` lines starting from cursor (yy with count)
     fn yank_lines(&mut self, count: usize) {
         let end_row = (self.cursor.0 + count).min(self.lines.len());
         let yanked: Vec<&str> = self.lines[self.cursor.0..end_row]
@@ -967,7 +868,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_to_end_of_file(&mut self) {
-        // Yank from current line to end of file (linewise)
         let yanked: Vec<&str> = self.lines[self.cursor.0..]
             .iter()
             .map(|s| s.as_str())
@@ -977,21 +877,18 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_to_start_of_file(&mut self) {
-        // Yank from start of file to current line (linewise)
         let yanked: Vec<&str> = self.lines[..=self.cursor.0]
             .iter()
             .map(|s| s.as_str())
             .collect();
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
-        // Move cursor to first line, maintaining column (like Neovim)
         self.cursor.0 = 0;
         self.clamp_cursor();
         self.update_desired_col();
     }
 
     fn yank_to_end_of_line(&mut self) {
-        // Yank from cursor to end of line (characterwise)
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 < chars.len() {
             self.yank_buffer = chars[self.cursor.1..].iter().collect();
@@ -1002,7 +899,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_line_and_below(&mut self) {
-        // Yank current line and line below (yj) - linewise
         let end_row = (self.cursor.0 + 1).min(self.lines.len() - 1);
         let yanked: Vec<&str> = self.lines[self.cursor.0..=end_row]
             .iter()
@@ -1013,7 +909,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_line_and_above(&mut self) {
-        // Yank current line and line above (yk) - linewise
         let start_row = if self.cursor.0 > 0 {
             self.cursor.0 - 1
         } else {
@@ -1025,7 +920,6 @@ impl<'a> EditorState<'a> {
             .collect();
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
-        // Move cursor to upper line (like Neovim)
         if self.cursor.0 > 0 {
             self.cursor.0 -= 1;
             self.clamp_cursor();
@@ -1050,7 +944,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Get position of next word/WORD (w/W motion)
     fn get_word_forward_pos(&self, word_type: WordType) -> (usize, usize) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 >= chars.len() {
@@ -1066,12 +959,10 @@ impl<'a> EditorState<'a> {
         match word_type {
             WordType::Word => {
                 if start_char.is_whitespace() {
-                    // Starting on whitespace: skip whitespace to find start of next word
                     while idx < chars.len() && chars[idx].is_whitespace() {
                         idx += 1;
                     }
                 } else if start_char.is_ascii_punctuation() {
-                    // Starting on punctuation: skip punctuation, then skip whitespace
                     while idx < chars.len() && chars[idx].is_ascii_punctuation() {
                         idx += 1;
                     }
@@ -1079,7 +970,6 @@ impl<'a> EditorState<'a> {
                         idx += 1;
                     }
                 } else {
-                    // Starting on word: skip word, then skip whitespace
                     while idx < chars.len()
                         && !chars[idx].is_whitespace()
                         && !chars[idx].is_ascii_punctuation()
@@ -1092,7 +982,6 @@ impl<'a> EditorState<'a> {
                 }
             }
             WordType::LongWord => {
-                // Skip current non-whitespace, then skip whitespace
                 while idx < chars.len() && chars[idx].is_whitespace() {
                     idx += 1;
                 }
@@ -1122,9 +1011,7 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
     }
 
-    /// Get position of previous word/WORD start (b/B motion)
     fn get_word_backward_pos(&self, word_type: WordType) -> (usize, usize) {
-        // Helper to check if char is same type as reference char
         let is_same_type = |c: char, ref_c: char, wt: WordType| -> bool {
             match wt {
                 WordType::LongWord => !c.is_whitespace(),
@@ -1138,16 +1025,13 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        // Helper to find start of word on a line, given starting index
         let find_word_start = |chars: &[char], mut idx: usize, wt: WordType| -> usize {
-            // Skip trailing whitespace
             while idx > 0 && chars[idx].is_whitespace() {
                 idx -= 1;
             }
             if idx == 0 {
                 return 0;
             }
-            // Find start of word
             let ref_char = chars[idx];
             while idx > 0 {
                 let prev = idx - 1;
@@ -1177,7 +1061,6 @@ impl<'a> EditorState<'a> {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         let mut idx = self.cursor.1 - 1;
 
-        // Skip whitespace
         while idx > 0 && chars[idx].is_whitespace() {
             idx -= 1;
         }
@@ -1205,9 +1088,7 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
     }
 
-    /// Get position of word/WORD end (e/E motion)
     fn get_word_end_pos(&self, word_type: WordType) -> (usize, usize) {
-        // Helper to check if next char is same type as current
         let is_same_type = |c: char, ref_c: char, wt: WordType| -> bool {
             match wt {
                 WordType::LongWord => !c.is_whitespace(),
@@ -1235,7 +1116,6 @@ impl<'a> EditorState<'a> {
             }
 
             let mut idx = curr.1 + 1;
-            // Skip whitespace
             while idx < chars.len() && chars[idx].is_whitespace() {
                 idx += 1;
             }
@@ -1249,7 +1129,6 @@ impl<'a> EditorState<'a> {
                 }
             }
 
-            // Find end of word
             let ref_char = chars[idx];
             while idx < chars.len() {
                 let next = idx + 1;
@@ -1270,13 +1149,10 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
     }
 
-    /// Get position of end of previous word/WORD (ge/gE motion)
     fn get_word_end_backward_pos(&self, word_type: WordType) -> (usize, usize) {
         let mut row = self.cursor.0;
         let mut col = self.cursor.1;
 
-        // Helper to get char type: 0 = whitespace, 1 = word, 2 = punct
-        // For LongWord, only whitespace (0) vs non-whitespace (1) matters
         let char_type = |c: char, wt: WordType| -> u8 {
             if c.is_whitespace() {
                 0
@@ -1296,7 +1172,6 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        // Step 1: Move back one position
         if col > 0 {
             col -= 1;
         } else if row > 0 {
@@ -1306,7 +1181,6 @@ impl<'a> EditorState<'a> {
             return (0, 0);
         }
 
-        // Step 2: Skip whitespace and empty lines backward
         loop {
             let chars: Vec<char> = self.lines[row].chars().collect();
             if chars.is_empty() {
@@ -1332,8 +1206,6 @@ impl<'a> EditorState<'a> {
             break;
         }
 
-        // Step 3: Now we're on a non-whitespace char
-        // Check if we started from a non-whitespace position in the same word
         let orig_char = get_char(self.cursor.0, self.cursor.1, &self.lines);
         let curr_char = get_char(row, col, &self.lines);
 
@@ -1341,13 +1213,10 @@ impl<'a> EditorState<'a> {
             let orig_type = char_type(orig_c, word_type);
             let curr_type = char_type(curr_c, word_type);
 
-            // If we started on a non-whitespace and are still on the same line
-            // we need to check if we're in the same continuous word/WORD
             if orig_type != 0 && row == self.cursor.0 {
                 let chars: Vec<char> = self.lines[row].chars().collect();
                 let mut still_same_word = true;
 
-                // Check characters between col and cursor for continuity
                 for i in (col + 1)..=self.cursor.1 {
                     if i < chars.len() {
                         let t = char_type(chars[i], word_type);
@@ -1366,7 +1235,6 @@ impl<'a> EditorState<'a> {
                 };
 
                 if should_skip {
-                    // Skip backward through this word/WORD entirely
                     while col > 0 {
                         let prev_type = char_type(chars[col - 1], word_type);
                         match word_type {
@@ -1384,7 +1252,6 @@ impl<'a> EditorState<'a> {
                         col -= 1;
                     }
 
-                    // Now move back one more and skip whitespace again
                     if col > 0 {
                         col -= 1;
                     } else if row > 0 {
@@ -1394,7 +1261,6 @@ impl<'a> EditorState<'a> {
                         return (0, 0);
                     }
 
-                    // Skip whitespace again
                     loop {
                         let chars: Vec<char> = self.lines[row].chars().collect();
                         if chars.is_empty() {
@@ -1612,7 +1478,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_inner_word_bounds(&self) -> (usize, usize) {
-        // Returns (start, end) of the word under cursor (not including surrounding whitespace)
         let line = &self.lines[self.cursor.0];
         if line.is_empty() {
             return (0, 0);
@@ -1621,7 +1486,6 @@ impl<'a> EditorState<'a> {
         let chars: Vec<char> = line.chars().collect();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
-        // Determine the type of character under cursor
         let is_word_char = |c: char| !c.is_whitespace() && !c.is_ascii_punctuation();
         let is_punct = |c: char| c.is_ascii_punctuation();
 
@@ -1634,13 +1498,11 @@ impl<'a> EditorState<'a> {
             Box::new(is_word_char)
         };
 
-        // Find start of word
         let mut start = col;
         while start > 0 && char_type_matches(chars[start - 1]) {
             start -= 1;
         }
 
-        // Find end of word
         let mut end = col;
         while end < chars.len() && char_type_matches(chars[end]) {
             end += 1;
@@ -1650,8 +1512,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_a_word_bounds(&self) -> (usize, usize) {
-        // Returns (start, end) of the word under cursor including trailing whitespace
-        // (or leading whitespace if at end of line)
         let line = &self.lines[self.cursor.0];
         if line.is_empty() {
             return (0, 0);
@@ -1660,13 +1520,11 @@ impl<'a> EditorState<'a> {
         let chars: Vec<char> = line.chars().collect();
         let (word_start, word_end) = self.get_inner_word_bounds();
 
-        // Try to include trailing whitespace first
         let mut end = word_end;
         while end < chars.len() && chars[end].is_whitespace() {
             end += 1;
         }
 
-        // If no trailing whitespace was found, try leading whitespace
         if end == word_end {
             let mut start = word_start;
             while start > 0 && chars[start - 1].is_whitespace() {
@@ -1678,7 +1536,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Helper to delete a text object on the current line given (start, end) bounds
     fn delete_text_object_on_line(&mut self, start: usize, end: usize) {
         let line_len = self.lines[self.cursor.0].len();
         if start < end && end <= line_len {
@@ -1694,8 +1551,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Yank a character-wise range (potentially multi-line) into the yank buffer.
-    /// Returns the yanked text. end_col is inclusive.
     fn yank_char_range(
         &self,
         start_row: usize,
@@ -1722,8 +1577,6 @@ impl<'a> EditorState<'a> {
         yanked
     }
 
-    /// Delete a character-wise range (potentially multi-line).
-    /// end_col is inclusive. Returns after deletion with cursor positioned at start.
     fn delete_char_range(
         &mut self,
         start_row: usize,
@@ -1732,7 +1585,6 @@ impl<'a> EditorState<'a> {
         end_col: usize,
     ) {
         if start_row == end_row {
-            // Single line deletion
             let mut chars: Vec<char> = self.lines[start_row].chars().collect();
             let delete_end = (end_col + 1).min(chars.len());
             if start_col < delete_end {
@@ -1740,7 +1592,6 @@ impl<'a> EditorState<'a> {
                 self.lines[start_row] = chars.into_iter().collect();
             }
         } else {
-            // Multi-line deletion
             let start_chars: Vec<char> = self.lines[start_row].chars().collect();
             let end_chars: Vec<char> = self.lines[end_row].chars().collect();
 
@@ -1753,18 +1604,15 @@ impl<'a> EditorState<'a> {
                 String::new()
             };
 
-            // Remove lines between start and end
             for _ in start_row + 1..=end_row {
                 if start_row + 1 < self.lines.len() {
                     self.lines.remove(start_row + 1);
                 }
             }
 
-            // Combine remaining parts
             self.lines[start_row] = before + &after;
         }
 
-        // Ensure at least one line exists
         if self.lines.is_empty() {
             self.lines.push(String::new());
         }
@@ -1781,7 +1629,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_inner_long_word_bounds(&self) -> (usize, usize) {
-        // Returns (start, end) of the WORD under cursor (whitespace-delimited)
         let line = &self.lines[self.cursor.0];
         if line.is_empty() {
             return (0, 0);
@@ -1790,9 +1637,7 @@ impl<'a> EditorState<'a> {
         let chars: Vec<char> = line.chars().collect();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
-        // For WORD, only whitespace is a delimiter
         if chars[col].is_whitespace() {
-            // Cursor is on whitespace, select the whitespace block
             let mut start = col;
             while start > 0 && chars[start - 1].is_whitespace() {
                 start -= 1;
@@ -1803,7 +1648,6 @@ impl<'a> EditorState<'a> {
             }
             (start, end)
         } else {
-            // Cursor is on non-whitespace
             let mut start = col;
             while start > 0 && !chars[start - 1].is_whitespace() {
                 start -= 1;
@@ -1817,7 +1661,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_a_long_word_bounds(&self) -> (usize, usize) {
-        // Returns (start, end) of the WORD under cursor including trailing whitespace
         let line = &self.lines[self.cursor.0];
         if line.is_empty() {
             return (0, 0);
@@ -1826,13 +1669,11 @@ impl<'a> EditorState<'a> {
         let chars: Vec<char> = line.chars().collect();
         let (word_start, word_end) = self.get_inner_long_word_bounds();
 
-        // Try to include trailing whitespace first
         let mut end = word_end;
         while end < chars.len() && chars[end].is_whitespace() {
             end += 1;
         }
 
-        // If no trailing whitespace was found, try leading whitespace
         if end == word_end {
             let mut start = word_start;
             while start > 0 && chars[start - 1].is_whitespace() {
@@ -1862,29 +1703,23 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_inner_paragraph_bounds_impl(&self) -> (usize, usize) {
-        // Find the bounds of the current paragraph (lines between blank lines)
         let mut start_row = self.cursor.0;
         let mut end_row = self.cursor.0;
 
-        // If we're on a blank line, find all consecutive blank lines
         if self.lines[self.cursor.0].trim().is_empty() {
-            // Find start of blank line group
             while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
                 start_row -= 1;
             }
-            // Find end of blank line group
             while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
                 end_row += 1;
             }
             return (start_row, end_row);
         }
 
-        // Find start of paragraph (first non-blank line after a blank line or start of file)
         while start_row > 0 && !self.lines[start_row - 1].trim().is_empty() {
             start_row -= 1;
         }
 
-        // Find end of paragraph (last non-blank line before a blank line or end of file)
         while end_row < self.lines.len() - 1 && !self.lines[end_row + 1].trim().is_empty() {
             end_row += 1;
         }
@@ -1892,32 +1727,23 @@ impl<'a> EditorState<'a> {
         (start_row, end_row)
     }
 
+    /// Includes trailing blank lines, or leading if at end of file
     fn get_around_paragraph_bounds_impl(&self) -> Option<(usize, usize)> {
-        // Like inner paragraph, but includes blank lines
-        // Vim behavior: include trailing blank lines if they exist,
-        // otherwise include leading blank lines (for last paragraph)
-
-        // Special case: if on a blank line, include blank lines + following paragraph
         if self.lines[self.cursor.0].trim().is_empty() {
-            // Find start of blank line group
             let mut start_row = self.cursor.0;
             while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
                 start_row -= 1;
             }
-            // Find end of blank line group
             let mut end_row = self.cursor.0;
             while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
                 end_row += 1;
             }
 
-            // Check if there's a paragraph after the blank lines
             if end_row >= self.lines.len() - 1 {
-                // No paragraph after, return None to indicate "do nothing"
                 return None;
             }
 
-            // Include the following paragraph
-            end_row += 1; // Move to first line of next paragraph
+            end_row += 1;
             while end_row < self.lines.len() - 1 && !self.lines[end_row + 1].trim().is_empty() {
                 end_row += 1;
             }
@@ -1927,13 +1753,11 @@ impl<'a> EditorState<'a> {
 
         let (mut start_row, mut end_row) = self.get_inner_paragraph_bounds_impl();
 
-        // First, try to include trailing blank lines
         let original_end = end_row;
         while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
             end_row += 1;
         }
 
-        // If no trailing blank lines were found, include leading blank lines instead
         if end_row == original_end {
             while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
                 start_row -= 1;
@@ -1951,7 +1775,6 @@ impl<'a> EditorState<'a> {
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[start_row..=end_row]
             .iter()
             .map(|s| s.as_str())
@@ -1959,22 +1782,18 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        // Remove the lines
         for _ in start_row..=end_row {
             self.lines.remove(start_row);
         }
 
-        // Ensure at least one line exists
         if self.lines.is_empty() {
             self.lines.push(String::new());
         }
 
-        // Position cursor
         self.cursor.0 = start_row.min(self.lines.len() - 1);
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         self.clamp_cursor();
         self.update_desired_col();
-        // For change operations (mode set to Insert), don't record yet
         if self.mode != EditorMode::Insert {
             self.record_change();
         }
@@ -1991,7 +1810,6 @@ impl<'a> EditorState<'a> {
             .collect();
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
-        // Move cursor to start of paragraph (like Neovim)
         self.cursor.0 = start_row;
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         self.clamp_cursor();
@@ -2000,13 +1818,12 @@ impl<'a> EditorState<'a> {
 
     fn change_paragraph(&mut self, kind: TextObjectKind) {
         let Some((start_row, end_row)) = self.get_paragraph_bounds(kind) else {
-            return; // Do nothing for Around when no valid bounds
+            return;
         };
 
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[start_row..=end_row]
             .iter()
             .map(|s| s.as_str())
@@ -2014,15 +1831,12 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        // Remove the lines
         for _ in start_row..=end_row {
             self.lines.remove(start_row);
         }
 
-        // Insert a blank line for typing
         self.lines.insert(start_row, String::new());
 
-        // Position cursor on the blank line
         self.cursor.0 = start_row;
         self.cursor.1 = 0;
         self.update_desired_col();
@@ -2030,10 +1844,7 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    /// Get the bounds of the current sentence (for `is` text object).
-    /// Returns (start_row, start_col, end_row, end_col) where end is inclusive.
     fn get_inner_sentence_bounds(&self) -> (usize, usize, usize, usize) {
-        // First, find the start of the current paragraph (don't cross blank lines)
         let para_start = {
             let mut row = self.cursor.0;
             while row > 0 && !self.lines[row - 1].trim().is_empty() {
@@ -2042,22 +1853,18 @@ impl<'a> EditorState<'a> {
             row
         };
 
-        // Find the start of the current sentence within the current paragraph
         let (mut start_row, mut start_col) =
             self.find_sentence_start_for_end(self.cursor.0, self.cursor.1);
 
-        // Ensure start doesn't go before the paragraph boundary
         if start_row < para_start {
             start_row = para_start;
             start_col = self.find_line_start(start_row);
         }
 
-        // If the found start is on a blank line, adjust to first non-blank line after it
         while start_row < self.lines.len() && self.lines[start_row].trim().is_empty() {
             start_row += 1;
             start_col = 0;
         }
-        // Find first non-whitespace character on the start line
         if start_row < self.lines.len() {
             let chars: Vec<char> = self.lines[start_row].chars().collect();
             while start_col < chars.len() && chars[start_col].is_whitespace() {
@@ -2065,8 +1872,6 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Find the end of the current sentence
-        // Search forward from cursor for sentence-ending punctuation
         let mut end_row = self.cursor.0;
         let mut end_col = self.cursor.1;
 
@@ -2087,52 +1892,41 @@ impl<'a> EditorState<'a> {
                 end_col += 1;
             }
 
-            // Move to next line
             if end_row < self.lines.len() - 1 {
-                // Check if next line is blank (paragraph boundary)
                 if self.lines[end_row + 1].trim().is_empty() {
-                    // End of paragraph - sentence ends at end of current line
                     let line_end = chars.len().saturating_sub(1);
                     return (start_row, start_col, end_row, line_end);
                 }
                 end_row += 1;
                 end_col = 0;
             } else {
-                // End of file - sentence ends at end of file
                 let line_end = chars.len().saturating_sub(1);
                 return (start_row, start_col, end_row, line_end);
             }
         }
     }
 
-    /// Get the bounds of "a sentence" (for `as` text object).
-    /// Like inner sentence but includes trailing whitespace (or leading if at end of paragraph).
     fn get_a_sentence_bounds(&self) -> (usize, usize, usize, usize) {
         let (start_row, start_col, end_row, end_col) = self.get_inner_sentence_bounds();
 
-        // Try to include trailing whitespace first
         let mut new_end_row = end_row;
         let mut new_end_col = end_col;
 
         let chars: Vec<char> = self.lines[new_end_row].chars().collect();
         let mut next_col = new_end_col + 1;
 
-        // Skip any trailing whitespace on the same line
         while next_col < chars.len() && chars[next_col].is_whitespace() {
             new_end_col = next_col;
             next_col += 1;
         }
 
-        // If we found trailing whitespace or non-whitespace content after, return
         if new_end_col > end_col || next_col < chars.len() {
             return (start_row, start_col, new_end_row, new_end_col);
         }
 
-        // Check next line for leading whitespace of next sentence
         if new_end_row < self.lines.len() - 1 && !self.lines[new_end_row + 1].trim().is_empty() {
             let next_chars: Vec<char> = self.lines[new_end_row + 1].chars().collect();
             if !next_chars.is_empty() && next_chars[0].is_whitespace() {
-                // Include this line's whitespace
                 new_end_row += 1;
                 new_end_col = 0;
                 while new_end_col + 1 < next_chars.len()
@@ -2144,7 +1938,6 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // No trailing whitespace, try including leading whitespace instead
         if start_col > 0 {
             let start_chars: Vec<char> = self.lines[start_row].chars().collect();
             let mut new_start_col = start_col;
@@ -2156,7 +1949,6 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // No whitespace to include, return inner bounds
         (start_row, start_col, end_row, end_col)
     }
 
@@ -2173,15 +1965,12 @@ impl<'a> EditorState<'a> {
 
         let (start_row, start_col, end_row, end_col) = self.get_sentence_bounds(kind);
 
-        // Yank the sentence
         self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
         self.yank_is_linewise = false;
 
-        // Delete the sentence
         self.delete_char_range(start_row, start_col, end_row, end_col);
 
-        // For Around: if the line became empty after deletion and there's a line after it,
-        // remove the empty line (like Neovim does for das)
+        // Around: remove empty line if there's a line after it
         if kind == TextObjectKind::Around
             && self.lines[start_row].is_empty()
             && start_row < self.lines.len() - 1
@@ -2205,7 +1994,6 @@ impl<'a> EditorState<'a> {
 
         let (start_row, start_col, end_row, end_col) = self.get_sentence_bounds(kind);
 
-        // Yank and delete the sentence
         self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
         self.yank_is_linewise = false;
         self.delete_char_range(start_row, start_col, end_row, end_col);
@@ -2221,7 +2009,6 @@ impl<'a> EditorState<'a> {
 
         self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
 
-        // For Around: if sentence spans entire line, treat as linewise
         if kind == TextObjectKind::Around {
             let end_line_len = self.lines[end_row].chars().count();
             self.yank_is_linewise =
@@ -2230,7 +2017,6 @@ impl<'a> EditorState<'a> {
             self.yank_is_linewise = false;
         }
 
-        // Move cursor to start of sentence
         self.cursor = (start_row, start_col);
         self.clamp_cursor();
         self.update_desired_col();
@@ -2258,8 +2044,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn find_pair_bounds(&self, pair_char: char) -> Option<((usize, usize), (usize, usize))> {
-        // Find matching pair around cursor (multi-line support)
-        // Returns ((open_row, open_col), (close_row, close_col))
         let (open, close) = if pair_char == '"' || pair_char == '\'' || pair_char == '`' {
             (pair_char, pair_char)
         } else if Self::is_open_pair(pair_char) {
@@ -2274,7 +2058,6 @@ impl<'a> EditorState<'a> {
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
         if open == close {
-            // Quote-style pairs: only search on current line
             let mut left = None;
             for i in (0..=col).rev() {
                 if chars[i] == open {
@@ -2297,22 +2080,18 @@ impl<'a> EditorState<'a> {
                 _ => None,
             }
         } else {
-            // Bracket-style pairs: multi-line search
             let cur_char = if !chars.is_empty() { chars[col] } else { ' ' };
 
             let open_pos: Option<(usize, usize)>;
             let close_pos: Option<(usize, usize)>;
 
             if cur_char == close {
-                // Cursor is on closing bracket
                 close_pos = Some((cur_row, col));
                 open_pos = self.find_matching_open(open, close, cur_row, col);
             } else if cur_char == open {
-                // Cursor is on opening bracket
                 open_pos = Some((cur_row, col));
                 close_pos = self.find_matching_close(open, close, cur_row, col);
             } else {
-                // Cursor is inside - search both directions
                 open_pos = self.find_matching_open(open, close, cur_row, col + 1);
                 if let Some((open_row, open_col)) = open_pos {
                     close_pos = self.find_matching_close(open, close, open_row, open_col);
@@ -2403,45 +2182,36 @@ impl<'a> EditorState<'a> {
         if let Some(((open_row, open_col), (close_row, close_col))) =
             self.find_pair_bounds(pair_char)
         {
-            // Store content to be deleted in yank buffer (reuse yank logic)
             self.yank_inner_pair(pair_char);
 
             self.save_undo_state();
             self.lines_version += 1;
             if open_row == close_row {
-                // Same line - simple case
                 let line = &mut self.lines[open_row];
                 if open_col + 1 < close_col {
                     line.replace_range((open_col + 1)..close_col, "");
                 }
-                // Cursor on closing bracket (now at open_col + 1)
                 self.cursor.0 = open_row;
                 self.cursor.1 = open_col + 1;
             } else {
-                // Multi-line deletion - preserve line structure like Neovim
                 let is_change = self.mode == EditorMode::Insert;
                 let has_content_lines = close_row - open_row > 1;
 
-                // Truncate first line after open bracket
                 let first_line: String = self.lines[open_row].chars().take(open_col + 1).collect();
                 self.lines[open_row] = first_line;
 
-                // Truncate last line before close bracket
                 let last_line: String = self.lines[close_row].chars().skip(close_col).collect();
                 self.lines[close_row] = last_line;
 
-                // Remove lines in between (but keep open_row and close_row)
                 for _ in (open_row + 1)..close_row {
                     self.lines.remove(open_row + 1);
                 }
 
                 if is_change && has_content_lines {
-                    // For ci( with content lines: insert empty line between brackets
                     self.lines.insert(open_row + 1, String::new());
                     self.cursor.0 = open_row + 1;
                     self.cursor.1 = 0;
                 } else {
-                    // For di( or ci( without content lines: cursor on closing bracket
                     self.cursor.0 = open_row + 1;
                     self.cursor.1 = 0;
                 }
@@ -2456,30 +2226,23 @@ impl<'a> EditorState<'a> {
         if let Some(((open_row, open_col), (close_row, close_col))) =
             self.find_pair_bounds(pair_char)
         {
-            // Store content to be deleted in yank buffer (reuse yank logic)
             self.yank_around_pair(pair_char);
 
             self.save_undo_state();
             self.lines_version += 1;
             if open_row == close_row {
-                // Same line - simple case
                 let line = &mut self.lines[open_row];
                 line.replace_range(open_col..=close_col, "");
                 self.cursor.0 = open_row;
                 self.cursor.1 = open_col;
             } else {
-                // Multi-line deletion
-                // Keep content before open bracket on first line
                 let first_line_prefix: String =
                     self.lines[open_row].chars().take(open_col).collect();
-                // Keep content after close bracket on last line
                 let last_line_suffix: String =
                     self.lines[close_row].chars().skip(close_col + 1).collect();
 
-                // Combine and replace
                 self.lines[open_row] = first_line_prefix + &last_line_suffix;
 
-                // Remove lines in between
                 for _ in (open_row + 1)..=close_row {
                     self.lines.remove(open_row + 1);
                 }
@@ -2498,7 +2261,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn jump_to_prev_unmatched(&mut self, open: char, close: char) {
-        // Jump to previous unmatched opening bracket (multi-line)
         let mut depth = 0i32;
         let mut row = self.cursor.0;
         let mut start_col = self.cursor.1;
@@ -2534,7 +2296,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn jump_to_next_unmatched(&mut self, open: char, close: char) {
-        // Jump to next unmatched closing bracket (multi-line)
         let mut depth = 0i32;
         let mut row = self.cursor.0;
         let mut start_col = self.cursor.1;
@@ -2579,9 +2340,7 @@ impl<'a> EditorState<'a> {
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
         let cur_char = chars[col];
 
-        // Check if cursor is on a matchable bracket (only (), [], {})
         if !Self::is_matchable_bracket(cur_char) {
-            // Not on a bracket, search forward for one on current line
             for i in col..chars.len() {
                 if Self::is_matchable_bracket(chars[i]) {
                     self.cursor.1 = i;
@@ -2597,9 +2356,7 @@ impl<'a> EditorState<'a> {
             None => return,
         };
 
-        // Determine if we're on an open or close bracket
         if Self::is_open_pair(cur_char) {
-            // Search forward for matching close (multi-line)
             let mut depth = 0i32;
             let mut row = self.cursor.0;
             let start_col = col;
@@ -2632,7 +2389,6 @@ impl<'a> EditorState<'a> {
                 row += 1;
             }
         } else {
-            // On closing bracket - search backward for matching open (multi-line)
             let mut depth = 0i32;
             let mut row = self.cursor.0;
             let mut search_end = col;
@@ -2668,39 +2424,31 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Get the position of the previous paragraph boundary without moving cursor.
     fn get_paragraph_backward_pos(&self) -> (usize, usize) {
         let mut row = self.cursor.0;
 
-        // Skip up past any blank lines we're currently on
         while row > 0 && self.lines[row].trim().is_empty() {
             row -= 1;
         }
 
-        // Skip up past non-blank lines (the paragraph content)
         while row > 0 && !self.lines[row].trim().is_empty() {
             row -= 1;
         }
 
-        // Now row is either on a blank line or at 0
         (row, 0)
     }
 
-    /// Get the position of the next paragraph boundary without moving cursor.
     fn get_paragraph_forward_pos(&self) -> (usize, usize) {
         let mut row = self.cursor.0;
         let last_row = self.lines.len().saturating_sub(1);
 
-        // Skip current blank lines (if any)
         while row < last_row && self.lines[row].trim().is_empty() {
             row += 1;
         }
-        // Skip non-blank lines to find the next blank line
         while row < last_row && !self.lines[row].trim().is_empty() {
             row += 1;
         }
 
-        // If we're on the last row and it's not blank, return position past end for exclusive motions
         if row == last_row && !self.lines[row].trim().is_empty() {
             (row, self.lines[row].chars().count())
         } else {
@@ -2709,42 +2457,34 @@ impl<'a> EditorState<'a> {
     }
 
     fn move_paragraph_backward(&mut self) {
-        // Move to previous paragraph boundary (blank line or start of file)
         let mut row = self.cursor.0;
 
-        // Skip up past any blank lines we're currently on
         while row > 0 && self.lines[row].trim().is_empty() {
             row -= 1;
         }
 
-        // Skip up past non-blank lines (the paragraph content)
         while row > 0 && !self.lines[row].trim().is_empty() {
             row -= 1;
         }
 
-        // Now row is either on a blank line or at 0
         self.cursor.0 = row;
         self.cursor.1 = 0;
         self.update_desired_col();
     }
 
     fn move_paragraph_forward(&mut self) {
-        // Move to next paragraph boundary (next blank line or end of file)
         let mut row = self.cursor.0;
         let last_row = self.lines.len().saturating_sub(1);
 
-        // Skip current blank lines (if any)
         while row < last_row && self.lines[row].trim().is_empty() {
             row += 1;
         }
-        // Skip non-blank lines to find the next blank line
         while row < last_row && !self.lines[row].trim().is_empty() {
             row += 1;
         }
 
         self.cursor.0 = row;
 
-        // If we're on the last row and it's not blank, go to the last character
         if row == last_row && !self.lines[row].trim().is_empty() {
             self.cursor.1 = self.lines[row].chars().count().saturating_sub(1);
         } else {
@@ -2761,33 +2501,26 @@ impl<'a> EditorState<'a> {
         matches!(c, ')' | ']' | '"' | '\'')
     }
 
-    /// Check if a sentence ends at position col in the given chars.
-    /// A sentence ends with '.', '!', or '?' optionally followed by closing chars,
-    /// then whitespace or end of line.
+    /// Ends with '.', '!', or '?' optionally followed by closing chars, then whitespace or EOL
     fn is_valid_sentence_end(chars: &[char], col: usize) -> bool {
         if col >= chars.len() || !Self::is_sentence_end_punct(chars[col]) {
             return false;
         }
-        // Skip past any closing chars after the punctuation
         let mut after_col = col + 1;
         while after_col < chars.len() && Self::is_sentence_closing_char(chars[after_col]) {
             after_col += 1;
         }
-        // Must be followed by whitespace or end of line
         after_col >= chars.len() || chars[after_col].is_whitespace()
     }
 
-    /// Get the position of the previous sentence start without moving cursor.
     fn get_sentence_backward_pos(&self) -> (usize, usize) {
         self.compute_sentence_backward_pos(self.cursor.0, self.cursor.1)
     }
 
-    /// Get the position of the next sentence start without moving cursor.
     fn get_sentence_forward_pos(&self) -> (usize, usize) {
         self.compute_sentence_forward_pos(self.cursor.0, self.cursor.1)
     }
 
-    /// Compute the position of the previous sentence start from a given position.
     fn compute_sentence_backward_pos(&self, start_row: usize, start_col: usize) -> (usize, usize) {
         let started_on_blank = self.lines[start_row].trim().is_empty();
 
@@ -2864,7 +2597,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Compute the position of the next sentence start from a given position.
     fn compute_sentence_forward_pos(&self, start_row: usize, start_col: usize) -> (usize, usize) {
         let mut row = start_row;
         let mut col = start_col;
@@ -3007,7 +2739,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Find sentence start after a given position (after sentence end punctuation).
     fn find_sentence_start_after_pos(
         &self,
         from_row: usize,
@@ -3038,13 +2769,11 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Find first non-whitespace of a line.
     fn find_line_start(&self, row: usize) -> usize {
         let chars: Vec<char> = self.lines[row].chars().collect();
         chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0)
     }
 
-    /// Find the start of a sentence that ends at (end_row, end_col).
     fn find_sentence_start_for_end(&self, end_row: usize, end_col: usize) -> (usize, usize) {
         let mut r = end_row;
         let mut c = if end_col > 0 {
@@ -3083,21 +2812,18 @@ impl<'a> EditorState<'a> {
     }
 
     fn move_sentence_backward(&mut self) {
-        // Use the unified sentence backward position logic
         let new_pos = self.get_sentence_backward_pos();
         self.cursor = new_pos;
         self.update_desired_col();
     }
 
     fn move_sentence_forward(&mut self) {
-        // Use the unified sentence forward position logic
         let new_pos = self.get_sentence_forward_pos();
         self.cursor = new_pos;
         self.update_desired_col();
     }
 
     fn find_char_forward(&self, target: char) -> Option<usize> {
-        // Find next occurrence of target char on current line
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
         for i in (self.cursor.1 + 1)..chars.len() {
@@ -3109,7 +2835,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn find_char_backward(&self, target: char) -> Option<usize> {
-        // Find previous occurrence of target char on current line
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
         for i in (0..self.cursor.1).rev() {
@@ -3121,21 +2846,18 @@ impl<'a> EditorState<'a> {
     }
 
     fn move_to_char_forward(&mut self, target: char) {
-        // f{char} - move to next occurrence
         if let Some(pos) = self.find_char_forward(target) {
             self.cursor.1 = pos;
         }
     }
 
     fn move_to_char_backward(&mut self, target: char) {
-        // F{char} - move to previous occurrence
         if let Some(pos) = self.find_char_backward(target) {
             self.cursor.1 = pos;
         }
     }
 
     fn move_till_char_forward(&mut self, target: char) {
-        // t{char} - move to just before next occurrence
         if let Some(pos) = self.find_char_forward(target) {
             if pos > 0 {
                 self.cursor.1 = pos - 1;
@@ -3144,14 +2866,12 @@ impl<'a> EditorState<'a> {
     }
 
     fn move_till_char_backward(&mut self, target: char) {
-        // T{char} - move to just after previous occurrence
         if let Some(pos) = self.find_char_backward(target) {
             self.cursor.1 = pos + 1;
         }
     }
 
     fn repeat_char_search(&mut self, reverse: bool) {
-        // ; repeats last f/F/t/T, , repeats in opposite direction
         if let Some((search_type, target)) = self.last_char_search {
             let effective_type = if reverse {
                 match search_type {
@@ -3169,29 +2889,25 @@ impl<'a> EditorState<'a> {
                 'f' => self.move_to_char_forward(target),
                 'F' => self.move_to_char_backward(target),
                 't' => {
-                    // For t repeat, we need to move past the character we're before
-                    // to find the next occurrence. Save position to restore if not found.
                     let original_pos = self.cursor.1;
                     let line_len = self.lines[self.cursor.0].len();
                     if self.cursor.1 + 1 < line_len {
-                        self.cursor.1 += 1; // Move past current position
+                        self.cursor.1 += 1;
                         if self.find_char_forward(target).is_some() {
                             self.move_till_char_forward(target);
                         } else {
-                            self.cursor.1 = original_pos; // Restore if not found
+                            self.cursor.1 = original_pos;
                         }
                     }
                 }
                 'T' => {
-                    // For T repeat, we need to move before the character we're after
-                    // Save position to restore if not found.
                     let original_pos = self.cursor.1;
                     if self.cursor.1 > 0 {
-                        self.cursor.1 -= 1; // Move before current position
+                        self.cursor.1 -= 1;
                         if self.find_char_backward(target).is_some() {
                             self.move_till_char_backward(target);
                         } else {
-                            self.cursor.1 = original_pos; // Restore if not found
+                            self.cursor.1 = original_pos;
                         }
                     }
                 }
@@ -3201,7 +2917,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_to_char_forward(&mut self, target: char, inclusive: bool) {
-        // df{char} or dt{char}
         if let Some(pos) = self.find_char_forward(target) {
             let end_pos = if inclusive { pos } else { pos - 1 };
             if end_pos >= self.cursor.1 {
@@ -3214,7 +2929,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_to_char_backward(&mut self, target: char, inclusive: bool) {
-        // dF{char} or dT{char}
         if let Some(pos) = self.find_char_backward(target) {
             let start_pos = if inclusive { pos } else { pos + 1 };
             if start_pos <= self.cursor.1 {
@@ -3233,7 +2947,6 @@ impl<'a> EditorState<'a> {
         end: (usize, usize),
         inclusive: bool,
     ) {
-        // Delete from start position to end position (multi-line support)
         self.lines_version += 1;
         let (start_row, start_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
             start
@@ -3249,7 +2962,6 @@ impl<'a> EditorState<'a> {
         let actual_end_col = if inclusive { end_col + 1 } else { end_col };
 
         if start_row == end_row {
-            // Same line - store deleted text in yank buffer
             let chars: Vec<char> = self.lines[start_row].chars().collect();
             let end_clamped = actual_end_col.min(chars.len());
             if start_col < end_clamped {
@@ -3263,7 +2975,6 @@ impl<'a> EditorState<'a> {
             self.cursor.0 = start_row;
             self.cursor.1 = start_col;
         } else {
-            // Multi-line - store deleted text in yank buffer
             let mut yanked = String::new();
             let first_chars: Vec<char> = self.lines[start_row].chars().collect();
             yanked.extend(&first_chars[start_col..]);
@@ -3327,7 +3038,6 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        // Temporarily move cursor to bracket
         let original_cursor = self.cursor;
         self.cursor.1 = bracket_col;
 
@@ -3341,7 +3051,6 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        // Search for match
         let end_pos = if Self::is_open_pair(bracket_char) {
             self.find_matching_close(bracket_char, matching, self.cursor.0, bracket_col)
         } else {
@@ -3367,7 +3076,6 @@ impl<'a> EditorState<'a> {
         self.save_undo_state();
         let start = (self.cursor.0, self.cursor.1);
         if let Some(end) = self.find_unmatched_forward(open, close) {
-            // Exclusive - don't include the closing bracket
             self.delete_range_multiline(start, end, false);
         }
     }
@@ -3432,11 +3140,9 @@ impl<'a> EditorState<'a> {
     }
 
     fn repeat_last_change(&mut self) {
-        // Use provided count if given, otherwise use stored last_count
         let has_explicit_count = self.count_prefix.is_some();
-        let explicit_count = self.take_count(); // This returns 1 if no count was given
+        let explicit_count = self.take_count();
         let use_count = if has_explicit_count {
-            // Update last_count so future . commands use this count
             self.last_count = explicit_count;
             explicit_count
         } else {
@@ -3451,23 +3157,16 @@ impl<'a> EditorState<'a> {
                 self.insert_saved_text();
             }
             LastChange::InsertText(text, style) => {
-                // Save undo state before making changes
                 self.save_undo_state();
-                // Temporarily enter Insert mode to batch changes
                 self.mode = EditorMode::Insert;
-                // Position cursor based on insert style
                 match style {
-                    InsertStyle::Before => {
-                        // i - insert before cursor, no movement needed
-                    }
+                    InsertStyle::Before => {}
                     InsertStyle::After => {
-                        // a - insert after cursor
                         if self.cursor.1 < self.lines[self.cursor.0].len() {
                             self.cursor.1 += 1;
                         }
                     }
                     InsertStyle::LineStart => {
-                        // I - insert at first non-blank of line
                         self.cursor.1 = 0;
                         let line = &self.lines[self.cursor.0];
                         for (i, ch) in line.chars().enumerate() {
@@ -3478,18 +3177,15 @@ impl<'a> EditorState<'a> {
                         }
                     }
                     InsertStyle::LineEnd => {
-                        // A - insert at end of line
                         self.cursor.1 = self.lines[self.cursor.0].len();
                     }
                     InsertStyle::NewLineBelow => {
-                        // o - open new line below current line
                         self.lines_version += 1;
                         self.lines.insert(self.cursor.0 + 1, String::new());
                         self.cursor.0 += 1;
                         self.cursor.1 = 0;
                     }
                     InsertStyle::NewLineAbove => {
-                        // O - open new line above current line
                         self.lines_version += 1;
                         self.lines.insert(self.cursor.0, String::new());
                         self.cursor.1 = 0;
@@ -3502,11 +3198,9 @@ impl<'a> EditorState<'a> {
                         self.insert_char(c);
                     }
                 }
-                // Move cursor back like Escape does
                 if self.cursor.1 > 0 {
                     self.cursor.1 -= 1;
                 }
-                // Return to Normal mode and record final state
                 self.mode = EditorMode::Normal;
                 self.record_change();
             }
@@ -3515,7 +3209,6 @@ impl<'a> EditorState<'a> {
             LastChange::ReplaceChar(c) => self.replace_char(c),
             LastChange::ReplaceMode(text) => {
                 self.save_undo_state();
-                // Temporarily set mode to Replace so insert_char/insert_newline batch changes
                 self.mode = EditorMode::Replace;
                 for c in text.chars() {
                     if c == '\n' {
@@ -3525,7 +3218,6 @@ impl<'a> EditorState<'a> {
                     }
                 }
                 self.mode = EditorMode::Normal;
-                // Move cursor back like Escape does
                 if self.cursor.1 > 0 {
                     self.cursor.1 -= 1;
                 }
@@ -3542,29 +3234,23 @@ impl<'a> EditorState<'a> {
                 self.update_desired_col();
             }
             LastChange::DeleteBlock(num_rows, col_width) => {
-                // Repeat visual block delete at current cursor position
                 self.delete_block_at_cursor(num_rows, col_width);
             }
             LastChange::ChangeBlock(num_rows, col_width, ref text) => {
-                // Repeat visual block change: delete block then insert text on all lines
                 let text = text.clone();
                 self.change_block_at_cursor(num_rows, col_width, &text);
             }
             LastChange::InsertBlock(num_rows, ref text) => {
-                // Repeat visual block insert: insert text at cursor column on all lines
                 let text = text.clone();
                 self.insert_block_at_cursor(num_rows, &text);
             }
             LastChange::AppendBlock(num_rows, col_offset, ref text) => {
-                // Repeat visual block append: insert text at cursor + offset on all lines
                 let text = text.clone();
                 self.insert_block_at_cursor_with_offset(num_rows, col_offset, &text);
             }
         }
     }
 
-    /// Delete a block of text at the current cursor position
-    /// Used for repeating visual block delete with .
     fn delete_block_at_cursor(&mut self, num_rows: usize, col_width: usize) {
         self.save_undo_state();
         self.lines_version += 1;
@@ -3573,7 +3259,6 @@ impl<'a> EditorState<'a> {
         let start_col = self.cursor.1;
         let end_col = start_col + col_width;
 
-        // Yank the block first
         let mut yanked_lines = Vec::new();
         for i in 0..num_rows {
             let row = start_row + i;
@@ -3594,7 +3279,6 @@ impl<'a> EditorState<'a> {
         self.yank_is_linewise = false;
         self.yank_is_block = true;
 
-        // Delete the block
         for i in 0..num_rows {
             let row = start_row + i;
             if row >= self.lines.len() {
@@ -3615,8 +3299,6 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    /// Change a block of text at the current cursor position and insert text on all lines
-    /// Used for repeating visual block change with .
     fn change_block_at_cursor(&mut self, num_rows: usize, col_width: usize, text: &str) {
         self.save_undo_state();
         self.lines_version += 1;
@@ -3625,7 +3307,6 @@ impl<'a> EditorState<'a> {
         let start_col = self.cursor.1;
         let end_col = start_col + col_width;
 
-        // Delete the block and insert text on each row
         for i in 0..num_rows {
             let row = start_row + i;
             if row >= self.lines.len() {
@@ -3636,12 +3317,10 @@ impl<'a> EditorState<'a> {
             let sel_start = start_col.min(line_len);
             let sel_end = end_col.min(line_len);
 
-            // Delete the block portion
             if sel_start < sel_end {
                 chars.drain(sel_start..sel_end);
             }
 
-            // Insert the text at sel_start
             let mut offset = 0;
             for c in text.chars() {
                 if c == '\n' {
@@ -3658,8 +3337,6 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    /// Insert text at current cursor column on multiple lines
-    /// Used for repeating visual block insert (I) with .
     fn insert_block_at_cursor(&mut self, num_rows: usize, text: &str) {
         self.save_undo_state();
         self.lines_version += 1;
@@ -3667,7 +3344,6 @@ impl<'a> EditorState<'a> {
         let start_row = self.cursor.0;
         let insert_col = self.cursor.1;
 
-        // Insert text on each row
         for i in 0..num_rows {
             let row = start_row + i;
             if row >= self.lines.len() {
@@ -3675,14 +3351,12 @@ impl<'a> EditorState<'a> {
             }
             let chars: Vec<char> = self.lines[row].chars().collect();
 
-            // Skip lines that don't reach the insert column (left edge of selection)
             if chars.len() < insert_col {
                 continue;
             }
 
             let mut chars = chars;
 
-            // Insert the text
             let mut offset = 0;
             for c in text.chars() {
                 if c == '\n' {
@@ -3699,9 +3373,6 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    /// Insert text at current cursor column + offset on multiple lines
-    /// Used for repeating visual block append (A) with .
-    /// For A (append), lines are padded with spaces to reach insert position.
     fn insert_block_at_cursor_with_offset(
         &mut self,
         num_rows: usize,
@@ -3714,7 +3385,6 @@ impl<'a> EditorState<'a> {
         let start_row = self.cursor.0;
         let insert_col = self.cursor.1 + col_offset;
 
-        // Insert text on each row
         for i in 0..num_rows {
             let row = start_row + i;
             if row >= self.lines.len() {
@@ -3722,12 +3392,10 @@ impl<'a> EditorState<'a> {
             }
             let mut chars: Vec<char> = self.lines[row].chars().collect();
 
-            // Pad with spaces if needed to reach insert position
             while chars.len() < insert_col {
                 chars.push(' ');
             }
 
-            // Insert the text
             let mut offset = 0;
             for c in text.chars() {
                 if c == '\n' {
@@ -3744,7 +3412,6 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    /// Execute a delete operation on the given target with count
     fn execute_delete_target(&mut self, target: &EditTarget, count: usize) {
         match target {
             EditTarget::Char => {
@@ -3834,14 +3501,12 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Execute a change operation on the given target with count
     fn execute_change_target(&mut self, target: &EditTarget, count: usize) {
         match target {
             EditTarget::Char => {
                 self.substitute_char();
             }
             EditTarget::CharBackward => {
-                // Move back and substitute (like s but for char before cursor)
                 if self.cursor.1 > 0 {
                     self.cursor.1 -= 1;
                     self.substitute_char();
@@ -3854,7 +3519,6 @@ impl<'a> EditorState<'a> {
                 self.mode = EditorMode::Insert;
                 match dir {
                     Direction::Forward => {
-                        // cw behaves like ce when on a word
                         let line = &self.lines[self.cursor.0];
                         let chars: Vec<char> = line.chars().collect();
                         let on_whitespace =
@@ -3976,11 +3640,10 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_to_end_of_line(&mut self) {
-        self.save_undo_state(); // Save state before deletion
+        self.save_undo_state();
         self.lines_version += 1;
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 < chars.len() {
-            // Store deleted text in yank buffer
             self.yank_buffer = chars[self.cursor.1..].iter().collect();
             self.yank_is_linewise = false;
             self.lines[self.cursor.0] = chars[..self.cursor.1].iter().collect();
@@ -3991,19 +3654,16 @@ impl<'a> EditorState<'a> {
     }
 
     fn change_to_end_of_line(&mut self) {
-        // Save undo state ONCE (for the entire change operation)
         self.save_undo_state();
         self.lines_version += 1;
 
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 < chars.len() {
-            // Store deleted text in yank buffer
             self.yank_buffer = chars[self.cursor.1..].iter().collect();
             self.yank_is_linewise = false;
             self.lines[self.cursor.0] = chars[..self.cursor.1].iter().collect();
         }
 
-        // Don't call record_change() here - it will be called when exiting insert mode
         self.mode = EditorMode::Insert;
         let line_len = self.lines[self.cursor.0].len();
         self.cursor.1 = line_len;
@@ -4013,13 +3673,10 @@ impl<'a> EditorState<'a> {
         self.substitute_lines(1);
     }
 
-    /// Substitute `count` lines (cc/S with count)
     fn substitute_lines(&mut self, count: usize) {
-        // Save undo state ONCE (for the entire change operation)
         self.save_undo_state();
         self.lines_version += 1;
 
-        // Get indentation from first line
         let line = &self.lines[self.cursor.0];
         let mut indent = String::new();
         for ch in line.chars() {
@@ -4030,11 +3687,9 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Calculate actual lines to delete
         let end_row = (self.cursor.0 + count).min(self.lines.len());
         let actual_count = end_row - self.cursor.0;
 
-        // Store deleted lines in yank buffer
         let yanked: Vec<&str> = self.lines[self.cursor.0..end_row]
             .iter()
             .map(|s| s.as_str())
@@ -4042,7 +3697,6 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        // Remove lines and replace with indented empty line
         for _ in 0..actual_count {
             if self.cursor.0 < self.lines.len() {
                 self.lines.remove(self.cursor.0);
@@ -4053,23 +3707,19 @@ impl<'a> EditorState<'a> {
 
         self.cursor.1 = indent_len;
         self.mode = EditorMode::Insert;
-        // Don't call record_change() here - it will be called when exiting insert mode
     }
 
     fn substitute_char(&mut self) {
         let line_len = self.lines[self.cursor.0].len();
         if line_len > 0 && self.cursor.1 < line_len {
-            // Save undo state ONCE (for the entire change operation)
             self.save_undo_state();
             self.lines_version += 1;
             self.lines[self.cursor.0].remove(self.cursor.1);
             self.mode = EditorMode::Insert;
-            // Don't call record_change() here - it will be called when exiting insert mode
         }
     }
 
     fn replace_char(&mut self, replacement: char) {
-        // r{char} - replace character under cursor without entering insert mode
         let line_len = self.lines[self.cursor.0].len();
         if line_len > 0 && self.cursor.1 < line_len {
             self.save_undo_state();
@@ -4128,7 +3778,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Find a number under or after the cursor on the current line.
     fn find_number_at_cursor(&self) -> Option<NumberAtCursor> {
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
@@ -4138,20 +3787,16 @@ impl<'a> EditorState<'a> {
 
         let pos = self.cursor.1.min(chars.len() - 1);
 
-        // Try to find a hex number first, then fall back to decimal
         self.try_find_hex_number(&chars, pos)
             .or_else(|| self.try_find_decimal_number(&chars, pos))
     }
 
-    /// Try to find a hex number (0x...) at or after the given position
     fn try_find_hex_number(&self, chars: &[char], pos: usize) -> Option<NumberAtCursor> {
-        // Find where the 0x prefix might be by looking backwards through hex digits
         let find_hex_start = |from: usize| -> Option<usize> {
             let mut i = from;
             while i > 0 && chars[i - 1].is_ascii_hexdigit() {
                 i -= 1;
             }
-            // Check for 0x prefix
             if i >= 2 && chars[i - 1].to_ascii_lowercase() == 'x' && chars[i - 2] == '0' {
                 Some(i - 2)
             } else if i >= 1 && chars[i].to_ascii_lowercase() == 'x' && chars[i - 1] == '0' {
@@ -4161,12 +3806,9 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        // Check various cases where cursor might be on a hex number
         let hex_start = if chars[pos].is_ascii_hexdigit() {
-            // On a hex digit (0-9, a-f, A-F)
             find_hex_start(pos)
         } else if chars[pos].to_ascii_lowercase() == 'x' && pos > 0 && chars[pos - 1] == '0' {
-            // On 'x' of 0x
             Some(pos - 1)
         } else {
             None
@@ -4174,8 +3816,7 @@ impl<'a> EditorState<'a> {
 
         let hex_start = hex_start?;
 
-        // Find end of hex number
-        let mut end = hex_start + 2; // Skip 0x
+        let mut end = hex_start + 2;
         while end < chars.len() && chars[end].is_ascii_hexdigit() {
             end += 1;
         }
@@ -4201,17 +3842,14 @@ impl<'a> EditorState<'a> {
         })
     }
 
-    /// Try to find a decimal number at or after the given position
     fn try_find_decimal_number(&self, chars: &[char], mut pos: usize) -> Option<NumberAtCursor> {
         let mut is_negative = false;
 
-        // If not on a digit, search forward
         if !chars[pos].is_ascii_digit() {
             if chars[pos] == '-' && pos + 1 < chars.len() && chars[pos + 1].is_ascii_digit() {
                 is_negative = true;
                 pos += 1;
             } else {
-                // Search forward for a digit
                 let found_pos = (pos..chars.len()).find(|&i| chars[i].is_ascii_digit());
                 match found_pos {
                     Some(i) => {
@@ -4223,23 +3861,19 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Check if this digit is part of a hex number
         if self.try_find_hex_number(chars, pos).is_some() {
-            return None; // Let hex handling take care of it
+            return None;
         }
 
-        // Find start of decimal number
         let mut num_start = pos;
         while num_start > 0 && chars[num_start - 1].is_ascii_digit() {
             num_start -= 1;
         }
 
-        // Check for negative sign
         if !is_negative && num_start > 0 && chars[num_start - 1] == '-' {
             is_negative = true;
         }
 
-        // Find end of decimal number
         let mut end = pos;
         while end < chars.len() && chars[end].is_ascii_digit() {
             end += 1;
@@ -4284,7 +3918,6 @@ impl<'a> EditorState<'a> {
             self.format_decimal_number(&num.digits, num.is_negative, delta)
         };
 
-        // Replace in line
         self.save_undo_state();
         self.lines_version += 1;
         let line = &mut self.lines[self.cursor.0];
@@ -4293,14 +3926,12 @@ impl<'a> EditorState<'a> {
         let after: String = chars[num.end..].iter().collect();
         *line = format!("{}{}{}", before, new_num_str, after);
 
-        // Position cursor at the last digit of the new number
         let new_end = num.start + new_num_str.chars().count();
         self.cursor.1 = new_end.saturating_sub(1);
         self.update_desired_col();
         self.record_change();
     }
 
-    /// Format a hex number after applying delta (unsigned wrapping)
     fn format_hex_number(&self, digits: &str, delta: i64) -> String {
         let width = digits.len();
         let parsed = u64::from_str_radix(digits, 16).unwrap_or(0);
@@ -4312,13 +3943,11 @@ impl<'a> EditorState<'a> {
         format!("0x{:0>width$x}", new_value, width = width)
     }
 
-    /// Format a decimal number after applying delta (signed)
     fn format_decimal_number(&self, digits: &str, is_negative: bool, delta: i64) -> String {
         let parsed = digits.parse::<i64>().unwrap_or(0);
         let value = if is_negative { -parsed } else { parsed };
         let new_value = value + delta;
 
-        // Only preserve width if original number has leading zeros
         let has_leading_zeros = digits.len() > 1 && digits.starts_with('0');
 
         if has_leading_zeros {
@@ -4340,7 +3969,6 @@ impl<'a> EditorState<'a> {
             Change::CursorVisibility(CursorVisibility::Hidden),
         ]);
 
-        // Status bar
         let mode_text_raw = match self.mode {
             EditorMode::Normal => &self.colors.normal_mode_text,
             EditorMode::Insert => &self.colors.insert_mode_text,
@@ -4351,11 +3979,9 @@ impl<'a> EditorState<'a> {
             EditorMode::VisualBlock => &self.colors.visual_block_mode_text,
         };
         let mode_text = format!(" {} ", mode_text_raw);
-        let mode_len = mode_text_raw.len() + 2; // +2 for leading/trailing spaces
+        let mode_len = mode_text_raw.len() + 2;
 
-        // Build pending keys string (shown on the right like Neovim)
         let mut pending_str = String::new();
-        // Show count prefix first
         if let Some(count) = self.count_prefix {
             pending_str.push_str(&count.to_string());
         }
@@ -4368,7 +3994,6 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Get mode-specific colors
         let (mode_fg, mode_bg) = match self.mode {
             EditorMode::Normal => (self.colors.normal_mode_fg, self.colors.normal_mode_bg),
             EditorMode::Insert => (self.colors.insert_mode_fg, self.colors.insert_mode_bg),
@@ -4379,9 +4004,6 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        // Calculate position and middle section width
-        // Show "0-1" for column when on a blank line in normal mode (like Vim)
-        // Show "0" for row if buffer has no text (single empty line)
         let line_is_empty = self.lines[self.cursor.0].is_empty();
         let buffer_is_empty = self.lines.len() == 1 && self.lines[0].is_empty();
         let row_display = if buffer_is_empty {
@@ -4399,31 +4021,24 @@ impl<'a> EditorState<'a> {
         let position = format!("{}{}", position_text, " ".repeat(position_padding));
         let middle_width = cols.saturating_sub(mode_len + POSITION_WIDTH);
 
-        // Render status bar: mode | middle section | position
         self.buf.add_changes(vec![
-            // Position at second last row
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(rows - 2),
             },
-            // Mode section
             Change::Attribute(AttributeChange::Background(mode_bg)),
             Change::Attribute(AttributeChange::Foreground(mode_fg)),
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
             Change::Text(mode_text),
-            // Middle section (empty space with status bar colors)
             Change::Attribute(AttributeChange::Intensity(Intensity::Normal)),
             Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
             Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
             Change::Text(format!("{:width$}", "", width = middle_width)),
-            // Position section
             Change::Text(position),
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
-        // Render last row content
         if self.mode == EditorMode::Search {
-            // In search mode, render the search prompt on the last row
             let prompt = match self.search_direction {
                 Direction::Forward => "/",
                 Direction::Backward => "?",
@@ -4438,7 +4053,6 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else {
-            // Show search pattern on left and pending keys on right
             let search_display = if self.search_pattern.is_empty() {
                 String::new()
             } else {
@@ -4475,7 +4089,6 @@ impl<'a> EditorState<'a> {
 
         let content_start_row;
 
-        // Render title if provided
         if let Some(title) = &self.args.title {
             self.buf.add_changes(vec![
                 Change::CursorPosition {
@@ -4491,13 +4104,9 @@ impl<'a> EditorState<'a> {
             content_start_row = 0;
         }
 
-        // Adjust viewport: subtract reserved rows for status bar and command line + content_start_row for optional title
         let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
         let content_width = cols.saturating_sub(GUTTER_WIDTH);
 
-        // Viewport adjustment - account for wrapped lines when scrolling
-        // Goal: Show entire wrapped line if possible, otherwise show cursor's visual row
-        // wrap_row_offset: skip initial wrap rows when cursor line is taller than screen
         let mut wrap_row_offset: usize = 0;
 
         if content_width > 0 {
@@ -4506,16 +4115,12 @@ impl<'a> EditorState<'a> {
             let (cursor_row_in_line, _) =
                 Self::cursor_visual_position(self.cursor.1, content_width);
 
-            // First, scroll up if cursor line is above viewport
             if self.cursor.0 < self.viewport_top {
                 self.viewport_top = self.cursor.0;
             }
 
-            // Check if entire cursor line fits on screen
             if cursor_line_visual_rows <= content_rows {
-                // Try to show the entire wrapped line
                 loop {
-                    // Calculate visual rows from viewport_top to cursor line
                     let mut visual_rows_before_cursor = 0;
                     for line_idx in self.viewport_top..self.cursor.0 {
                         let char_count = self.lines[line_idx].chars().count();
@@ -4523,37 +4128,27 @@ impl<'a> EditorState<'a> {
                             Self::wrapped_line_rows(char_count, content_width);
                     }
 
-                    // Check if entire cursor line (all visual rows) fits
                     let cursor_line_end_row = visual_rows_before_cursor + cursor_line_visual_rows;
                     if cursor_line_end_row <= content_rows {
-                        // Entire line is visible
                         break;
                     } else {
-                        // Scroll down to make room for the entire line
                         self.viewport_top += 1;
                         if self.viewport_top > self.cursor.0 {
-                            // Can't scroll past cursor line
                             self.viewport_top = self.cursor.0;
                             break;
                         }
                     }
                 }
             } else {
-                // Cursor line is taller than screen - show the portion with cursor
                 self.viewport_top = self.cursor.0;
 
-                // Calculate wrap_row_offset so cursor's wrap row is visible
-                // Try to keep some context above the cursor if possible
                 if cursor_row_in_line >= content_rows {
-                    // Cursor row would be off-screen, calculate offset
-                    // Keep cursor near the middle of the screen
                     let margin = content_rows / 3;
                     wrap_row_offset = cursor_row_in_line.saturating_sub(margin);
                 }
             }
         }
 
-        // Calculate selection range if in visual mode
         let selection = if self.mode == EditorMode::Visual
             || self.mode == EditorMode::VisualLine
             || self.mode == EditorMode::VisualBlock
@@ -4570,7 +4165,6 @@ impl<'a> EditorState<'a> {
             None
         };
 
-        // For block selection, compute column bounds
         let block_col_bounds = if self.mode == EditorMode::VisualBlock {
             let min_col = self.visual_start.1.min(self.cursor.1);
             let max_col = self.visual_start.1.max(self.cursor.1);
@@ -4579,11 +4173,9 @@ impl<'a> EditorState<'a> {
             None
         };
 
-        // Track cursor screen position for later
         let mut cursor_screen_row: Option<usize> = None;
         let mut cursor_screen_col: Option<usize> = None;
 
-        // Line wrap rendering
         let mut visual_row = 0;
         let mut line_idx = self.viewport_top;
 
@@ -4592,7 +4184,6 @@ impl<'a> EditorState<'a> {
             let line_len = chars.len();
             let line_visual_rows = Self::wrapped_line_rows(line_len, content_width);
 
-            // Apply wrap_row_offset only to the first line (viewport_top)
             let start_wrap_row = if line_idx == self.viewport_top {
                 wrap_row_offset
             } else {
@@ -4607,7 +4198,6 @@ impl<'a> EditorState<'a> {
                 let start_col = wrap_row * content_width;
                 let end_col = ((wrap_row + 1) * content_width).min(line_len);
 
-                // Line number: show on first wrap row, or "<<<" if line continues from above
                 let line_number_text = if start_wrap_row > 0 && wrap_row == start_wrap_row {
                     LINE_CONTINUES_ABOVE.to_string()
                 } else if wrap_row == 0 {
@@ -4631,7 +4221,6 @@ impl<'a> EditorState<'a> {
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
 
-                // Track cursor position
                 if line_idx == self.cursor.0 {
                     let (cursor_wrap_row, col_in_row) =
                         Self::cursor_visual_position(self.cursor.1, content_width);
@@ -4641,20 +4230,17 @@ impl<'a> EditorState<'a> {
                     }
                 }
 
-                // Extract the portion of the line for this visual row
                 let segment: String = if line_len == 0 && wrap_row == 0 {
                     String::new()
                 } else {
                     chars[start_col..end_col].iter().collect()
                 };
 
-                // Render segment with appropriate highlighting
                 let line_in_selection = selection
                     .map(|(sel_start, sel_end)| line_idx >= sel_start.0 && line_idx <= sel_end.0)
                     .unwrap_or(false);
 
                 if line_in_selection && self.mode == EditorMode::VisualLine {
-                    // Entire segment is selected
                     self.buf.add_changes(vec![
                         Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                         Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
@@ -4666,10 +4252,8 @@ impl<'a> EditorState<'a> {
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
                 } else if line_in_selection && self.mode == EditorMode::VisualBlock {
-                    // Block-wise selection: highlight rectangular region
                     let (min_col, max_col) = block_col_bounds.unwrap();
                     let (sel_start, sel_end) = selection.unwrap();
-                    // Check if this line is at the edge of selection (start or end row)
                     let is_edge_line = line_idx == sel_start.0 || line_idx == sel_end.0;
                     self.render_wrapped_segment_with_block_selection(
                         &chars,
@@ -4680,7 +4264,6 @@ impl<'a> EditorState<'a> {
                         is_edge_line,
                     );
                 } else if line_in_selection && self.mode == EditorMode::Visual {
-                    // Character-wise selection within segment
                     let (sel_start, sel_end) = selection.unwrap();
                     self.render_wrapped_segment_with_selection(
                         &chars, start_col, end_col, line_idx, sel_start, sel_end,
@@ -4695,27 +4278,22 @@ impl<'a> EditorState<'a> {
             line_idx += 1;
         }
 
-        // Cursor
         let (cursor_screen_x, cursor_screen_y, cursor_shape) = if self.mode == EditorMode::Search {
-            // In search mode, show cursor on the last row after search input
-            let x = 1 + self.search_input.len(); // 1 for prompt (/ or ?)
+            let x = 1 + self.search_input.len();
             (x, rows - 1, CursorShape::SteadyBlock)
         } else {
-            // Use tracked cursor position (accounts for line wrap)
             let y = cursor_screen_row.unwrap_or(content_start_row);
             let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
             let shape = if self.pending_operator.is_some() {
-                // Operator-pending mode (d, c, y waiting for motion)
                 CursorShape::SteadyUnderline
             } else if self.pending_keys.contains(&KeyCode::Char('r')) {
-                // Replace character mode
                 CursorShape::SteadyUnderline
             } else {
                 match self.mode {
                     EditorMode::Normal => CursorShape::SteadyBlock,
                     EditorMode::Insert => CursorShape::SteadyBar,
                     EditorMode::Replace => CursorShape::SteadyUnderline,
-                    EditorMode::Search => CursorShape::SteadyBar, // won't reach here
+                    EditorMode::Search => CursorShape::SteadyBar,
                     EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
                         CursorShape::SteadyBlock
                     }
@@ -4738,8 +4316,6 @@ impl<'a> EditorState<'a> {
         Ok(())
     }
 
-    /// Render a segment of a line with search highlighting (for wrapped lines)
-    /// start_col is the column offset in the original line where this segment starts
     fn render_segment_with_search_highlight(
         &mut self,
         segment: &str,
@@ -4759,7 +4335,6 @@ impl<'a> EditorState<'a> {
         let is_current_line = self.current_match.map_or(false, |(r, _)| r == line_idx);
         let end_col = start_col + segment.chars().count();
 
-        // Find all matches in the full line that overlap with this segment
         let mut matches: Vec<(usize, usize)> = Vec::new();
         let mut search_start = 0;
         while let Some(pos) = line[search_start..].find(pattern) {
@@ -4801,13 +4376,11 @@ impl<'a> EditorState<'a> {
                 ]);
             }
 
-            // Check if this is the current match
             let is_current = is_current_line
                 && self
                     .current_match
                     .map_or(false, |(_, c)| c >= match_start && c < match_end);
 
-            // Highlighted match portion (clipped to segment)
             let actual_start = seg_match_start.max(last_pos);
             if actual_start < seg_match_end {
                 let matched: String = segment_chars[actual_start..seg_match_end].iter().collect();
@@ -4830,7 +4403,6 @@ impl<'a> EditorState<'a> {
             last_pos = seg_match_end;
         }
 
-        // Text after last match
         if last_pos < segment_chars.len() {
             let after: String = segment_chars[last_pos..].iter().collect();
             self.buf.add_changes(vec![
@@ -4840,7 +4412,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Render a wrapped segment with visual selection highlighting
     fn render_wrapped_segment_with_selection(
         &mut self,
         chars: &[char],
@@ -4852,7 +4423,6 @@ impl<'a> EditorState<'a> {
     ) {
         let line_len = chars.len();
 
-        // Calculate selection bounds for the full line
         let sel_col_start = if line_idx == sel_start.0 {
             sel_start.1
         } else {
@@ -4864,11 +4434,9 @@ impl<'a> EditorState<'a> {
             line_len
         };
 
-        // Clip to segment bounds
         let seg_sel_start = sel_col_start.max(start_col).min(end_col);
         let seg_sel_end = sel_col_end.max(start_col).min(end_col);
 
-        // Before selection (in segment)
         if start_col < seg_sel_start {
             let before: String = chars[start_col..seg_sel_start].iter().collect();
             self.buf.add_changes(vec![
@@ -4877,7 +4445,6 @@ impl<'a> EditorState<'a> {
             ]);
         }
 
-        // Selected portion (in segment)
         if seg_sel_start < seg_sel_end {
             let selected: String = chars[seg_sel_start..seg_sel_end].iter().collect();
             self.buf.add_changes(vec![
@@ -4887,9 +4454,6 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if chars.is_empty() && start_col == 0 {
-            // Blank line within selection - show highlighted space like neovim does
-            // We know line_in_selection is true (this function is only called for selected lines),
-            // and on a blank line the cursor can only be at column 0, so the entire line is selected
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
@@ -4898,7 +4462,6 @@ impl<'a> EditorState<'a> {
             ]);
         }
 
-        // After selection (in segment)
         if seg_sel_end < end_col {
             let after: String = chars[seg_sel_end..end_col].iter().collect();
             self.buf.add_changes(vec![
@@ -4911,7 +4474,6 @@ impl<'a> EditorState<'a> {
             .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
     }
 
-    /// Render a wrapped segment with visual block selection highlighting
     fn render_wrapped_segment_with_block_selection(
         &mut self,
         chars: &[char],
@@ -4921,15 +4483,12 @@ impl<'a> EditorState<'a> {
         block_max_col: usize,
         is_edge_line: bool,
     ) {
-        // Block selection column bounds (inclusive)
         let sel_col_start = block_min_col;
-        let sel_col_end = block_max_col + 1; // +1 to make it exclusive for slicing
+        let sel_col_end = block_max_col + 1;
 
-        // Clip to segment bounds
         let seg_sel_start = sel_col_start.max(start_col).min(end_col);
         let seg_sel_end = sel_col_end.max(start_col).min(end_col);
 
-        // Before selection (in segment)
         if start_col < seg_sel_start {
             let before: String = chars[start_col..seg_sel_start].iter().collect();
             self.buf.add_changes(vec![
@@ -4938,7 +4497,6 @@ impl<'a> EditorState<'a> {
             ]);
         }
 
-        // Selected portion (in segment) - only highlight actual content, not beyond line end
         if seg_sel_start < seg_sel_end {
             let selected: String = chars[seg_sel_start..seg_sel_end].iter().collect();
             self.buf.add_changes(vec![
@@ -4948,16 +4506,13 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if chars.is_empty() && is_edge_line {
-            // Empty/blank line at the edge of selection (start or end row) - show indicator
             self.buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                 Change::Text(" ".to_string()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
-        // Note: We don't highlight virtual spaces beyond line end, or empty lines in the middle
 
-        // After selection (in segment)
         if seg_sel_end < end_col {
             let after: String = chars[seg_sel_end..end_col].iter().collect();
             self.buf.add_changes(vec![
@@ -4970,7 +4525,6 @@ impl<'a> EditorState<'a> {
             .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
     }
 
-    // Helper to perform delete action based on a motion with count support
     fn perform_delete_motion_with_count<F>(
         &mut self,
         motion: F,
@@ -4981,15 +4535,12 @@ impl<'a> EditorState<'a> {
     ) where
         F: Fn(&EditorState) -> (usize, usize),
     {
-        // Record state before deletion for undo (preserves cursor position)
         self.save_undo_state();
         self.lines_version += 1;
         let start = self.cursor;
 
-        // Apply motion `count` times to get final position
         let mut end = self.cursor;
         for _ in 0..count {
-            // Temporarily move cursor to calculate next position
             let old_cursor = self.cursor;
             self.cursor = end;
             end = motion(self);
@@ -5005,9 +4556,6 @@ impl<'a> EditorState<'a> {
         );
     }
 
-    // Helper to perform delete action based on a motion
-    // delete_empty_lines: if true, delete the entire line when backward motion would empty it
-    // allow_linewise: if true, allow linewise deletion when cursor is at start of line (for sentence/paragraph motions)
     fn perform_delete_motion<F>(
         &mut self,
         motion: F,
@@ -5017,7 +4565,6 @@ impl<'a> EditorState<'a> {
     ) where
         F: Fn(&EditorState) -> (usize, usize),
     {
-        // Record state before deletion for undo (preserves cursor position)
         self.save_undo_state();
         self.lines_version += 1;
         let start = self.cursor;
@@ -5039,90 +4586,65 @@ impl<'a> EditorState<'a> {
         delete_empty_lines: bool,
         allow_linewise: bool,
     ) {
-        // Handle direction - use character-based operations
         if end.0 < start.0 {
-            // Backward motion crossing to previous line - need to handle multi-line deletion
-            // Special case: if end.1 == 0, don't merge with end line, keep it separate
-
             let mut deleted_text = String::new();
 
             if end.1 == 0 && !delete_empty_lines {
-                // Change operation landing at start of a line - preserve line structure
-                // Keep line end.0 (clear it if it has content), put suffix on separate line
-
-                // If line end.0 has content (first paragraph case), clear it and add to deleted text
                 if !self.lines[end.0].trim().is_empty() {
                     deleted_text.push_str(&self.lines[end.0]);
                     deleted_text.push('\n');
                     self.lines[end.0] = String::new();
                 }
 
-                // Add content from line after end to deleted text
                 for row in (end.0 + 1)..start.0 {
                     deleted_text.push_str(&self.lines[row]);
                     deleted_text.push('\n');
                 }
 
-                // Get the part to delete from start line (before cursor)
                 let start_chars: Vec<char> = self.lines[start.0].chars().collect();
                 deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
                 let start_suffix: String = start_chars[start.1..].iter().collect();
 
-                // Store in yank buffer
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = false;
 
-                // Update start line to just the suffix
                 self.lines[start.0] = start_suffix;
 
-                // Remove intermediate lines (from end.0+1 to start.0-1)
                 for _ in (end.0 + 1)..start.0 {
                     self.lines.remove(end.0 + 1);
                 }
 
-                // Move cursor to line end.0
                 self.cursor.0 = end.0;
                 self.cursor.1 = 0;
             } else {
-                // Motion lands in middle of a line - merge start and end lines
-
-                // Get the part to keep from end line (before end position)
                 let end_chars: Vec<char> = self.lines[end.0].chars().collect();
                 let end_prefix: String = end_chars[..end.1].iter().collect();
                 deleted_text.push_str(&end_chars[end.1..].iter().collect::<String>());
 
-                // Add intermediate lines to deleted text
                 for row in (end.0 + 1)..start.0 {
                     deleted_text.push('\n');
                     deleted_text.push_str(&self.lines[row]);
                 }
 
-                // Get the part to keep from start line (at and after cursor)
                 let start_chars: Vec<char> = self.lines[start.0].chars().collect();
                 deleted_text.push('\n');
                 deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
                 let start_suffix: String = start_chars[start.1..].iter().collect();
 
-                // Store in yank buffer
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = false;
 
-                // Join the kept parts
                 let new_line = format!("{}{}", end_prefix, start_suffix);
 
-                // Remove lines from start.0 down to end.0+1, then update end.0
                 for _ in end.0..start.0 {
                     self.lines.remove(end.0 + 1);
                 }
                 self.lines[end.0] = new_line;
 
-                // Move cursor to the deletion point
                 self.cursor.0 = end.0;
                 self.cursor.1 = end.1;
             }
         } else if end.0 == start.0 && end.1 < start.1 {
-            // Backward motion on same line (db, dB, dge)
-            // For inclusive motions (dge), include the character at cursor position
             let range_start = end.1;
             let range_end = if is_inclusive {
                 (start.1 + 1).min(self.lines[start.0].chars().count())
@@ -5131,63 +4653,43 @@ impl<'a> EditorState<'a> {
             };
             let mut chars: Vec<char> = self.lines[start.0].chars().collect();
             if range_start < range_end && range_end <= chars.len() {
-                // Store deleted text in yank buffer
                 self.yank_buffer = chars[range_start..range_end].iter().collect();
                 self.yank_is_linewise = false;
                 chars.drain(range_start..range_end);
                 self.lines[start.0] = chars.into_iter().collect();
             }
-            self.cursor.1 = range_start; // Move cursor to start of deletion
+            self.cursor.1 = range_start;
         } else if end.0 > start.0 {
-            // Forward motion crossing to next line - need to handle multi-line deletion
-            // Special case: if end.1 == 0, don't merge with end line, keep it separate
-
             let mut deleted_text = String::new();
 
-            // Check if cursor position qualifies for linewise delete
-            // Only applies to sentence/paragraph motions (allow_linewise = true)
-            // First line of paragraph: cursor at or before first non-whitespace
-            // Other lines: cursor at first non-whitespace only
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
             let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
             let cursor_qualifies_for_linewise = allow_linewise
                 && if is_first_line_of_para {
-                    start.1 <= first_non_blank // At or before first non-whitespace
+                    start.1 <= first_non_blank
                 } else {
-                    start.1 == first_non_blank // Exactly at first non-whitespace
+                    start.1 == first_non_blank
                 };
 
             if end.1 == 0 && !cursor_qualifies_for_linewise {
-                // Motion lands at start of next line, cursor is after first non-whitespace
-                // Preserve line structure (Neovim behavior for d) from middle of line)
-                // Only delete from cursor to end of start line, plus intermediate lines
-
-                // Get the part to keep from start line (before cursor)
                 let start_chars: Vec<char> = self.lines[start.0].chars().collect();
                 let start_prefix: String = start_chars[..start.1].iter().collect();
                 deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
 
-                // Add intermediate lines to deleted text (but not end line)
                 for row in (start.0 + 1)..end.0 {
                     deleted_text.push('\n');
                     deleted_text.push_str(&self.lines[row]);
                 }
 
-                // Store in yank buffer
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = false;
 
-                // Update start line to just the prefix
                 self.lines[start.0] = start_prefix;
 
-                // Remove intermediate lines (from start.0+1 to end.0-1)
                 for _ in (start.0 + 1)..end.0 {
                     self.lines.remove(start.0 + 1);
                 }
 
-                // Cursor stays at start position, but clamp to line length
-                // For insert mode (change operations), cursor can be at line_len
-                // For normal mode, cursor must be at line_len - 1
                 self.cursor = start;
                 let line_len = self.lines[self.cursor.0].chars().count();
                 let max_col = if self.mode == EditorMode::Insert {
@@ -5199,64 +4701,47 @@ impl<'a> EditorState<'a> {
                     self.cursor.1 = max_col;
                 }
             } else if end.1 == 0 && cursor_qualifies_for_linewise {
-                // Motion from start/before first char to start of next line - linewise deletion
-                // Delete entire lines and shift content up (like Neovim d) from start of sentence)
-
-                // Collect deleted text
                 deleted_text.push_str(&self.lines[start.0]);
                 for row in (start.0 + 1)..end.0 {
                     deleted_text.push('\n');
                     deleted_text.push_str(&self.lines[row]);
                 }
 
-                // Store in yank buffer
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = true;
 
                 if delete_empty_lines {
-                    // For delete operations: remove lines entirely
                     for _ in start.0..end.0 {
                         self.lines.remove(start.0);
                     }
 
-                    // Ensure at least one line exists
                     if self.lines.is_empty() {
                         self.lines.push(String::new());
                     }
 
-                    // Cursor stays at start row, column 0
                     self.cursor.0 = start.0.min(self.lines.len() - 1);
                     self.cursor.1 = 0;
                 } else {
-                    // For change operations: clear the start line, remove intermediate lines
-                    // Keep an empty line for the user to type on
                     self.lines[start.0] = String::new();
 
-                    // Remove intermediate lines (from start.0+1 to end.0-1)
                     for _ in (start.0 + 1)..end.0 {
                         self.lines.remove(start.0 + 1);
                     }
 
-                    // Cursor stays at start row, column 0 (on empty line)
                     self.cursor.0 = start.0;
                     self.cursor.1 = 0;
                 }
             } else {
-                // Motion lands in middle of a line - merge start and end lines
-
-                // Get the part to keep from start line (before cursor)
                 let start_chars: Vec<char> = self.lines[start.0].chars().collect();
                 let start_line_was_blank = start_chars.iter().all(|c| c.is_whitespace());
                 let start_prefix: String = start_chars[..start.1].iter().collect();
                 deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
 
-                // Add intermediate lines to deleted text
                 for row in (start.0 + 1)..end.0 {
                     deleted_text.push('\n');
                     deleted_text.push_str(&self.lines[row]);
                 }
 
-                // Get the part to keep from end line (at and after end position)
                 let end_chars: Vec<char> = self.lines[end.0].chars().collect();
                 let end_col = if is_inclusive {
                     (end.1 + 1).min(end_chars.len())
@@ -5267,52 +4752,40 @@ impl<'a> EditorState<'a> {
                 deleted_text.push_str(&end_chars[..end_col].iter().collect::<String>());
                 let end_suffix: String = end_chars[end_col..].iter().collect();
 
-                // Store in yank buffer
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = false;
 
-                // Join the kept parts
                 let new_line = format!("{}{}", start_prefix, end_suffix);
 
-                // Remove lines from end.0 down to start.0+1, then update start.0
                 for _ in start.0..end.0 {
                     self.lines.remove(start.0 + 1);
                 }
                 self.lines[start.0] = new_line.clone();
 
-                // Cursor stays at start position
                 self.cursor = start;
 
-                // For delete operations: handle cleanup of empty/blank lines
                 if delete_empty_lines && new_line.is_empty() {
                     if start_line_was_blank && start.0 > 0 {
-                        // Cursor was on a blank line - remove it entirely and go to start of previous line
                         self.lines.remove(start.0);
                         self.cursor.0 = start.0 - 1;
                         self.cursor.1 = 0;
                     } else if start.0 > 0 && self.lines[start.0 - 1].trim().is_empty() {
-                        // There's a preceding blank line (paragraph boundary) - remove it
                         self.lines.remove(start.0 - 1);
                         self.cursor.0 = start.0 - 1;
                     }
                 }
             }
         } else {
-            // Forward motion on same line (dw, de)
-            // w: exclusive. delete [start, end)
-            // e: inclusive. delete [start, end] -> delete [start, end + 1)
             let mut range_end = end.1;
             if is_inclusive {
                 range_end += 1;
             }
             let mut chars: Vec<char> = self.lines[start.0].chars().collect();
-            // Cap at character count
             if range_end > chars.len() {
                 range_end = chars.len();
             }
 
             if start.1 < range_end {
-                // Store deleted text in yank buffer
                 self.yank_buffer = chars[start.1..range_end].iter().collect();
                 self.yank_is_linewise = false;
                 chars.drain(start.1..range_end);
@@ -5321,13 +4794,11 @@ impl<'a> EditorState<'a> {
         }
         self.clamp_cursor();
         self.update_desired_col();
-        // For change operations (mode set to Insert), don't record yet
         if self.mode != EditorMode::Insert {
             self.record_change();
         }
     }
 
-    // Helper to perform yank action based on a motion
     fn perform_yank_motion<F>(&mut self, motion: F, is_inclusive: bool)
     where
         F: Fn(&EditorState) -> (usize, usize),
@@ -5335,13 +4806,7 @@ impl<'a> EditorState<'a> {
         let start = self.cursor;
         let end = motion(self);
 
-        // Handle direction - use character-based operations
         if end.0 < start.0 {
-            // Backward motion crossing to previous line - yank multi-line
-
-            // Determine if this is a linewise yank
-            // First line of paragraph: cursor at or before first non-whitespace
-            // Other lines: cursor at first non-whitespace only
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
             let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
@@ -5356,29 +4821,23 @@ impl<'a> EditorState<'a> {
             let start_chars: Vec<char> = self.lines[start.0].chars().collect();
 
             if is_linewise {
-                // Linewise yank: include entire lines
                 yanked_text.push_str(&end_chars.iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (end.0 + 1)..start.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
 
-                // Include entire start line
                 yanked_text.push('\n');
                 yanked_text.push_str(&start_chars.iter().collect::<String>());
             } else {
-                // Character-wise yank
                 yanked_text.push_str(&end_chars[end.1..].iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (end.0 + 1)..start.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
 
-                // From start of start line to cursor
                 yanked_text.push('\n');
                 yanked_text.push_str(&start_chars[..start.1].iter().collect::<String>());
             }
@@ -5386,12 +4845,9 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked_text;
             self.yank_is_linewise = is_linewise;
 
-            // Move cursor to start of yanked region (like Neovim)
             self.cursor = end;
             self.update_desired_col();
         } else if end.0 == start.0 && end.1 < start.1 {
-            // Backward motion on same line (yb, yB, yge)
-            // For inclusive motions (yge), include the character at cursor position
             let chars: Vec<char> = self.lines[start.0].chars().collect();
             let yank_end = if is_inclusive {
                 (start.1 + 1).min(chars.len())
@@ -5403,11 +4859,9 @@ impl<'a> EditorState<'a> {
             }
             self.yank_is_linewise = false;
 
-            // Move cursor to start of yanked region (like Neovim)
             self.cursor.1 = end.1;
             self.update_desired_col();
         } else if end.0 > start.0 {
-            // Forward motion crossing to next line - yank multi-line
             let end_chars: Vec<char> = self.lines[end.0].chars().collect();
             let end_col = if is_inclusive {
                 (end.1 + 1).min(end_chars.len())
@@ -5415,9 +4869,6 @@ impl<'a> EditorState<'a> {
                 end.1
             };
 
-            // Determine if this is a linewise yank
-            // First line of paragraph: cursor at or before first non-whitespace
-            // Other lines: cursor at first non-whitespace only
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
             let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
@@ -5431,26 +4882,20 @@ impl<'a> EditorState<'a> {
             let start_chars: Vec<char> = self.lines[start.0].chars().collect();
 
             if is_linewise {
-                // Linewise yank: include entire line from column 0 (including leading whitespace)
                 yanked_text.push_str(&start_chars.iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (start.0 + 1)..end.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
-                // Don't add trailing newline for linewise
             } else {
-                // Character-wise yank: from cursor position
                 yanked_text.push_str(&start_chars[start.1..].iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (start.0 + 1)..end.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
 
-                // Add content from the end line if there's something to add
                 if end_col > 0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&end_chars[..end_col].iter().collect::<String>());
@@ -5460,7 +4905,6 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked_text;
             self.yank_is_linewise = is_linewise;
         } else {
-            // Forward motion on same line (yw, ye)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
             let mut range_end = end.1;
             if is_inclusive {
@@ -5476,24 +4920,20 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    // Helper to perform yank action based on a motion with count support
     fn perform_yank_motion_with_count<F>(&mut self, motion: F, count: usize, is_inclusive: bool)
     where
         F: Fn(&EditorState) -> (usize, usize),
     {
         let start = self.cursor;
 
-        // Apply motion `count` times to get final position
         let mut end = self.cursor;
         for _ in 0..count {
-            // Temporarily move cursor to calculate next position
             let old_cursor = self.cursor;
             self.cursor = end;
             end = motion(self);
             self.cursor = old_cursor;
         }
 
-        // Use the same logic as perform_yank_motion but with custom start/end
         self.perform_yank_motion_inner(start, end, is_inclusive);
     }
 
@@ -5503,13 +4943,7 @@ impl<'a> EditorState<'a> {
         end: (usize, usize),
         is_inclusive: bool,
     ) {
-        // Handle direction - use character-based operations
         if end.0 < start.0 {
-            // Backward motion crossing to previous line - yank multi-line
-
-            // Determine if this is a linewise yank
-            // First line of paragraph: cursor at or before first non-whitespace
-            // Other lines: cursor at first non-whitespace only
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
             let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
@@ -5524,29 +4958,23 @@ impl<'a> EditorState<'a> {
             let start_chars: Vec<char> = self.lines[start.0].chars().collect();
 
             if is_linewise {
-                // Linewise yank: include entire lines
                 yanked_text.push_str(&end_chars.iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (end.0 + 1)..start.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
 
-                // Include entire start line
                 yanked_text.push('\n');
                 yanked_text.push_str(&start_chars.iter().collect::<String>());
             } else {
-                // Character-wise yank
                 yanked_text.push_str(&end_chars[end.1..].iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (end.0 + 1)..start.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
 
-                // From start of start line to cursor
                 yanked_text.push('\n');
                 yanked_text.push_str(&start_chars[..start.1].iter().collect::<String>());
             }
@@ -5554,12 +4982,9 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked_text;
             self.yank_is_linewise = is_linewise;
 
-            // Move cursor to start of yanked region (like Neovim)
             self.cursor = end;
             self.update_desired_col();
         } else if end.0 == start.0 && end.1 < start.1 {
-            // Backward motion on same line (yb, yB, yge)
-            // For inclusive motions (yge), include the character at cursor position
             let chars: Vec<char> = self.lines[start.0].chars().collect();
             let yank_end = if is_inclusive {
                 (start.1 + 1).min(chars.len())
@@ -5571,11 +4996,9 @@ impl<'a> EditorState<'a> {
             }
             self.yank_is_linewise = false;
 
-            // Move cursor to start of yanked region (like Neovim)
             self.cursor.1 = end.1;
             self.update_desired_col();
         } else if end.0 > start.0 {
-            // Forward motion crossing to next line - yank multi-line
             let end_chars: Vec<char> = self.lines[end.0].chars().collect();
             let end_col = if is_inclusive {
                 (end.1 + 1).min(end_chars.len())
@@ -5583,9 +5006,6 @@ impl<'a> EditorState<'a> {
                 end.1
             };
 
-            // Determine if this is a linewise yank
-            // First line of paragraph: cursor at or before first non-whitespace
-            // Other lines: cursor at first non-whitespace only
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
             let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
@@ -5599,26 +5019,20 @@ impl<'a> EditorState<'a> {
             let start_chars: Vec<char> = self.lines[start.0].chars().collect();
 
             if is_linewise {
-                // Linewise yank: include entire line from column 0 (including leading whitespace)
                 yanked_text.push_str(&start_chars.iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (start.0 + 1)..end.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
-                // Don't add trailing newline for linewise
             } else {
-                // Character-wise yank: from cursor position
                 yanked_text.push_str(&start_chars[start.1..].iter().collect::<String>());
 
-                // Intermediate lines
                 for row in (start.0 + 1)..end.0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&self.lines[row]);
                 }
 
-                // Add content from the end line if there's something to add
                 if end_col > 0 {
                     yanked_text.push('\n');
                     yanked_text.push_str(&end_chars[..end_col].iter().collect::<String>());
@@ -5628,7 +5042,6 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked_text;
             self.yank_is_linewise = is_linewise;
         } else {
-            // Forward motion on same line (yw, ye)
             let chars: Vec<char> = self.lines[start.0].chars().collect();
             let mut range_end = end.1;
             if is_inclusive {
@@ -5644,7 +5057,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Helper to yank a text object on the current line given (start, end) bounds
     fn yank_text_object_on_line(&mut self, start: usize, end: usize) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if start < end && end <= chars.len() {
@@ -5678,7 +5090,6 @@ impl<'a> EditorState<'a> {
             self.find_pair_bounds(pair_char)
         {
             if open_row == close_row {
-                // Same line - use character indices
                 let chars: Vec<char> = self.lines[open_row].chars().collect();
                 if open_col + 1 < close_col {
                     self.yank_buffer = chars[open_col + 1..close_col].iter().collect();
@@ -5687,43 +5098,34 @@ impl<'a> EditorState<'a> {
                 }
                 self.yank_is_linewise = false;
             } else {
-                // Multi-line: yank content between brackets
                 let mut yanked = String::new();
 
-                // First line: from after open bracket (character-based)
-                // Only skip whitespace if there's NO content after open bracket on same line
+                // Skip whitespace-only content after open bracket
                 let first_chars: Vec<char> = self.lines[open_row].chars().collect();
                 let after_open: String = first_chars[open_col + 1..].iter().collect();
                 let has_first_line_content = !after_open.trim().is_empty();
                 if has_first_line_content {
-                    // Has content - include everything after open bracket as-is
                     yanked.push_str(&after_open);
                 }
-                // If no content (only whitespace), skip it entirely
 
-                // Middle lines
                 for row in (open_row + 1)..close_row {
-                    // Add leading newline if there's content before, or if open bracket is alone
                     if !yanked.is_empty() || !has_first_line_content {
                         yanked.push('\n');
                     }
                     yanked.push_str(&self.lines[row]);
                 }
 
-                // Last line: up to close bracket (character-based)
-                // Only skip whitespace if there's NO content before close bracket on same line
+                // Skip whitespace-only content before close bracket
                 if close_row > open_row {
                     let last_chars: Vec<char> = self.lines[close_row].chars().collect();
                     let before_close: String = last_chars[..close_col].iter().collect();
                     let has_last_line_content = !before_close.trim().is_empty();
                     if has_last_line_content {
-                        // Has content - include everything before close bracket as-is
                         if !yanked.is_empty() {
                             yanked.push('\n');
                         }
                         yanked.push_str(&before_close);
                     }
-                    // If no content (only whitespace), skip it entirely
                 }
 
                 self.yank_buffer = yanked;
@@ -5737,22 +5139,17 @@ impl<'a> EditorState<'a> {
             self.find_pair_bounds(pair_char)
         {
             if open_row == close_row {
-                // Same line - use character indices
                 let chars: Vec<char> = self.lines[open_row].chars().collect();
                 self.yank_buffer = chars[open_col..=close_col].iter().collect();
                 self.yank_is_linewise = false;
             } else {
-                // Multi-line: yank including brackets
                 let mut yanked = String::new();
-                // First line: from open bracket (character-based)
                 let first_chars: Vec<char> = self.lines[open_row].chars().collect();
                 yanked.extend(&first_chars[open_col..]);
-                // Middle lines
                 for row in (open_row + 1)..close_row {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
-                // Last line: up to and including close bracket (character-based)
                 if close_row > open_row {
                     yanked.push('\n');
                     let last_chars: Vec<char> = self.lines[close_row].chars().collect();
@@ -5767,7 +5164,6 @@ impl<'a> EditorState<'a> {
     fn yank_to_char_forward(&mut self, target: char, inclusive: bool) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 + 1 < chars.len() {
-            // Search for target character starting after cursor
             if let Some(rel_pos) = chars[self.cursor.1 + 1..].iter().position(|&c| c == target) {
                 let target_col = self.cursor.1 + 1 + rel_pos;
                 let end_col = if inclusive {
@@ -5784,12 +5180,10 @@ impl<'a> EditorState<'a> {
     fn yank_to_char_backward(&mut self, target: char, inclusive: bool) {
         let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
         if self.cursor.1 > 0 {
-            // Search for target character backwards before cursor
             if let Some(rel_pos) = chars[..self.cursor.1].iter().rposition(|&c| c == target) {
                 let start_col = if inclusive { rel_pos } else { rel_pos + 1 };
                 self.yank_buffer = chars[start_col..self.cursor.1].iter().collect();
                 self.yank_is_linewise = false;
-                // Move cursor to start of yanked region (like Neovim)
                 self.cursor.1 = start_col;
                 self.update_desired_col();
             }
@@ -5799,12 +5193,9 @@ impl<'a> EditorState<'a> {
     fn yank_to_matching_bracket(&mut self) {
         let saved_cursor = self.cursor;
         self.jump_to_matching_bracket();
-        // Check if cursor moved (indicating a match was found)
         if self.cursor != saved_cursor {
             let end = self.cursor;
-            // Handle multi-line case
             if saved_cursor.0 == end.0 {
-                // Same line - use character indices
                 let (start_col, end_col) = if saved_cursor.1 <= end.1 {
                     (saved_cursor.1, end.1 + 1)
                 } else {
@@ -5815,11 +5206,9 @@ impl<'a> EditorState<'a> {
                     self.yank_buffer = chars[start_col..end_col].iter().collect();
                     self.yank_is_linewise = false;
                 }
-                // Move cursor to opening bracket (smaller column)
                 self.cursor = (saved_cursor.0, start_col);
                 self.update_desired_col();
             } else {
-                // Multi-line: yank from start to end including brackets
                 let (start_pos, end_pos) = if saved_cursor.0 < end.0
                     || (saved_cursor.0 == end.0 && saved_cursor.1 < end.1)
                 {
@@ -5828,21 +5217,17 @@ impl<'a> EditorState<'a> {
                     (end, saved_cursor)
                 };
                 let mut yanked = String::new();
-                // First line: from start position (character-based)
                 let first_chars: Vec<char> = self.lines[start_pos.0].chars().collect();
                 yanked.extend(&first_chars[start_pos.1..]);
-                // Middle lines
                 for row in (start_pos.0 + 1)..end_pos.0 {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
-                // Last line: up to and including end position (character-based)
                 yanked.push('\n');
                 let last_chars: Vec<char> = self.lines[end_pos.0].chars().collect();
                 yanked.extend(&last_chars[..=end_pos.1]);
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
-                // Move cursor to opening bracket (earlier position)
                 self.cursor = start_pos;
                 self.update_desired_col();
             }
@@ -5852,20 +5237,15 @@ impl<'a> EditorState<'a> {
     fn yank_to_prev_unmatched(&mut self, open: char, close: char) {
         let saved_cursor = self.cursor;
         self.jump_to_prev_unmatched(open, close);
-        // Check if cursor moved
         if self.cursor != saved_cursor {
             let target = self.cursor;
-            // Yank from target to saved_cursor (exclusive of target position)
             if target.0 == saved_cursor.0 {
-                // Same line - use character indices
                 let chars: Vec<char> = self.lines[target.0].chars().collect();
                 if target.1 < saved_cursor.1 && saved_cursor.1 <= chars.len() {
                     self.yank_buffer = chars[target.1 + 1..saved_cursor.1].iter().collect();
                     self.yank_is_linewise = false;
                 }
             }
-            // Multi-line yank not supported for this motion for simplicity
-            // Cursor stays at target (backward motion moves cursor like Neovim)
             self.update_desired_col();
         }
     }
@@ -5873,20 +5253,16 @@ impl<'a> EditorState<'a> {
     fn yank_to_next_unmatched(&mut self, open: char, close: char) {
         let saved_cursor = self.cursor;
         self.jump_to_next_unmatched(open, close);
-        // Check if cursor moved
         if self.cursor != saved_cursor {
             let target = self.cursor;
             self.cursor = saved_cursor;
-            // Yank from cursor to target (exclusive of target position)
             if saved_cursor.0 == target.0 {
-                // Same line - use character indices
                 let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
                 if saved_cursor.1 < target.1 && target.1 <= chars.len() {
                     self.yank_buffer = chars[saved_cursor.1..target.1].iter().collect();
                     self.yank_is_linewise = false;
                 }
             }
-            // Multi-line yank not supported for this motion for simplicity
         }
     }
 
@@ -5898,14 +5274,12 @@ impl<'a> EditorState<'a> {
         }
 
         if self.yank_is_block {
-            // Block-wise paste: insert each line on corresponding rows
             let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let start_row = self.cursor.0;
 
             for (i, paste_line) in paste_lines.iter().enumerate() {
                 let target_row = start_row + i;
                 if target_row >= self.lines.len() {
-                    // Create new lines if needed
                     self.lines.push(String::new());
                 }
 
@@ -5916,12 +5290,10 @@ impl<'a> EditorState<'a> {
                     (self.cursor.1 + 1).min(chars.len())
                 };
 
-                // Pad with spaces if insert_pos is beyond line length
                 while chars.len() < insert_pos {
                     chars.push(' ');
                 }
 
-                // Repeat paste content `count` times
                 let repeated_paste: String = paste_line.repeat(count);
                 let paste_chars: Vec<char> = repeated_paste.chars().collect();
 
@@ -5931,7 +5303,6 @@ impl<'a> EditorState<'a> {
                 self.lines[target_row] = chars.into_iter().collect();
             }
 
-            // Move cursor to first pasted character position
             let first_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = if first_line_chars.is_empty() {
                 0
@@ -5940,7 +5311,6 @@ impl<'a> EditorState<'a> {
             };
             self.cursor.1 = insert_pos;
         } else if self.yank_is_linewise {
-            // For linewise, repeat the lines `count` times
             let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let mut all_lines: Vec<String> = Vec::new();
             for _ in 0..count {
@@ -5948,15 +5318,12 @@ impl<'a> EditorState<'a> {
                     all_lines.push(line.to_string());
                 }
             }
-            // Insert yanked lines below current line
             for (i, line) in all_lines.iter().enumerate() {
                 self.lines.insert(self.cursor.0 + 1 + i, line.clone());
             }
-            // Move cursor to first non-blank of first inserted line
             self.cursor.0 += 1;
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else if self.yank_buffer.contains('\n') {
-            // Multi-line characterwise paste - repeat content `count` times
             let repeated_buffer = std::iter::repeat(self.yank_buffer.as_str())
                 .take(count)
                 .collect::<Vec<_>>()
@@ -5969,7 +5336,6 @@ impl<'a> EditorState<'a> {
                 self.cursor.1 + 1
             };
 
-            // Split current line at insert position
             let before: String = current_line_chars[..insert_pos.min(current_line_chars.len())]
                 .iter()
                 .collect();
@@ -5977,16 +5343,13 @@ impl<'a> EditorState<'a> {
                 .iter()
                 .collect();
 
-            // First part: before + first paste line
             self.lines[self.cursor.0] = before + paste_lines[0];
 
-            // Middle lines
             for (i, paste_line) in paste_lines[1..paste_lines.len() - 1].iter().enumerate() {
                 self.lines
                     .insert(self.cursor.0 + 1 + i, paste_line.to_string());
             }
 
-            // Last part: last paste line + after
             if paste_lines.len() > 1 {
                 let last_paste_line = paste_lines[paste_lines.len() - 1];
                 self.lines.insert(
@@ -5995,7 +5358,6 @@ impl<'a> EditorState<'a> {
                 );
             }
 
-            // Move cursor to end of pasted text (last character of last paste line)
             self.cursor.0 += paste_lines.len() - 1;
             let last_paste_chars = paste_lines[paste_lines.len() - 1].chars().count();
             self.cursor.1 = if last_paste_chars > 0 {
@@ -6004,7 +5366,6 @@ impl<'a> EditorState<'a> {
                 0
             };
         } else {
-            // Single line characterwise paste - repeat content `count` times
             let repeated_buffer: String = self.yank_buffer.repeat(count);
             let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = if chars.is_empty() {
@@ -6014,13 +5375,11 @@ impl<'a> EditorState<'a> {
             };
             let paste_chars: Vec<char> = repeated_buffer.chars().collect();
 
-            // Insert paste characters
             for (i, c) in paste_chars.iter().enumerate() {
                 chars.insert(insert_pos + i, *c);
             }
             self.lines[self.cursor.0] = chars.into_iter().collect();
 
-            // Move cursor to last character of pasted text
             self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
         }
         self.clamp_cursor();
@@ -6035,7 +5394,6 @@ impl<'a> EditorState<'a> {
         }
 
         if self.yank_is_block {
-            // Block-wise paste: insert each line on corresponding rows (before cursor)
             let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let start_row = self.cursor.0;
             let insert_col = self.cursor.1;
@@ -6043,19 +5401,16 @@ impl<'a> EditorState<'a> {
             for (i, paste_line) in paste_lines.iter().enumerate() {
                 let target_row = start_row + i;
                 if target_row >= self.lines.len() {
-                    // Create new lines if needed
                     self.lines.push(String::new());
                 }
 
                 let mut chars: Vec<char> = self.lines[target_row].chars().collect();
                 let insert_pos = insert_col.min(chars.len());
 
-                // Pad with spaces if insert_pos is beyond line length
                 while chars.len() < insert_pos {
                     chars.push(' ');
                 }
 
-                // Repeat paste content `count` times
                 let repeated_paste: String = paste_line.repeat(count);
                 let paste_chars: Vec<char> = repeated_paste.chars().collect();
 
@@ -6064,10 +5419,7 @@ impl<'a> EditorState<'a> {
                 }
                 self.lines[target_row] = chars.into_iter().collect();
             }
-
-            // Cursor stays at the insert position
         } else if self.yank_is_linewise {
-            // For linewise, repeat the lines `count` times
             let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let mut all_lines: Vec<String> = Vec::new();
             for _ in 0..count {
@@ -6075,14 +5427,11 @@ impl<'a> EditorState<'a> {
                     all_lines.push(line.to_string());
                 }
             }
-            // Insert yanked lines above current line
             for (i, line) in all_lines.iter().enumerate() {
                 self.lines.insert(self.cursor.0 + i, line.clone());
             }
-            // Move cursor to first non-blank of first inserted line
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else if self.yank_buffer.contains('\n') {
-            // Multi-line characterwise paste - repeat content `count` times
             let repeated_buffer = std::iter::repeat(self.yank_buffer.as_str())
                 .take(count)
                 .collect::<Vec<_>>()
@@ -6091,20 +5440,16 @@ impl<'a> EditorState<'a> {
             let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = self.cursor.1.min(current_line_chars.len());
 
-            // Split current line at insert position
             let before: String = current_line_chars[..insert_pos].iter().collect();
             let after: String = current_line_chars[insert_pos..].iter().collect();
 
-            // First part: before + first paste line
             self.lines[self.cursor.0] = before + paste_lines[0];
 
-            // Middle lines
             for (i, paste_line) in paste_lines[1..paste_lines.len() - 1].iter().enumerate() {
                 self.lines
                     .insert(self.cursor.0 + 1 + i, paste_line.to_string());
             }
 
-            // Last part: last paste line + after
             if paste_lines.len() > 1 {
                 let last_paste_line = paste_lines[paste_lines.len() - 1];
                 self.lines.insert(
@@ -6113,7 +5458,6 @@ impl<'a> EditorState<'a> {
                 );
             }
 
-            // Move cursor to end of pasted text
             self.cursor.0 += paste_lines.len() - 1;
             let last_paste_chars = paste_lines[paste_lines.len() - 1].chars().count();
             self.cursor.1 = if last_paste_chars > 0 {
@@ -6122,19 +5466,16 @@ impl<'a> EditorState<'a> {
                 0
             };
         } else {
-            // Single line characterwise paste - repeat content `count` times
             let repeated_buffer: String = self.yank_buffer.repeat(count);
             let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
             let insert_pos = self.cursor.1.min(chars.len());
             let paste_chars: Vec<char> = repeated_buffer.chars().collect();
 
-            // Insert paste characters
             for (i, c) in paste_chars.iter().enumerate() {
                 chars.insert(insert_pos + i, *c);
             }
             self.lines[self.cursor.0] = chars.into_iter().collect();
 
-            // Move cursor to last character of pasted text
             self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
         }
         self.clamp_cursor();
@@ -6146,30 +5487,23 @@ impl<'a> EditorState<'a> {
         line.chars().position(|c| !c.is_whitespace()).unwrap_or(0)
     }
 
-    // Search functionality
-    /// Perform incremental search as the user types
     fn perform_incremental_search(&mut self) {
         if self.search_input.is_empty() {
-            // No input, go back to start position
             self.cursor = self.search_start_pos;
             self.search_highlight = false;
             self.current_match = None;
             return;
         }
 
-        // Temporarily set search pattern for highlighting
         self.search_pattern = self.search_input.clone();
         self.search_highlight = true;
 
-        // Search from the start position
         let pattern = self.search_input.clone();
         let start_row = self.search_start_pos.0;
         let start_col = self.search_start_pos.1;
 
         match self.search_direction {
             Direction::Forward => {
-                // Search forward from start position
-                // First check current line from start_col
                 let current_line = &self.lines[start_row];
                 if start_col < current_line.len() {
                     if let Some(pos) = current_line[start_col..].find(&pattern) {
@@ -6180,7 +5514,6 @@ impl<'a> EditorState<'a> {
                         return;
                     }
                 }
-                // Search subsequent lines
                 for row in (start_row + 1)..self.lines.len() {
                     if let Some(pos) = self.lines[row].find(&pattern) {
                         self.cursor.0 = row;
@@ -6189,7 +5522,6 @@ impl<'a> EditorState<'a> {
                         return;
                     }
                 }
-                // Wrap around
                 for row in 0..=start_row {
                     let search_end = if row == start_row {
                         start_col
@@ -6207,7 +5539,6 @@ impl<'a> EditorState<'a> {
                 }
             }
             Direction::Backward => {
-                // Search backward from start position
                 let current_line = &self.lines[start_row];
                 if start_col > 0 {
                     if let Some(pos) = current_line[..start_col].rfind(&pattern) {
@@ -6217,7 +5548,6 @@ impl<'a> EditorState<'a> {
                         return;
                     }
                 }
-                // Search previous lines
                 for row in (0..start_row).rev() {
                     if let Some(pos) = self.lines[row].rfind(&pattern) {
                         self.cursor.0 = row;
@@ -6226,7 +5556,6 @@ impl<'a> EditorState<'a> {
                         return;
                     }
                 }
-                // Wrap around
                 for row in (start_row..self.lines.len()).rev() {
                     let search_start = if row == start_row { start_col } else { 0 };
                     if search_start < self.lines[row].len() {
@@ -6241,7 +5570,6 @@ impl<'a> EditorState<'a> {
                 }
             }
         }
-        // No match found, stay at start position
         self.cursor = self.search_start_pos;
         self.current_match = None;
     }
@@ -6261,7 +5589,6 @@ impl<'a> EditorState<'a> {
         if self.search_pattern.is_empty() {
             return;
         }
-        // Search in opposite direction
         match self.search_direction {
             Direction::Forward => self.search_backward_from_cursor(),
             Direction::Backward => self.search_forward_from_cursor(),
@@ -6275,27 +5602,22 @@ impl<'a> EditorState<'a> {
             return;
         }
 
-        // Start searching from current position + 1
         let start_row = self.cursor.0;
         let start_col = self.cursor.1 + 1;
 
-        // Search in current line from cursor position
         let current_line = &self.lines[start_row];
         let chars: Vec<char> = current_line.chars().collect();
         if start_col < chars.len() {
             let search_str: String = chars[start_col..].iter().collect();
             if let Some(pos) = search_str.find(pattern) {
-                // Convert byte position to char position
                 let char_pos = search_str[..pos].chars().count();
                 self.cursor.1 = start_col + char_pos;
                 return;
             }
         }
 
-        // Search in subsequent lines
         for row in (start_row + 1)..self.lines.len() {
             if let Some(pos) = self.lines[row].find(pattern) {
-                // Convert byte position to char position
                 let char_pos = self.lines[row][..pos].chars().count();
                 self.cursor.0 = row;
                 self.cursor.1 = char_pos;
@@ -6303,7 +5625,6 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Wrap around to beginning
         for row in 0..=start_row {
             let search_end = if row == start_row {
                 self.cursor.1
@@ -6329,7 +5650,6 @@ impl<'a> EditorState<'a> {
         let start_row = self.cursor.0;
         let start_col = self.cursor.1;
 
-        // Search in current line before cursor
         let current_line = &self.lines[start_row];
         let chars: Vec<char> = current_line.chars().collect();
         if start_col > 0 {
@@ -6341,7 +5661,6 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Search in previous lines (from end)
         for row in (0..start_row).rev() {
             if let Some(pos) = self.lines[row].rfind(pattern) {
                 let char_pos = self.lines[row][..pos].chars().count();
@@ -6351,10 +5670,8 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Wrap around to end
         for row in (start_row..self.lines.len()).rev() {
             let search_start = if row == start_row {
-                // Get byte offset for start_col
                 let chars: Vec<char> = self.lines[row].chars().collect();
                 if start_col < chars.len() {
                     chars[..start_col].iter().map(|c| c.len_utf8()).sum()
@@ -6384,17 +5701,15 @@ impl<'a> EditorState<'a> {
         let chars: Vec<char> = line.chars().collect();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
-        // If on whitespace, find next non-whitespace character
         let search_col = if chars[col].is_whitespace() {
             match chars[col..].iter().position(|c| !c.is_whitespace()) {
                 Some(offset) => col + offset,
-                None => return, // No word found after cursor
+                None => return,
             }
         } else {
             col
         };
 
-        // Find word bounds at the determined position
         let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
         let is_punct = |c: char| !c.is_whitespace() && !is_word_char(c);
 
@@ -6418,7 +5733,6 @@ impl<'a> EditorState<'a> {
             return;
         }
 
-        // Convert char indices to byte indices
         let byte_start: usize = chars[..start].iter().map(|c| c.len_utf8()).sum();
         let byte_end: usize = chars[..end].iter().map(|c| c.len_utf8()).sum();
 
@@ -6440,9 +5754,7 @@ impl<'a> EditorState<'a> {
         self.current_match = Some(self.cursor);
     }
 
-    // Visual mode helpers
     fn get_visual_selection(&self) -> ((usize, usize), (usize, usize)) {
-        // Returns (start, end) where start <= end
         if self.visual_start.0 < self.cursor.0
             || (self.visual_start.0 == self.cursor.0 && self.visual_start.1 <= self.cursor.1)
         {
@@ -6452,7 +5764,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Get visual block bounds: (min_row, max_row, min_col, max_col)
     fn get_visual_block_bounds(&self) -> (usize, usize, usize, usize) {
         let min_row = self.visual_start.0.min(self.cursor.0);
         let max_row = self.visual_start.0.max(self.cursor.0);
@@ -6461,10 +5772,7 @@ impl<'a> EditorState<'a> {
         (min_row, max_row, min_col, max_col)
     }
 
-    /// Delete visual selection with full undo handling.
-    /// Saves undo state (preserving cursor position) before deletion and records change after.
     fn delete_visual_selection(&mut self) {
-        // Calculate the cursor position for undo (top-left of selection)
         let undo_cursor = if self.mode == EditorMode::VisualBlock {
             let (min_row, _, min_col, _) = self.get_visual_block_bounds();
             (min_row, min_col)
@@ -6473,22 +5781,17 @@ impl<'a> EditorState<'a> {
             start
         };
 
-        // Save undo state with the top-left cursor position
         self.save_undo_state_with_cursor(undo_cursor);
         self.delete_visual_selection_no_undo();
         self.record_change();
     }
 
-    /// Delete visual selection without recording undo state.
-    /// Used for compound operations like paste where caller manages undo.
     fn delete_visual_selection_no_undo(&mut self) {
         let (start, end) = self.get_visual_selection();
 
         if self.mode == EditorMode::VisualBlock {
-            // Block-wise deletion: remove rectangular region from each line
             let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
 
-            // Yank the block
             let mut yanked_lines = Vec::new();
             for row in min_row..=max_row {
                 let chars: Vec<char> = self.lines[row].chars().collect();
@@ -6505,7 +5808,6 @@ impl<'a> EditorState<'a> {
             self.yank_is_linewise = false;
             self.yank_is_block = true;
 
-            // Delete the block
             self.lines_version += 1;
             for row in min_row..=max_row {
                 let chars: Vec<char> = self.lines[row].chars().collect();
@@ -6519,13 +5821,11 @@ impl<'a> EditorState<'a> {
                 }
             }
 
-            // Position cursor at top-left of block
             self.cursor = (min_row, min_col);
             self.clamp_cursor();
             self.update_desired_col();
             return;
         } else if self.mode == EditorMode::VisualLine {
-            // Delete entire lines
             let yanked: Vec<&str> = self.lines[start.0..=end.0]
                 .iter()
                 .map(|s| s.as_str())
@@ -6548,9 +5848,7 @@ impl<'a> EditorState<'a> {
             self.cursor.0 = start.0.min(self.lines.len().saturating_sub(1));
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else {
-            // Character-wise deletion
             if start.0 == end.0 {
-                // Same line
                 let line = &self.lines[start.0];
                 let chars: Vec<char> = line.chars().collect();
                 let sel_end = (end.1 + 1).min(chars.len());
@@ -6562,7 +5860,6 @@ impl<'a> EditorState<'a> {
                 self.lines[start.0] = new_line;
                 self.cursor = start;
             } else {
-                // Multi-line
                 let mut yanked = String::new();
                 let first_chars: Vec<char> = self.lines[start.0].chars().collect();
                 yanked.extend(&first_chars[start.1..]);
@@ -6585,16 +5882,12 @@ impl<'a> EditorState<'a> {
                 for _ in (start.0 + 1)..=end.0 {
                     self.lines.remove(start.0 + 1);
                 }
-                // Position cursor at start of remaining content after deletion
                 let merged_line_len = self.lines[start.0].chars().count();
                 if first_part_len < merged_line_len {
-                    // There's content after first_part on the merged line
                     self.cursor = (start.0, first_part_len);
                 } else if start.0 + 1 < self.lines.len() {
-                    // No content left on merged line after first_part, go to next line
                     self.cursor = (start.0 + 1, 0);
                 } else {
-                    // Stay on current line at valid position
                     self.cursor = (start.0, first_part_len.saturating_sub(1));
                 }
             }
@@ -6607,7 +5900,6 @@ impl<'a> EditorState<'a> {
         let (start, end) = self.get_visual_selection();
 
         if self.mode == EditorMode::VisualBlock {
-            // Block-wise yank: collect rectangular region from each line
             let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
 
             let mut yanked_lines = Vec::new();
@@ -6625,10 +5917,8 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked_lines.join("\n");
             self.yank_is_linewise = false;
             self.yank_is_block = true;
-            // Move cursor to top-left of block
             self.cursor = (min_row, min_col);
         } else if self.mode == EditorMode::VisualLine {
-            // Yank entire lines
             let yanked: Vec<&str> = self.lines[start.0..=end.0]
                 .iter()
                 .map(|s| s.as_str())
@@ -6636,19 +5926,15 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked.join("\n");
             self.yank_is_linewise = true;
             self.yank_is_block = false;
-            // Move cursor to start of selection (Vim behavior)
             self.cursor = start;
         } else {
-            // Character-wise yank
             self.yank_is_block = false;
             if start.0 == end.0 {
-                // Same line
                 let chars: Vec<char> = self.lines[start.0].chars().collect();
                 let sel_end = (end.1 + 1).min(chars.len());
                 self.yank_buffer = chars[start.1..sel_end].iter().collect();
                 self.yank_is_linewise = false;
             } else {
-                // Multi-line
                 let mut yanked = String::new();
                 let first_chars: Vec<char> = self.lines[start.0].chars().collect();
                 yanked.extend(&first_chars[start.1..]);
@@ -6663,19 +5949,15 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
             }
-            // Move cursor to start of selection (Vim behavior)
             self.cursor = start;
         }
     }
 
-    /// Delete entire lines in visual selection (linewise).
-    /// Used by D in Visual/VisualLine mode.
     fn delete_visual_lines(&mut self) {
         let (start, end) = self.get_visual_selection();
         self.save_undo_state_with_cursor((start.0, 0));
         self.lines_version += 1;
 
-        // Yank the lines first
         let yanked: Vec<String> = self.lines[start.0..=end.0]
             .iter()
             .map(|s| s.to_string())
@@ -6684,7 +5966,6 @@ impl<'a> EditorState<'a> {
         self.yank_is_linewise = true;
         self.yank_is_block = false;
 
-        // Delete the lines
         self.lines.drain(start.0..=end.0);
         if self.lines.is_empty() {
             self.lines.push(String::new());
@@ -6696,14 +5977,11 @@ impl<'a> EditorState<'a> {
         self.mode = EditorMode::Normal;
     }
 
-    /// Delete entire lines in visual selection and enter insert mode (linewise).
-    /// Used by C and S in Visual/VisualLine mode.
     fn change_visual_lines(&mut self) {
         let (start, end) = self.get_visual_selection();
         self.save_undo_state_with_cursor((start.0, 0));
         self.lines_version += 1;
 
-        // Yank the lines first
         let yanked: Vec<String> = self.lines[start.0..=end.0]
             .iter()
             .map(|s| s.to_string())
@@ -6712,7 +5990,6 @@ impl<'a> EditorState<'a> {
         self.yank_is_linewise = true;
         self.yank_is_block = false;
 
-        // Delete the lines, leave one empty line for insert
         self.lines.drain(start.0..=end.0);
         if self.lines.is_empty() {
             self.lines.push(String::new());
@@ -6725,15 +6002,12 @@ impl<'a> EditorState<'a> {
         self.insert_buffer.clear();
     }
 
-    /// Delete from left edge of block selection to end of line for each row.
-    /// Used by D in VisualBlock mode.
     fn delete_block_to_eol(&mut self) {
         let (start, end) = self.get_visual_selection();
         let min_col = self.visual_start.1.min(self.cursor.1);
         self.save_undo_state_with_cursor((start.0, min_col));
         self.lines_version += 1;
 
-        // Delete from min_col to end of each line
         let mut yanked_lines = Vec::new();
         for row in start.0..=end.0 {
             let chars: Vec<char> = self.lines[row].chars().collect();
@@ -6754,8 +6028,6 @@ impl<'a> EditorState<'a> {
         self.mode = EditorMode::Normal;
     }
 
-    /// Delete from left edge of block selection to end of line and enter insert mode.
-    /// Used by C in VisualBlock mode.
     fn change_block_to_eol(&mut self) {
         let (start, end) = self.get_visual_selection();
         let num_rows = end.0 - start.0 + 1;
@@ -6763,7 +6035,6 @@ impl<'a> EditorState<'a> {
         self.save_undo_state_with_cursor((start.0, min_col));
         self.lines_version += 1;
 
-        // Delete from min_col to end of each line
         let mut yanked_lines = Vec::new();
         for row in start.0..=end.0 {
             let chars: Vec<char> = self.lines[row].chars().collect();
@@ -6778,7 +6049,6 @@ impl<'a> EditorState<'a> {
         self.yank_is_linewise = false;
         self.yank_is_block = true;
 
-        // Store block info for insert
         self.block_insert_info = Some((start.0, num_rows, min_col, BlockInsertType::Insert));
         self.mode = EditorMode::Insert;
         self.insert_buffer.clear();
@@ -6788,7 +6058,6 @@ impl<'a> EditorState<'a> {
     fn run_loop(&mut self) -> anyhow::Result<()> {
         self.render()?;
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
-            // Handle resize events regardless of mode
             if let InputEvent::Resized { cols, rows } = event {
                 self.buf.resize(cols, rows);
                 self.render()?;
@@ -6859,7 +6128,6 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char('V'),
                         modifiers: Modifiers::CTRL,
                     }) => {
-                        // Enter block-wise visual mode
                         self.mode = EditorMode::VisualBlock;
                         self.visual_start = self.cursor;
                     }
@@ -6867,14 +6135,12 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char(c),
                         ..
                     }) => {
-                        // Handle digit prefix (1-9 start, 0 continues if already started)
                         if c.is_ascii_digit() && (c != '0' || self.count_prefix.is_some()) {
                             self.add_count_digit(c);
                             self.render()?;
                             continue;
                         }
 
-                        // Handle operator + pending keys first (e.g., dgg, cgg)
                         if self.pending_operator.is_some() && !self.pending_keys.is_empty() {
                             let op = self.pending_operator.unwrap();
                             let first = self.pending_keys[0];
