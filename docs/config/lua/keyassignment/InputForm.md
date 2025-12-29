@@ -46,8 +46,10 @@ config.keys = {
           -- form_result is a table with a 'fields' list
           -- each field has 'id' and 'value'
           local host = form_result.fields[1].value
-          if host == '' then host = 'localhost' end
-          
+          if host == '' then
+            host = 'localhost'
+          end
+
           window:toast_notification(
             'WezTerm',
             'Connecting to ' .. host .. ' as ' .. form_result.fields[3].value,
