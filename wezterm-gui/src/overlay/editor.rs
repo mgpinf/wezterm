@@ -6800,7 +6800,10 @@ impl<'a> EditorState<'a> {
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('C'),
                         modifiers: Modifiers::CTRL,
-                    }) => break,
+                    }) => {
+                        self.cancel();
+                        break;
+                    }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('R'),
                         modifiers: Modifiers::CTRL,
@@ -7865,6 +7868,7 @@ impl<'a> EditorState<'a> {
                                 self.submit();
                                 break;
                             } else if first == KeyCode::Char('Z') && c == 'Q' {
+                                self.cancel();
                                 break;
                             } else if first == KeyCode::Char('[') && c == '(' {
                                 self.jump_to_prev_unmatched('(', ')');
@@ -9267,6 +9271,18 @@ impl<'a> EditorState<'a> {
         };
 
         self.trigger_event(name, Some(result));
+    }
+
+    fn cancel(&self) {
+        let name = match *self.args.action {
+            KeyAssignment::EmitEvent(ref id) => id,
+            _ => {
+                log::error!("InputText requires action to be defined by wezterm.action_callback");
+                return;
+            }
+        };
+
+        self.trigger_event(name, None);
     }
 
     fn trigger_event(&self, name: &str, result: Option<InputTextResult>) {
