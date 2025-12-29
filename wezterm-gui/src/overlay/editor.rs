@@ -9729,6 +9729,27 @@ mod tests {
             }
         }
 
+        /// Scroll half page down (Ctrl-D)
+        /// Both viewport and cursor move down by half a page
+        fn scroll_half_page_down(&mut self, count: usize) {
+            let half_page = (self.screen_height / 2).max(1) * count;
+
+            let max_viewport = self.lines.len().saturating_sub(1);
+            self.viewport_top = (self.viewport_top + half_page).min(max_viewport);
+            self.cursor.0 = (self.cursor.0 + half_page).min(self.lines.len().saturating_sub(1));
+            self.clamp_cursor();
+        }
+
+        /// Scroll half page up (Ctrl-U)
+        /// Both viewport and cursor move up by half a page
+        fn scroll_half_page_up(&mut self, count: usize) {
+            let half_page = (self.screen_height / 2).max(1) * count;
+
+            self.viewport_top = self.viewport_top.saturating_sub(half_page);
+            self.cursor.0 = self.cursor.0.saturating_sub(half_page);
+            self.clamp_cursor();
+        }
+
         fn delete_line(&mut self, row: usize) {
             if self.lines.len() > 1 && row < self.lines.len() {
                 self.lines.remove(row);
@@ -12016,6 +12037,139 @@ mod tests {
         editor.scroll_up(3);
         assert_eq!(editor.viewport_top, 1);
         assert_eq!(editor.cursor.0, 3); // Cursor adjusted to last visible
+    }
+
+    // ============ Ctrl-D/Ctrl-U (Half Page Scroll) Tests ============
+
+    #[test]
+    fn test_scroll_half_page_down_basic() {
+        // With screen_height=10, half_page=5
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12",
+        )
+        .with_screen_height(10)
+        .with_cursor(0, 0);
+        editor.scroll_half_page_down(1);
+        assert_eq!(editor.viewport_top, 5);
+        assert_eq!(editor.cursor.0, 5);
+    }
+
+    #[test]
+    fn test_scroll_half_page_down_with_count() {
+        // With screen_height=10, half_page=5, count=2 means move 10 lines
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15",
+        )
+        .with_screen_height(10)
+        .with_cursor(0, 0);
+        editor.scroll_half_page_down(2);
+        assert_eq!(editor.viewport_top, 10);
+        assert_eq!(editor.cursor.0, 10);
+    }
+
+    #[test]
+    fn test_scroll_half_page_down_clamps_to_end() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(10)
+            .with_cursor(0, 0);
+        editor.scroll_half_page_down(1);
+        // Should clamp to last line (4)
+        assert_eq!(editor.viewport_top, 4);
+        assert_eq!(editor.cursor.0, 4);
+    }
+
+    #[test]
+    fn test_scroll_half_page_down_from_middle() {
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12",
+        )
+        .with_screen_height(10)
+        .with_cursor(3, 0);
+        editor.viewport_top = 2;
+        editor.scroll_half_page_down(1);
+        assert_eq!(editor.viewport_top, 7);
+        assert_eq!(editor.cursor.0, 8);
+    }
+
+    #[test]
+    fn test_scroll_half_page_up_basic() {
+        // With screen_height=10, half_page=5
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12",
+        )
+        .with_screen_height(10)
+        .with_cursor(10, 0);
+        editor.viewport_top = 8;
+        editor.scroll_half_page_up(1);
+        assert_eq!(editor.viewport_top, 3);
+        assert_eq!(editor.cursor.0, 5);
+    }
+
+    #[test]
+    fn test_scroll_half_page_up_with_count() {
+        // With screen_height=10, half_page=5, count=2 means move 10 lines
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15",
+        )
+        .with_screen_height(10)
+        .with_cursor(12, 0);
+        editor.viewport_top = 10;
+        editor.scroll_half_page_up(2);
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 2);
+    }
+
+    #[test]
+    fn test_scroll_half_page_up_clamps_to_start() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(10)
+            .with_cursor(2, 0);
+        editor.viewport_top = 1;
+        editor.scroll_half_page_up(1);
+        // Should clamp to first line (0)
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 0);
+    }
+
+    #[test]
+    fn test_scroll_half_page_up_from_middle() {
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12",
+        )
+        .with_screen_height(10)
+        .with_cursor(8, 0);
+        editor.viewport_top = 5;
+        editor.scroll_half_page_up(1);
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 3);
+    }
+
+    #[test]
+    fn test_scroll_half_page_down_preserves_column() {
+        let mut editor = TestEditor::new(
+            "hello world\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\ntest line",
+        )
+        .with_screen_height(10)
+        .with_cursor(0, 6);
+        editor.scroll_half_page_down(1);
+        assert_eq!(editor.cursor.0, 5);
+        // Column should be clamped to line length
+        assert!(editor.cursor.1 <= 4); // "line6" has 5 chars
+    }
+
+    #[test]
+    fn test_scroll_half_page_small_screen() {
+        // With screen_height=2, half_page=1
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(2)
+            .with_cursor(0, 0);
+        editor.scroll_half_page_down(1);
+        assert_eq!(editor.viewport_top, 1);
+        assert_eq!(editor.cursor.0, 1);
+
+        editor.scroll_half_page_up(1);
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 0);
     }
 
     // ============ Increment/Decrement Number Tests ============
