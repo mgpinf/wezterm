@@ -165,6 +165,25 @@ config.colors = {
   form_required_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
   form_border_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   form_separator_fg = 'Default', -- {{since('nightly', inline=True)}}
+
+  -- Colors for the InputText editor overlay
+  input_text_normal_mode_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  input_text_normal_mode_bg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
+  input_text_insert_mode_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  input_text_insert_mode_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  input_text_visual_mode_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  input_text_visual_mode_bg = { AnsiColor = 'Purple' }, -- {{since('nightly', inline=True)}}
+  input_text_replace_mode_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_replace_mode_bg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
+  input_text_command_mode_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_command_mode_bg = { AnsiColor = 'Blue' }, -- {{since('nightly', inline=True)}}
+  input_text_status_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_status_bg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  input_text_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  input_text_search_match_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  input_text_search_match_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  input_text_search_current_match_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_search_current_match_bg = { AnsiColor = 'Navy' }, -- {{since('nightly', inline=True)}}
 }
 
 return config
