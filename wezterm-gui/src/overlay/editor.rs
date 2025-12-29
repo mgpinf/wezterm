@@ -142,7 +142,7 @@ impl EditorColors {
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::White.into()), |c| {
                     ColorAttribute::TrueColorWithDefaultFallback(c.into())
                 }),
-            // Search match colors (yellow bg for matches, olive for current)
+            // Search match colors (yellow bg for matches, navy for current)
             search_match_fg: colors
                 .input_text_search_match_fg
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Black.into()), |c| {
@@ -159,7 +159,7 @@ impl EditorColors {
                 }),
             search_current_match_bg: colors
                 .input_text_search_current_match_bg
-                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Olive.into()), |c| {
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Navy.into()), |c| {
                     c.into()
                 }),
             // Mode text strings
