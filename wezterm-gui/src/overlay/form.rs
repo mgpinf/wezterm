@@ -31,18 +31,30 @@ impl FormColors {
 
         Self {
             label_fg: colors
-                .transient_entry_key_fg
+                .form_label_fg
                 .unwrap_or(AnsiColor::Purple.into())
                 .into(),
-            active_label_fg: AnsiColor::Yellow.into(),
-            placeholder_fg: AnsiColor::Silver.into(),
-            input_fg: AnsiColor::White.into(),
-            required_fg: AnsiColor::Red.into(),
+            active_label_fg: colors
+                .form_active_label_fg
+                .unwrap_or(AnsiColor::Yellow.into())
+                .into(),
+            placeholder_fg: colors
+                .form_placeholder_fg
+                .unwrap_or(AnsiColor::Silver.into())
+                .into(),
+            input_fg: colors
+                .form_input_fg
+                .unwrap_or(AnsiColor::White.into())
+                .into(),
+            required_fg: colors
+                .form_required_fg
+                .unwrap_or(AnsiColor::Red.into())
+                .into(),
             border_fg: colors
-                .transient_separator_fg
+                .form_border_fg
                 .map_or_else(|| AnsiColor::Grey.into(), |fg_color| fg_color.into()),
             separator_fg: colors
-                .transient_separator_fg
+                .form_separator_fg
                 .map_or_else(|| ColorAttribute::Default, |fg_color| fg_color.into()),
         }
     }

@@ -210,6 +210,15 @@ pub struct Palette {
     pub transient_separator_fg: Option<ColorSpec>,
 
     pub selector_multiple_marker_bg: Option<ColorSpec>,
+
+    /// Form overlay colors
+    pub form_label_fg: Option<ColorSpec>,
+    pub form_active_label_fg: Option<ColorSpec>,
+    pub form_placeholder_fg: Option<ColorSpec>,
+    pub form_input_fg: Option<ColorSpec>,
+    pub form_required_fg: Option<ColorSpec>,
+    pub form_border_fg: Option<ColorSpec>,
+    pub form_separator_fg: Option<ColorSpec>,
 }
 impl_lua_conversion_dynamic!(Palette);
 
@@ -293,6 +302,13 @@ impl Palette {
             transient_section_header_fg: overlay!(transient_section_header_fg),
             transient_separator_fg: overlay!(transient_separator_fg),
             selector_multiple_marker_bg: overlay!(selector_multiple_marker_bg),
+            form_label_fg: overlay!(form_label_fg),
+            form_active_label_fg: overlay!(form_active_label_fg),
+            form_placeholder_fg: overlay!(form_placeholder_fg),
+            form_input_fg: overlay!(form_input_fg),
+            form_required_fg: overlay!(form_required_fg),
+            form_border_fg: overlay!(form_border_fg),
+            form_separator_fg: overlay!(form_separator_fg),
         }
     }
 }
