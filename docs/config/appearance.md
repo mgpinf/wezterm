@@ -156,6 +156,15 @@ config.colors = {
   transient_separator_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
 
   selector_multiple_marker_bg = { AnsiColor = 'Purple' }, -- {{since('nightly', inline=True)}}
+
+  -- Colors for the InputForm overlay
+  form_label_fg = { AnsiColor = 'Purple' }, -- {{since('nightly', inline=True)}}
+  form_active_label_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  form_placeholder_fg = { AnsiColor = 'Silver' }, -- {{since('nightly', inline=True)}}
+  form_input_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  form_required_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
+  form_border_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  form_separator_fg = 'Default', -- {{since('nightly', inline=True)}}
 }
 
 return config
