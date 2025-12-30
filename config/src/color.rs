@@ -215,6 +215,7 @@ pub struct Palette {
     pub image_selector_description_fg: Option<ColorSpec>,
     pub image_selector_error_fg: Option<ColorSpec>,
     pub image_selector_separator_fg: Option<ColorSpec>,
+    pub image_selector_metadata_fg: Option<ColorSpec>,
 
     /// Form overlay colors
     pub form_label_fg: Option<ColorSpec>,
@@ -310,6 +311,7 @@ impl Palette {
             image_selector_description_fg: overlay!(image_selector_description_fg),
             image_selector_error_fg: overlay!(image_selector_error_fg),
             image_selector_separator_fg: overlay!(image_selector_separator_fg),
+            image_selector_metadata_fg: overlay!(image_selector_metadata_fg),
             form_label_fg: overlay!(form_label_fg),
             form_active_label_fg: overlay!(form_active_label_fg),
             form_placeholder_fg: overlay!(form_placeholder_fg),

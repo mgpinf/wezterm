@@ -24,6 +24,22 @@ const ROW_OVERHEAD: usize = 3;
 const SEPARATOR: &str = "│";
 const IMAGE_CACHE_CAPACITY: usize = 10;
 
+fn format_file_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 enum ImageLoadError {
     NotFound,
     PermissionDenied,
@@ -110,6 +126,7 @@ struct ImageSelectorState<'a> {
     description_fg: ColorAttribute,
     error_fg: ColorAttribute,
     separator_fg: ColorAttribute,
+    metadata_fg: ColorAttribute,
     image_cache: ImageCache,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
@@ -312,7 +329,8 @@ impl<'a> ImageSelectorState<'a> {
                 y: Position::Absolute(0),
             });
 
-            let filename = Path::new(&path)
+            let filepath = Path::new(&path);
+            let filename = filepath
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.clone());
@@ -321,7 +339,34 @@ impl<'a> ImageSelectorState<'a> {
 
             match self.load_image(&path) {
                 Ok((image_data, (img_w, img_h))) => {
-                    let max_h = rows.saturating_sub(5);
+                    let format = filepath
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_uppercase())
+                        .unwrap_or_else(|| "?".to_string());
+                    let file_size = std::fs::metadata(&path)
+                        .map(|m| format_file_size(m.len()))
+                        .unwrap_or_else(|_| "?".to_string());
+                    let dimensions = format!("{}×{}", img_w, img_h);
+
+                    self.buf.add_changes(vec![
+                        Change::CursorPosition {
+                            x: Position::Absolute(preview_col),
+                            y: Position::Absolute(1),
+                        },
+                        AttributeChange::Foreground(self.metadata_fg).into(),
+                        Change::Text(dimensions),
+                        AttributeChange::Foreground(self.separator_fg).into(),
+                        Change::Text(" · ".into()),
+                        AttributeChange::Foreground(self.metadata_fg).into(),
+                        Change::Text(file_size),
+                        AttributeChange::Foreground(self.separator_fg).into(),
+                        Change::Text(" · ".into()),
+                        AttributeChange::Foreground(self.metadata_fg).into(),
+                        Change::Text(format),
+                        Change::AllAttributes(CellAttributes::default()),
+                    ]);
+
+                    let max_h = rows.saturating_sub(6);
                     let max_w = preview_width.saturating_sub(2);
 
                     let (disp_w, disp_h) = Self::calculate_display_size(
@@ -338,7 +383,7 @@ impl<'a> ImageSelectorState<'a> {
                         self.buf.add_changes(vec![
                             Change::CursorPosition {
                                 x: Position::Absolute(preview_col + x_offset),
-                                y: Position::Absolute(2),
+                                y: Position::Absolute(3),
                             },
                             Change::Image(Image {
                                 width: disp_w,
@@ -626,6 +671,10 @@ pub fn image_selector(
             .unwrap_or(ColorAttribute::Default),
         separator_fg: colors
             .image_selector_separator_fg
+            .map(Into::into)
+            .unwrap_or(ColorAttribute::Default),
+        metadata_fg: colors
+            .image_selector_metadata_fg
             .map(Into::into)
             .unwrap_or(ColorAttribute::Default),
         image_cache: ImageCache::new(IMAGE_CACHE_CAPACITY),
