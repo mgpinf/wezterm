@@ -144,7 +144,7 @@ async fn find_files<'lua>(
             Path::new(&directory),
             &extensions,
             opts.max_depth,
-            0,
+            1,
             opts.hidden,
             &mut results,
         )?;
