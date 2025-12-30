@@ -927,7 +927,7 @@ pub enum KeyAssignment {
     QuitApplication,
     SpawnCommandInNewTab(SpawnCommand),
     SpawnCommandInNewWindow(SpawnCommand),
-    SpawnCommandInFloatingPane(SpawnCommand),
+    SpawnCommandInFloatingPane(FloatingPaneSpawn),
     SplitHorizontal(SpawnCommand),
     SplitVertical(SpawnCommand),
     ShowLauncher,
@@ -1017,6 +1017,17 @@ pub struct SplitPane {
     #[dynamic(default)]
     pub top_level: bool,
 }
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct FloatingPaneSpawn {
+    #[dynamic(flatten)]
+    pub command: SpawnCommand,
+    /// If true, replace the current floating pane (if any) with this new one.
+    /// If false (default), do nothing if a floating pane already exists.
+    #[dynamic(default)]
+    pub replace_current: bool,
+}
+impl_lua_conversion_dynamic!(FloatingPaneSpawn);
 
 #[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
 pub enum SplitSize {

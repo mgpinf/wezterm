@@ -593,10 +593,12 @@ fn english_ordinal(n: isize) -> String {
 fn spawn_command_from_action(action: &KeyAssignment) -> Option<&SpawnCommand> {
     match action {
         SplitPane(config::keyassignment::SplitPane { command, .. }) => Some(command),
+        SpawnCommandInFloatingPane(config::keyassignment::FloatingPaneSpawn {
+            command, ..
+        }) => Some(command),
         SplitHorizontal(command)
         | SplitVertical(command)
         | SpawnCommandInNewWindow(command)
-        | SpawnCommandInFloatingPane(command)
         | SpawnCommandInNewTab(command) => Some(command),
         _ => None,
     }
@@ -1051,13 +1053,22 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: Some("md_open_in_new"),
         },
-        SpawnCommandInFloatingPane(cmd) => CommandDef {
+        SpawnCommandInFloatingPane(spawn) => CommandDef {
             brief: label_string(
                 action,
-                format!("Spawn a new Floating Pane with {cmd:?}").to_string(),
+                format!("Spawn a new Floating Pane with {:?}", spawn.command).to_string(),
             )
             .into(),
-            doc: format!("Spawn a new Floating Pane with {cmd:?}").into(),
+            doc: format!(
+                "Spawn a new Floating Pane with {:?}{}",
+                spawn.command,
+                if spawn.replace_current {
+                    " (replacing current)"
+                } else {
+                    ""
+                }
+            )
+            .into(),
             keys: vec![],
             args: &[],
             menubar: &[],

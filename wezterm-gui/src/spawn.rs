@@ -15,7 +15,7 @@ pub enum SpawnWhere {
     NewWindow,
     NewTab,
     SplitPane(SplitRequest),
-    FloatingPane,
+    FloatingPane { replace_current: bool },
 }
 
 pub fn spawn_command_impl(
@@ -123,7 +123,7 @@ pub async fn spawn_command_internal(
                 bail!("there is no active tab while splitting pane!?");
             }
         }
-        SpawnWhere::FloatingPane => {
+        SpawnWhere::FloatingPane { replace_current } => {
             // Floating panes are a specific layout preference handled by the Tab itself,
             // rather than a global window management concern like SplitPane or NewTab.
             // By implementing this here in the Controller (GUI), we orchestrate the
@@ -136,13 +136,24 @@ pub async fn spawn_command_internal(
             };
             if let Some(tab) = mux.get_active_tab_for_window(src_window_id) {
                 // A tab can only have one floating pane at a time.
-                // If one already exists, we don't spawn another.
                 if tab.has_floating_pane() {
-                    log::debug!(
-                        "tab {} already has a floating pane, not spawning another",
-                        tab.tab_id()
-                    );
-                    return Ok(());
+                    if replace_current {
+                        // Close the existing floating pane before spawning a new one
+                        if let Some(old_pane) = tab.take_floating_pane() {
+                            log::debug!(
+                                "replacing floating pane {} in tab {}",
+                                old_pane.pane_id(),
+                                tab.tab_id()
+                            );
+                            mux.remove_pane(old_pane.pane_id());
+                        }
+                    } else {
+                        log::debug!(
+                            "tab {} already has a floating pane, not spawning another",
+                            tab.tab_id()
+                        );
+                        return Ok(());
+                    }
                 }
 
                 let domain = match &spawn.domain {
