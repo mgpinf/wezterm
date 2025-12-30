@@ -8,17 +8,25 @@ tags:
 # `wezterm.find_files(directory [, options])`
 
 This function recursively searches for files in the specified `directory` and
-returns an array containing the absolute file paths of the matching results.
+returns an array containing the absolute paths of the matching results.
 It provides fd-like functionality for finding files with optional filtering
-by extension and depth.
+by extension, type, and depth.
 
 The optional `options` parameter is a table that can contain:
 
 * `extensions` - an array of file extensions to filter by (e.g., `{"png", "jpg"}`).
   Extensions can be specified with or without the leading dot. If not specified
-  or empty, all files are returned.
+  or empty, all files are returned. Only applies to files.
 * `exclude` - an array of glob patterns to exclude (e.g., `{"*.log", "**/node_modules/**"}`).
   Any file or directory matching these patterns will be skipped.
+* `types` - an array of file types to include (similar to `fd -t`). Supported values:
+  * `"file"` or `"f"` - regular files
+  * `"directory"` or `"d"` - directories
+  * `"symlink"` or `"l"` - symbolic links
+  * `"executable"` or `"x"` - executable files (Unix only)
+  * `"empty"` or `"e"` - empty files or directories
+
+  If not specified, only regular files are returned (default behavior).
 * `max_depth` - maximum directory depth to traverse (1-based, like `fd`). A value
   of `1` means only the starting directory, `2` includes one level of subdirectories,
   and so on. If not specified, there is no depth limit.
@@ -72,6 +80,34 @@ local wezterm = require 'wezterm'
 local source_files = wezterm.find_files(wezterm.home_dir .. '/projects', {
   extensions = { 'rs' },
   exclude = { '**/target/**', '*_test.rs', '**/.git/**' },
+})
+```
+
+### Find by type
+
+```lua
+local wezterm = require 'wezterm'
+
+-- Find all directories
+local dirs = wezterm.find_files(wezterm.home_dir .. '/projects', {
+  types = { 'directory' },
+  max_depth = 2,
+})
+
+-- Find all executable files
+local executables = wezterm.find_files('/usr/local/bin', {
+  types = { 'x' },
+})
+
+-- Find both files and directories
+local all_entries = wezterm.find_files(wezterm.home_dir, {
+  types = { 'f', 'd' },
+  max_depth = 1,
+})
+
+-- Find empty files
+local empty_files = wezterm.find_files(wezterm.home_dir .. '/tmp', {
+  types = { 'empty' },
 })
 ```
 

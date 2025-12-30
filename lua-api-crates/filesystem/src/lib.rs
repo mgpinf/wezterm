@@ -7,6 +7,58 @@ use std::collections::HashSet;
 use std::path::Path;
 use wezterm_dynamic::FromDynamic;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FileType {
+    File,
+    Directory,
+    Symlink,
+    #[cfg(unix)]
+    Executable,
+    Empty,
+}
+
+impl FileType {
+    fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "file" | "f" => Some(FileType::File),
+            "directory" | "dir" | "d" => Some(FileType::Directory),
+            "symlink" | "l" => Some(FileType::Symlink),
+            #[cfg(unix)]
+            "executable" | "x" => Some(FileType::Executable),
+            "empty" | "e" => Some(FileType::Empty),
+            _ => None,
+        }
+    }
+
+    fn matches(&self, path: &Path) -> bool {
+        match self {
+            FileType::File => path.is_file(),
+            FileType::Directory => path.is_dir(),
+            FileType::Symlink => path.is_symlink(),
+            #[cfg(unix)]
+            FileType::Executable => {
+                use std::os::unix::fs::PermissionsExt;
+                path.is_file()
+                    && path
+                        .metadata()
+                        .map(|m| m.permissions().mode() & 0o111 != 0)
+                        .unwrap_or(false)
+            }
+            FileType::Empty => {
+                if path.is_file() {
+                    path.metadata().map(|m| m.len() == 0).unwrap_or(false)
+                } else if path.is_dir() {
+                    path.read_dir()
+                        .map(|mut d| d.next().is_none())
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
 pub fn register(lua: &Lua) -> anyhow::Result<()> {
     let wezterm_mod = get_or_create_module(lua, "wezterm")?;
     wezterm_mod.set("read_dir", lua.create_async_function(read_dir)?)?;
@@ -65,6 +117,8 @@ struct FindFilesOptions {
     #[dynamic(default)]
     exclude: Vec<String>,
     #[dynamic(default)]
+    types: Vec<String>,
+    #[dynamic(default)]
     max_depth: Option<usize>,
     #[dynamic(default)]
     hidden: bool,
@@ -89,10 +143,17 @@ async fn find_files<'lua>(
 
         let exclude_set = build_glob_set(&opts.exclude)?;
 
+        let file_types: HashSet<FileType> = opts
+            .types
+            .iter()
+            .filter_map(|t| FileType::from_str(t))
+            .collect();
+
         fn walk_dir(
             dir: &Path,
             extensions: &HashSet<String>,
             exclude_set: &GlobSet,
+            file_types: &HashSet<FileType>,
             max_depth: Option<usize>,
             current_depth: usize,
             hidden: bool,
@@ -124,27 +185,45 @@ async fn find_files<'lua>(
                     continue;
                 }
 
-                if path.is_dir() {
+                let is_dir = path.is_dir();
+
+                // Check if this entry matches the type filter
+                let type_matches = if file_types.is_empty() {
+                    // Default behavior: only match files
+                    path.is_file()
+                } else {
+                    file_types.iter().any(|ft| ft.matches(&path))
+                };
+
+                // Always recurse into directories (unless excluded)
+                if is_dir {
                     walk_dir(
                         &path,
                         extensions,
                         exclude_set,
+                        file_types,
                         max_depth,
                         current_depth + 1,
                         hidden,
                         results,
                     )?;
-                } else if path.is_file() {
-                    if extensions.is_empty() {
-                        if let Some(utf8) = path.to_str() {
-                            results.push(utf8.to_string());
-                        }
-                    } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                        if extensions.contains(&ext.to_lowercase()) {
-                            if let Some(utf8) = path.to_str() {
-                                results.push(utf8.to_string());
+                }
+
+                // Add to results if type matches
+                if type_matches {
+                    // Apply extension filter only to files
+                    if path.is_file() && !extensions.is_empty() {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if !extensions.contains(&ext.to_lowercase()) {
+                                continue;
                             }
+                        } else {
+                            continue;
                         }
+                    }
+
+                    if let Some(utf8) = path.to_str() {
+                        results.push(utf8.to_string());
                     }
                 }
             }
@@ -155,6 +234,7 @@ async fn find_files<'lua>(
             Path::new(&directory),
             &extensions,
             &exclude_set,
+            &file_types,
             opts.max_depth,
             1,
             opts.hidden,
