@@ -127,6 +127,7 @@ struct ImageSelectorState<'a> {
     error_fg: ColorAttribute,
     separator_fg: ColorAttribute,
     metadata_fg: ColorAttribute,
+    filename_fg: ColorAttribute,
     image_cache: ImageCache,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
@@ -334,8 +335,11 @@ impl<'a> ImageSelectorState<'a> {
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.clone());
-            self.buf
-                .add_change(Change::Text(truncate_right(&filename, preview_width)));
+            self.buf.add_changes(vec![
+                AttributeChange::Foreground(self.filename_fg).into(),
+                Change::Text(truncate_right(&filename, preview_width)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
 
             match self.load_image(&path) {
                 Ok((image_data, (img_w, img_h))) => {
@@ -675,6 +679,10 @@ pub fn image_selector(
             .unwrap_or(ColorAttribute::Default),
         metadata_fg: colors
             .image_selector_metadata_fg
+            .map(Into::into)
+            .unwrap_or(ColorAttribute::Default),
+        filename_fg: colors
+            .image_selector_filename_fg
             .map(Into::into)
             .unwrap_or(ColorAttribute::Default),
         image_cache: ImageCache::new(IMAGE_CACHE_CAPACITY),
