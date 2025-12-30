@@ -356,28 +356,21 @@ fn run_typing_test(
     loop {
         match buf.terminal().poll_input(None) {
             Ok(Some(InputEvent::Key(KeyEvent { key, modifiers }))) => {
-                if modifiers.contains(Modifiers::CTRL) {
-                    match key {
-                        KeyCode::Char('C') => return Ok(TestAction::Quit),
-                        KeyCode::Char('R') => return Ok(TestAction::Restart),
-                        KeyCode::Char('W') => {
-                            state.delete_last_word();
-                            render_test_screen(buf, &state)?;
-                            continue;
-                        }
-                        _ => {}
+                match (modifiers.contains(Modifiers::CTRL), key) {
+                    (true, KeyCode::Char('C')) => return Ok(TestAction::Quit),
+                    (true, KeyCode::Char('R')) => return Ok(TestAction::Restart),
+                    (true, KeyCode::Char('W')) => {
+                        state.delete_last_word();
+                        render_test_screen(buf, &state)?;
                     }
-                }
-
-                match key {
-                    KeyCode::Char(c) => {
+                    (false, KeyCode::Char(c)) => {
                         state.type_char(c);
                         if state.is_complete() {
                             return show_results(buf, &state.get_results(), wordlist_name);
                         }
                         render_test_screen(buf, &state)?;
                     }
-                    KeyCode::Backspace => {
+                    (false, KeyCode::Backspace) => {
                         if state.input_chars.pop().is_some() {
                             render_test_screen(buf, &state)?;
                         }
