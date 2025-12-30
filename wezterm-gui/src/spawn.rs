@@ -15,7 +15,7 @@ pub enum SpawnWhere {
     NewWindow,
     NewTab,
     SplitPane(SplitRequest),
-    FloatingPane,
+    FloatingPane { replace_current: bool },
 }
 
 pub fn spawn_command_impl(
@@ -123,7 +123,7 @@ pub async fn spawn_command_internal(
                 bail!("there is no active tab while splitting pane!?");
             }
         }
-        SpawnWhere::FloatingPane => {
+        SpawnWhere::FloatingPane { replace_current } => {
             // Floating panes are a specific layout preference handled by the Tab itself,
             // rather than a global window management concern like SplitPane or NewTab.
             // By implementing this here in the Controller (GUI), we orchestrate the
@@ -135,11 +135,35 @@ pub async fn spawn_command_internal(
                 None => anyhow::bail!("no src window when spawning floating pane?"),
             };
             if let Some(tab) = mux.get_active_tab_for_window(src_window_id) {
+                // A tab can only have one floating pane at a time.
+                if tab.has_floating_pane() {
+                    if replace_current {
+                        // Close the existing floating pane before spawning a new one
+                        if let Some(old_pane) = tab.take_floating_pane() {
+                            log::debug!(
+                                "replacing floating pane {} in tab {}",
+                                old_pane.pane_id(),
+                                tab.tab_id()
+                            );
+                            mux.remove_pane(old_pane.pane_id());
+                        }
+                    } else {
+                        log::debug!(
+                            "tab {} already has a floating pane, not spawning another",
+                            tab.tab_id()
+                        );
+                        return Ok(());
+                    }
+                }
+
                 let domain = match &spawn.domain {
                     SpawnTabDomain::DefaultDomain => Some(mux.default_domain()),
                     SpawnTabDomain::CurrentPaneDomain => {
                         let dom_id = tab.get_active_pane().map(|p| p.domain_id()).unwrap_or(0);
-                        Some(mux.get_domain(dom_id).unwrap_or_else(|| mux.default_domain()))
+                        Some(
+                            mux.get_domain(dom_id)
+                                .unwrap_or_else(|| mux.default_domain()),
+                        )
                     }
                     SpawnTabDomain::DomainName(name) => mux.get_domain_by_name(name),
                     SpawnTabDomain::DomainId(id) => mux.get_domain(*id),
