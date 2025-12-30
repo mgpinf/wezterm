@@ -17,8 +17,11 @@ The optional `options` parameter is a table that can contain:
 * `extensions` - an array of file extensions to filter by (e.g., `{"png", "jpg"}`).
   Extensions can be specified with or without the leading dot. If not specified
   or empty, all files are returned.
-* `max_depth` - maximum directory depth to traverse. If not specified, there is
-  no depth limit.
+* `exclude` - an array of glob patterns to exclude (e.g., `{"*.log", "**/node_modules/**"}`).
+  Any file or directory matching these patterns will be skipped.
+* `max_depth` - maximum directory depth to traverse (1-based, like `fd`). A value
+  of `1` means only the starting directory, `2` includes one level of subdirectories,
+  and so on. If not specified, there is no depth limit.
 * `hidden` - boolean, whether to include hidden files and directories (those
   starting with `.`). Defaults to `false`.
 
@@ -57,6 +60,18 @@ local wezterm = require 'wezterm'
 local all_files = wezterm.find_files(wezterm.home_dir .. '/projects', {
   extensions = { 'rs' },
   hidden = true,
+})
+```
+
+### Find files with exclusions
+
+```lua
+local wezterm = require 'wezterm'
+
+-- Find all Rust files, excluding target directories and test files
+local source_files = wezterm.find_files(wezterm.home_dir .. '/projects', {
+  extensions = { 'rs' },
+  exclude = { '**/target/**', '*_test.rs', '**/.git/**' },
 })
 ```
 

@@ -1733,6 +1733,7 @@ dependencies = [
  "anyhow",
  "config",
  "filenamegen",
+ "globset",
  "luahelper",
  "smol",
  "wezterm-dynamic",

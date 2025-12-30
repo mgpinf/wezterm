@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use config::lua::get_or_create_module;
 use config::lua::mlua::{self, Lua, Value};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use smol::prelude::*;
 use std::collections::HashSet;
 use std::path::Path;
@@ -62,6 +63,8 @@ struct FindFilesOptions {
     #[dynamic(default)]
     extensions: Vec<String>,
     #[dynamic(default)]
+    exclude: Vec<String>,
+    #[dynamic(default)]
     max_depth: Option<usize>,
     #[dynamic(default)]
     hidden: bool,
@@ -84,9 +87,12 @@ async fn find_files<'lua>(
             .map(|e| e.trim_start_matches('.').to_lowercase())
             .collect();
 
+        let exclude_set = build_glob_set(&opts.exclude)?;
+
         fn walk_dir(
             dir: &Path,
             extensions: &HashSet<String>,
+            exclude_set: &GlobSet,
             max_depth: Option<usize>,
             current_depth: usize,
             hidden: bool,
@@ -114,10 +120,15 @@ async fn find_files<'lua>(
                     continue;
                 }
 
+                if exclude_set.is_match(&path) {
+                    continue;
+                }
+
                 if path.is_dir() {
                     walk_dir(
                         &path,
                         extensions,
+                        exclude_set,
                         max_depth,
                         current_depth + 1,
                         hidden,
@@ -143,6 +154,7 @@ async fn find_files<'lua>(
         walk_dir(
             Path::new(&directory),
             &extensions,
+            &exclude_set,
             opts.max_depth,
             1,
             opts.hidden,
@@ -155,4 +167,13 @@ async fn find_files<'lua>(
     .map_err(mlua::Error::external)?;
 
     Ok(entries)
+}
+
+fn build_glob_set(patterns: &[String]) -> anyhow::Result<GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        let glob = Glob::new(pattern)?;
+        builder.add(glob);
+    }
+    Ok(builder.build()?)
 }
