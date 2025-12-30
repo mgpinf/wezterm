@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use config::lua::get_or_create_module;
 use config::lua::mlua::{self, Lua, Value};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use rayon::prelude::*;
 use smol::prelude::*;
 use std::collections::HashSet;
 use std::path::Path;
@@ -134,7 +135,6 @@ async fn find_files<'lua>(
     };
 
     let entries = smol::unblock(move || {
-        let mut results = vec![];
         let extensions: HashSet<String> = opts
             .extensions
             .iter()
@@ -157,80 +157,84 @@ async fn find_files<'lua>(
             max_depth: Option<usize>,
             current_depth: usize,
             hidden: bool,
-            results: &mut Vec<String>,
-        ) -> anyhow::Result<()> {
+        ) -> Vec<String> {
             if let Some(max) = max_depth {
                 if current_depth > max {
-                    return Ok(());
+                    return Vec::new();
                 }
             }
 
-            let entries = match std::fs::read_dir(dir) {
-                Ok(entries) => entries,
-                Err(_) => return Ok(()),
+            let entries: Vec<_> = match std::fs::read_dir(dir) {
+                Ok(entries) => entries.flatten().collect(),
+                Err(_) => return Vec::new(),
             };
 
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let file_name = match path.file_name().and_then(|n| n.to_str()) {
-                    Some(name) => name,
-                    None => continue,
-                };
+            entries
+                .par_iter()
+                .flat_map(|entry| {
+                    let path = entry.path();
+                    let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                        Some(name) => name,
+                        None => return Vec::new(),
+                    };
 
-                if !hidden && file_name.starts_with('.') {
-                    continue;
-                }
+                    if !hidden && file_name.starts_with('.') {
+                        return Vec::new();
+                    }
 
-                if exclude_set.is_match(&path) {
-                    continue;
-                }
+                    if exclude_set.is_match(&path) {
+                        return Vec::new();
+                    }
 
-                let is_dir = path.is_dir();
+                    let mut results = Vec::new();
+                    let is_dir = path.is_dir();
 
-                // Check if this entry matches the type filter
-                let type_matches = if file_types.is_empty() {
-                    // Default behavior: only match files
-                    path.is_file()
-                } else {
-                    file_types.iter().any(|ft| ft.matches(&path))
-                };
+                    // Check if this entry matches the type filter
+                    let type_matches = if file_types.is_empty() {
+                        // Default behavior: only match files
+                        path.is_file()
+                    } else {
+                        file_types.iter().any(|ft| ft.matches(&path))
+                    };
 
-                // Always recurse into directories (unless excluded)
-                if is_dir {
-                    walk_dir(
-                        &path,
-                        extensions,
-                        exclude_set,
-                        file_types,
-                        max_depth,
-                        current_depth + 1,
-                        hidden,
-                        results,
-                    )?;
-                }
+                    // Always recurse into directories (unless excluded)
+                    if is_dir {
+                        let sub_results = walk_dir(
+                            &path,
+                            extensions,
+                            exclude_set,
+                            file_types,
+                            max_depth,
+                            current_depth + 1,
+                            hidden,
+                        );
+                        results.extend(sub_results);
+                    }
 
-                // Add to results if type matches
-                if type_matches {
-                    // Apply extension filter only to files
-                    if path.is_file() && !extensions.is_empty() {
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            if !extensions.contains(&ext.to_lowercase()) {
-                                continue;
+                    // Add to results if type matches
+                    if type_matches {
+                        // Apply extension filter only to files
+                        if path.is_file() && !extensions.is_empty() {
+                            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                                if !extensions.contains(&ext.to_lowercase()) {
+                                    return results;
+                                }
+                            } else {
+                                return results;
                             }
-                        } else {
-                            continue;
+                        }
+
+                        if let Some(utf8) = path.to_str() {
+                            results.push(utf8.to_string());
                         }
                     }
 
-                    if let Some(utf8) = path.to_str() {
-                        results.push(utf8.to_string());
-                    }
-                }
-            }
-            Ok(())
+                    results
+                })
+                .collect()
         }
 
-        walk_dir(
+        let results = walk_dir(
             Path::new(&directory),
             &extensions,
             &exclude_set,
@@ -238,8 +242,7 @@ async fn find_files<'lua>(
             opts.max_depth,
             1,
             opts.hidden,
-            &mut results,
-        )?;
+        );
 
         Ok::<_, anyhow::Error>(results)
     })

@@ -1736,6 +1736,7 @@ dependencies = [
  "filenamegen",
  "globset",
  "luahelper",
+ "rayon",
  "smol",
  "wezterm-dynamic",
 ]

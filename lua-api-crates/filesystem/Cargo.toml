@@ -12,5 +12,6 @@ config.workspace = true
 filenamegen.workspace = true
 globset.workspace = true
 luahelper.workspace = true
+rayon.workspace = true
 smol.workspace = true
 wezterm-dynamic.workspace = true
