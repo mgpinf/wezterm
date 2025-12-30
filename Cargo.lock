@@ -1506,6 +1506,7 @@ dependencies = [
  "dirs-next",
  "env_logger 0.10.2",
  "filesystem",
+ "http-funcs",
  "lazy_static",
  "libc",
  "log",
@@ -2462,6 +2463,19 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
+]
+
+[[package]]
+name = "http-funcs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "config",
+ "http_req",
+ "luahelper",
+ "percent-encoding",
+ "smol",
+ "wezterm-dynamic",
 ]
 
 [[package]]
