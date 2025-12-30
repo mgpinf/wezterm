@@ -42,5 +42,25 @@ return {
 }
 ```
 
-See also [run_child_process](run_child_process.md)
+{{since('nightly')}}
 
+You can now pass a table with named fields for more control:
+
+* `args` - the argument array specifying the command and its arguments (required)
+* `cwd` - the current working directory to set for the command (optional)
+* `set_environment_variables` - a table of environment variables to set for the
+  child process (optional)
+
+```lua
+local wezterm = require 'wezterm'
+
+wezterm.background_child_process {
+  args = { 'my-script.sh' },
+  cwd = '/tmp',
+  set_environment_variables = {
+    MY_VAR = 'some value',
+  },
+}
+```
+
+See also [run_child_process](run_child_process.md)
