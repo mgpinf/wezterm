@@ -423,6 +423,19 @@ impl<'a> ImageSelectorState<'a> {
         }
     }
 
+    fn move_to_first(&mut self) {
+        self.active_idx = 0;
+        self.top_row = 0;
+    }
+
+    fn move_to_last(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        self.active_idx = self.filtered_indices.len() - 1;
+        self.top_row = self.active_idx.saturating_sub(self.max_items);
+    }
+
     fn run_loop(&mut self) -> anyhow::Result<()> {
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             match event {
@@ -435,6 +448,16 @@ impl<'a> ImageSelectorState<'a> {
                     key: KeyCode::Char('k'),
                     ..
                 }) if !self.filtering => self.move_up(),
+
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('g'),
+                    ..
+                }) if !self.filtering => self.move_to_first(),
+
+                InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('G'),
+                    ..
+                }) if !self.filtering => self.move_to_last(),
 
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('P' | 'K'),
