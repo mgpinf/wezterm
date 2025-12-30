@@ -756,6 +756,56 @@ pub struct DisplayText {
     pub text: String,
 }
 
+/// Built-in word lists for the typing test (matches toipe's wordlists)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic, Default)]
+pub enum TypingTestWordlist {
+    /// Top 250 most common English words
+    #[default]
+    Top250,
+    /// Top 500 most common English words
+    Top500,
+    /// Top 1000 most common English words
+    Top1000,
+    /// Top 2500 most common English words
+    Top2500,
+    /// Top 5000 most common English words
+    Top5000,
+    /// Top 10000 most common English words
+    Top10000,
+    /// Top 25000 most common English words
+    Top25000,
+    /// Commonly misspelled English words
+    CommonlyMisspelled,
+}
+
+/// Configuration for the TypingTest overlay
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TypingTest {
+    /// Word list name (default: Top250)
+    /// Matches toipe's -w/--wordlist argument
+    #[dynamic(default)]
+    pub wordlist: TypingTestWordlist,
+    /// Path to custom word list file
+    /// Matches toipe's -f/--file argument
+    #[dynamic(default)]
+    pub wordlist_file: Option<String>,
+    /// Number of words to show on each test (default: 30)
+    /// Matches toipe's -n/--num-words argument
+    #[dynamic(default = "default_typing_test_num_words")]
+    pub num_words: usize,
+    /// Whether to include punctuation (default: false)
+    /// Matches toipe's -p/--punctuation argument
+    #[dynamic(default)]
+    pub punctuation: bool,
+    /// Optional callback action when test completes
+    #[dynamic(default)]
+    pub action: Option<Box<KeyAssignment>>,
+}
+
+fn default_typing_test_num_words() -> usize {
+    30
+}
+
 /// An entry for the ImageSelector overlay
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct ImageSelectorEntry {
@@ -953,6 +1003,7 @@ pub enum KeyAssignment {
     TransientMenu(TransientMenu),
     SelectorActions(SelectorActions),
     DisplayText(DisplayText),
+    TypingTest(TypingTest),
 }
 impl_lua_conversion_dynamic!(KeyAssignment);
 

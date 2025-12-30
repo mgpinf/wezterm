@@ -20,6 +20,7 @@ pub mod quickselect;
 pub mod selector;
 pub mod selector_actions;
 pub mod transient;
+pub mod typing_test;
 
 pub use confirm_close_pane::{
     confirm_close_pane, confirm_close_tab, confirm_close_window, confirm_quit_program,

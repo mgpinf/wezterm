@@ -32,7 +32,7 @@ use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
     Confirmation, DisplayText, InnerPattern, InputForm, InputText, KeyAssignment,
     LauncherActionArgs, PaneDirection, Pattern, PromptInputLine, QuickSelectArguments,
-    RotationDirection, SelectorActions, SpawnCommand, SplitSize, TransientMenu,
+    RotationDirection, SelectorActions, SpawnCommand, SplitSize, TransientMenu, TypingTest,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2489,6 +2489,29 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
+    fn show_typing_test(&mut self, args: &TypingTest) {
+        let pane = match self.get_active_pane_or_overlay() {
+            Some(pane) => pane,
+            None => return,
+        };
+
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let args = args.clone();
+        let gui_win = GuiWin::new(self);
+        let pane = MuxPane(pane.pane_id());
+
+        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::typing_test::show_typing_test_overlay(term, args, gui_win, pane)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
     fn show_debug_overlay(&mut self) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
@@ -3326,6 +3349,7 @@ impl TermWindow {
             TransientMenu(menu) => self.show_transient_menu(menu),
             SelectorActions(args) => self.show_selector_actions(args),
             DisplayText(args) => self.show_display_text(args),
+            TypingTest(args) => self.show_typing_test(args),
         };
         Ok(PerformAssignmentResult::Handled)
     }

@@ -871,6 +871,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: None,
         },
+        TypingTest(_) => CommandDef {
+            brief: "Start a typing speed test".into(),
+            doc: "Activates the typing test overlay to measure typing speed and accuracy".into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &[],
+            icon: Some("md_keyboard"),
+        },
         QuickSelect => CommandDef {
             brief: "Enter QuickSelect mode".into(),
             doc: "Activates the quick selection UI for the current pane".into(),
