@@ -3,6 +3,7 @@ use config::configuration;
 use config::keyassignment::{ImageSelector, ImageSelectorEntry, KeyAssignment};
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
+use rayon::prelude::*;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -74,7 +75,7 @@ impl<'a> ImageSelectorState<'a> {
         let mut scores: Vec<MatchResult> = self
             .args
             .choices
-            .iter()
+            .par_iter()
             .enumerate()
             .filter_map(|(idx, entry)| {
                 let label = get_entry_label(entry);
