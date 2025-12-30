@@ -193,8 +193,8 @@ impl<'a> ImageSelectorState<'a> {
         }
 
         let filter_cursor_x = if self.filtering || !self.filter_term.is_empty() {
-            let filter_text = format!("{}: {}", self.fuzzy_description, self.filter_term);
-            let cursor_x = filter_text.len();
+            let suffix = format!(": {}", self.filter_term);
+            let cursor_x = self.fuzzy_description.len() + suffix.len();
             self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
@@ -203,8 +203,12 @@ impl<'a> ImageSelectorState<'a> {
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 AttributeChange::Intensity(Intensity::Bold).into(),
                 AttributeChange::Foreground(self.description_fg).into(),
-                Change::Text(truncate_right(&filter_text, max_width)),
+                Change::Text(truncate_right(&self.fuzzy_description, max_width)),
                 Change::AllAttributes(CellAttributes::default()),
+                Change::Text(truncate_right(
+                    &suffix,
+                    max_width.saturating_sub(self.fuzzy_description.len()),
+                )),
             ]);
             Some(cursor_x)
         } else {
