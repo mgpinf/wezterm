@@ -166,6 +166,13 @@ config.colors = {
   form_border_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   form_separator_fg = 'Default', -- {{since('nightly', inline=True)}}
 
+  -- Colors for the ImageSelector overlay
+  image_selector_description_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
+  image_selector_error_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
+  image_selector_separator_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  image_selector_metadata_fg = { AnsiColor = 'Silver' }, -- {{since('nightly', inline=True)}}
+  image_selector_filename_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
+
   -- Colors for the InputText editor overlay
   input_text_normal_mode_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   input_text_normal_mode_bg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
