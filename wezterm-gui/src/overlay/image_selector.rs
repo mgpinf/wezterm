@@ -24,6 +24,24 @@ const ROW_OVERHEAD: usize = 3;
 const SEPARATOR: &str = "│";
 const IMAGE_CACHE_CAPACITY: usize = 10;
 
+enum ImageLoadError {
+    NotFound,
+    PermissionDenied,
+    InvalidFormat,
+    IoError(String),
+}
+
+impl ImageLoadError {
+    fn message(&self) -> String {
+        match self {
+            Self::NotFound => "File not found".to_string(),
+            Self::PermissionDenied => "Permission denied".to_string(),
+            Self::InvalidFormat => "Invalid or unsupported image format".to_string(),
+            Self::IoError(msg) => format!("I/O error: {}", msg),
+        }
+    }
+}
+
 struct CachedImage {
     data: Arc<ImageData>,
     dims: (u32, u32),
@@ -140,19 +158,27 @@ impl<'a> ImageSelectorState<'a> {
         self.top_row = 0;
     }
 
-    fn load_image(&mut self, path: &str) -> Option<(Arc<ImageData>, (u32, u32))> {
+    fn load_image(&mut self, path: &str) -> Result<(Arc<ImageData>, (u32, u32)), ImageLoadError> {
         if let Some(result) = self.image_cache.get(path) {
-            return Some(result);
+            return Ok(result);
         }
 
-        let data = std::fs::read(path).ok()?;
+        let data = std::fs::read(path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => ImageLoadError::NotFound,
+            std::io::ErrorKind::PermissionDenied => ImageLoadError::PermissionDenied,
+            _ => ImageLoadError::IoError(e.to_string()),
+        })?;
+
         let image_data = Arc::new(ImageData::with_data(ImageDataType::EncodedFile(data)));
-        let dims = image_data.data().dimensions().ok()?;
+        let dims = image_data
+            .data()
+            .dimensions()
+            .map_err(|_| ImageLoadError::InvalidFormat)?;
 
         self.image_cache
             .put(path.to_string(), Arc::clone(&image_data), dims);
 
-        Some((image_data, dims))
+        Ok((image_data, dims))
     }
 
     fn calculate_display_size(
@@ -293,45 +319,48 @@ impl<'a> ImageSelectorState<'a> {
             self.buf
                 .add_change(Change::Text(truncate_right(&filename, preview_width)));
 
-            if let Some((image_data, (img_w, img_h))) = self.load_image(&path) {
-                let max_h = rows.saturating_sub(5);
-                let max_w = preview_width.saturating_sub(2);
+            match self.load_image(&path) {
+                Ok((image_data, (img_w, img_h))) => {
+                    let max_h = rows.saturating_sub(5);
+                    let max_w = preview_width.saturating_sub(2);
 
-                let (disp_w, disp_h) = Self::calculate_display_size(
-                    img_w,
-                    img_h,
-                    max_w,
-                    max_h,
-                    size.xpixel,
-                    size.ypixel,
-                );
+                    let (disp_w, disp_h) = Self::calculate_display_size(
+                        img_w,
+                        img_h,
+                        max_w,
+                        max_h,
+                        size.xpixel,
+                        size.ypixel,
+                    );
 
-                if disp_h > 0 && disp_w > 0 {
-                    let x_offset = (max_w.saturating_sub(disp_w)) / 2;
+                    if disp_h > 0 && disp_w > 0 {
+                        let x_offset = (max_w.saturating_sub(disp_w)) / 2;
+                        self.buf.add_changes(vec![
+                            Change::CursorPosition {
+                                x: Position::Absolute(preview_col + x_offset),
+                                y: Position::Absolute(2),
+                            },
+                            Change::Image(Image {
+                                width: disp_w,
+                                height: disp_h,
+                                top_left: TextureCoordinate::new_f32(0.0, 0.0),
+                                bottom_right: TextureCoordinate::new_f32(1.0, 1.0),
+                                image: image_data,
+                            }),
+                        ]);
+                    }
+                }
+                Err(err) => {
                     self.buf.add_changes(vec![
                         Change::CursorPosition {
-                            x: Position::Absolute(preview_col + x_offset),
+                            x: Position::Absolute(preview_col),
                             y: Position::Absolute(2),
                         },
-                        Change::Image(Image {
-                            width: disp_w,
-                            height: disp_h,
-                            top_left: TextureCoordinate::new_f32(0.0, 0.0),
-                            bottom_right: TextureCoordinate::new_f32(1.0, 1.0),
-                            image: image_data,
-                        }),
+                        AttributeChange::Foreground(self.error_fg).into(),
+                        Change::Text(err.message()),
+                        Change::AllAttributes(CellAttributes::default()),
                     ]);
                 }
-            } else {
-                self.buf.add_changes(vec![
-                    Change::CursorPosition {
-                        x: Position::Absolute(preview_col),
-                        y: Position::Absolute(2),
-                    },
-                    AttributeChange::Foreground(self.error_fg).into(),
-                    Change::Text("[Unable to load image]".into()),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
             }
         }
 
