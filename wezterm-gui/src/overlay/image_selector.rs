@@ -4,6 +4,7 @@ use config::keyassignment::{ImageSelector, ImageSelectorEntry, KeyAssignment};
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,11 +22,59 @@ use super::selector::{matcher_pattern, matcher_score};
 
 const ROW_OVERHEAD: usize = 3;
 const SEPARATOR: &str = "│";
+const IMAGE_CACHE_CAPACITY: usize = 10;
 
 struct CachedImage {
     data: Arc<ImageData>,
     dims: (u32, u32),
-    path: String,
+}
+
+struct ImageCache {
+    entries: HashMap<String, CachedImage>,
+    order: VecDeque<String>,
+    capacity: usize,
+}
+
+impl ImageCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::with_capacity(capacity),
+            order: VecDeque::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    fn get(&mut self, path: &str) -> Option<(Arc<ImageData>, (u32, u32))> {
+        if let Some(cached) = self.entries.get(path) {
+            if let Some(pos) = self.order.iter().position(|p| p == path) {
+                self.order.remove(pos);
+                self.order.push_front(path.to_string());
+            }
+            Some((Arc::clone(&cached.data), cached.dims))
+        } else {
+            None
+        }
+    }
+
+    fn put(&mut self, path: String, data: Arc<ImageData>, dims: (u32, u32)) {
+        if self.entries.contains_key(&path) {
+            if let Some(pos) = self.order.iter().position(|p| p == &path) {
+                self.order.remove(pos);
+            }
+            self.order.push_front(path);
+            return;
+        }
+
+        if self.entries.len() == self.capacity {
+            if let Some(oldest) = self.order.pop_back() {
+                self.entries.remove(&oldest);
+            }
+        }
+
+        self.entries
+            .insert(path.clone(), CachedImage { data, dims });
+        self.order.push_front(path);
+    }
 }
 
 struct ImageSelectorState<'a> {
@@ -43,7 +92,7 @@ struct ImageSelectorState<'a> {
     description_fg: ColorAttribute,
     error_fg: ColorAttribute,
     separator_fg: ColorAttribute,
-    cached_image: Option<CachedImage>,
+    image_cache: ImageCache,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
 }
 
@@ -92,21 +141,16 @@ impl<'a> ImageSelectorState<'a> {
     }
 
     fn load_image(&mut self, path: &str) -> Option<(Arc<ImageData>, (u32, u32))> {
-        if let Some(ref cached) = self.cached_image {
-            if cached.path == path {
-                return Some((Arc::clone(&cached.data), cached.dims));
-            }
+        if let Some(result) = self.image_cache.get(path) {
+            return Some(result);
         }
 
         let data = std::fs::read(path).ok()?;
         let image_data = Arc::new(ImageData::with_data(ImageDataType::EncodedFile(data)));
         let dims = image_data.data().dimensions().ok()?;
 
-        self.cached_image = Some(CachedImage {
-            data: Arc::clone(&image_data),
-            dims,
-            path: path.to_string(),
-        });
+        self.image_cache
+            .put(path.to_string(), Arc::clone(&image_data), dims);
 
         Some((image_data, dims))
     }
@@ -532,7 +576,7 @@ pub fn image_selector(
             .image_selector_separator_fg
             .map(Into::into)
             .unwrap_or(ColorAttribute::Default),
-        cached_image: None,
+        image_cache: ImageCache::new(IMAGE_CACHE_CAPACITY),
         buf: &mut buf,
     };
 
