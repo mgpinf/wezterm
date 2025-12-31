@@ -111,3 +111,12 @@ Produces:
 ```
 [done]
 ```
+
+{{since('nightly')}}
+
+## Per-command override
+
+You can also override the exit behavior messaging on a per-command basis by
+specifying `exit_behavior_messaging` in a [SpawnCommand](../SpawnCommand.md).
+This is useful when you want certain spawned commands to display exit
+information differently from the global default.
