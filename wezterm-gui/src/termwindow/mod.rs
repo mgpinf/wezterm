@@ -2657,6 +2657,14 @@ impl TermWindow {
                     },
                 );
             }
+            ToggleFloatingPane => {
+                let mux = Mux::get();
+                let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+                    Some(tab) => tab,
+                    None => return Ok(PerformAssignmentResult::Handled),
+                };
+                tab.toggle_floating_pane();
+            }
             SplitHorizontal(spawn) => {
                 log::trace!("SplitHorizontal {:?}", spawn);
                 self.spawn_command(
