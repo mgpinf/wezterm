@@ -13,7 +13,10 @@ use crate::Mux;
 use anyhow::{bail, Context, Error};
 use async_trait::async_trait;
 use config::keyassignment::{SpawnCommand, SpawnTabDomain};
-use config::{configuration, ExecDomain, SerialDomain, ValueOrFunc, WslDomain};
+use config::{
+    configuration, ExecDomain, ExitBehavior, ExitBehaviorMessaging, SerialDomain, ValueOrFunc,
+    WslDomain,
+};
 use downcast_rs::{impl_downcast, Downcast};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, ExitStatus, MasterPty, PtySize, PtySystem};
@@ -42,6 +45,8 @@ pub enum SplitSource {
     Spawn {
         command: Option<CommandBuilder>,
         command_dir: Option<String>,
+        exit_behavior: Option<ExitBehavior>,
+        exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     },
     MovePane(PaneId),
 }
@@ -55,9 +60,17 @@ pub trait Domain: Downcast + Send + Sync {
         command: Option<CommandBuilder>,
         command_dir: Option<String>,
         window: WindowId,
+        exit_behavior: Option<ExitBehavior>,
+        exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<Tab>> {
         let pane = self
-            .spawn_pane(size, command, command_dir)
+            .spawn_pane(
+                size,
+                command,
+                command_dir,
+                exit_behavior,
+                exit_behavior_messaging,
+            )
             .await
             .context("spawn")?;
 
@@ -102,9 +115,17 @@ pub trait Domain: Downcast + Send + Sync {
             SplitSource::Spawn {
                 command,
                 command_dir,
+                exit_behavior,
+                exit_behavior_messaging,
             } => {
-                self.spawn_pane(split_size.second, command, command_dir)
-                    .await?
+                self.spawn_pane(
+                    split_size.second,
+                    command,
+                    command_dir,
+                    exit_behavior,
+                    exit_behavior_messaging,
+                )
+                .await?
             }
             SplitSource::MovePane(src_pane_id) => {
                 let (_domain, _window, src_tab) = mux
@@ -146,6 +167,8 @@ pub trait Domain: Downcast + Send + Sync {
         size: TerminalSize,
         command: Option<CommandBuilder>,
         command_dir: Option<String>,
+        exit_behavior: Option<ExitBehavior>,
+        exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<dyn Pane>>;
 
     /// The mux will call this method on the domain of the pane that
@@ -334,6 +357,8 @@ impl LocalDomain {
                 set_environment_variables,
                 cwd,
                 position: None,
+                exit_behavior: None,
+                exit_behavior_messaging: None,
             };
 
             let spawn_command = config::with_lua_config_on_main_thread(|lua| async {
@@ -592,6 +617,8 @@ impl Domain for LocalDomain {
         size: TerminalSize,
         command: Option<CommandBuilder>,
         command_dir: Option<String>,
+        exit_behavior: Option<ExitBehavior>,
+        exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<dyn Pane>> {
         let pane_id = alloc_pane_id();
         let cmd = self
@@ -638,6 +665,8 @@ impl Domain for LocalDomain {
                 Box::new(writer),
                 self.id,
                 command_description,
+                exit_behavior,
+                exit_behavior_messaging,
             )),
             Err(err) => {
                 // Show the error to the user in the new pane
@@ -654,6 +683,8 @@ impl Domain for LocalDomain {
                     Box::new(writer),
                     self.id,
                     command_description,
+                    exit_behavior,
+                    exit_behavior_messaging,
                 ))
             }
         };

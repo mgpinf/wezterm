@@ -3115,6 +3115,8 @@ impl TermWindow {
                                 None,
                                 None,
                                 window,
+                                None,
+                                None,
                             )
                             .await?;
                     }

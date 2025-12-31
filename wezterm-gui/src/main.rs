@@ -337,6 +337,8 @@ async fn spawn_tab_in_domain_if_mux_is_empty(
             cmd,
             None,
             window_id,
+            None,
+            None,
         )
         .await?;
     trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
@@ -478,6 +480,8 @@ async fn async_run_terminal_gui(
                     cmd.clone(),
                     None,
                     window_id,
+                    None,
+                    None,
                 )
                 .await?;
             let mut window = mux
