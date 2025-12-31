@@ -1,3 +1,8 @@
+---
+tags:
+  - float
+---
+
 # `SpawnCommandInFloatingPane`
 
 {{since('nightly')}}
