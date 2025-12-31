@@ -39,3 +39,9 @@ considered to be a clean exit status.
 
 The default is now `"Close"`.
 
+{{since('nightly')}}
+
+You can also override the exit behavior on a per-command basis by specifying
+`exit_behavior` in a [SpawnCommand](../SpawnCommand.md). This is useful when
+you want certain spawned commands to behave differently from the global default.
+

@@ -73,6 +73,80 @@ wezterm.action.SpawnCommandInNewWindow {
     -- * {Named="HDMI-1"} - uses a screen by name. See wezterm.gui.screens()
     -- origin = "ScreenCoordinateSystem"
   },
+
+  -- Override the exit_behavior for just this spawned command.
+  -- If omitted, the global exit_behavior configuration will be used.
+  exit_behavior = 'Hold', -- {{since('nightly', inline=True)}}
+
+  -- Override the exit_behavior_messaging for just this spawned command.
+  -- If omitted, the global exit_behavior_messaging configuration will be used.
+  exit_behavior_messaging = 'Terse', -- {{since('nightly', inline=True)}}
+}
+```
+
+{{since('nightly')}}
+
+## exit_behavior
+
+The `exit_behavior` field allows overriding the global
+[exit_behavior](config/exit_behavior.md) configuration for this specific
+spawned command. This is useful when you want certain commands to behave
+differently when they exit.
+
+Possible values:
+
+* `"Close"` - close the corresponding pane as soon as the program exits.
+* `"Hold"` - keep the pane open after the program exits.
+* `"CloseOnCleanExit"` - if the program exited with a successful status, behave like `"Close"`, otherwise, behave like `"Hold"`.
+
+If omitted, the global `exit_behavior` configuration will be used.
+
+### Example: Hold pane open after script completes
+
+```lua
+config.keys = {
+  {
+    key = 'b',
+    mods = 'CMD',
+    action = wezterm.action.SpawnCommandInNewTab {
+      args = { './build-script.sh' },
+      exit_behavior = 'Hold',
+    },
+  },
+}
+```
+
+{{since('nightly')}}
+
+## exit_behavior_messaging
+
+The `exit_behavior_messaging` field allows overriding the global
+[exit_behavior_messaging](config/exit_behavior_messaging.md) configuration
+for this specific spawned command. This controls how wezterm indicates the
+exit status of the spawned process when it terminates.
+
+Possible values:
+
+* `"Verbose"` - Shows 2-3 lines of explanation, including the process name, its exit status and a link to the exit_behavior documentation.
+* `"Brief"` - Like `"Verbose"`, but the link to the documentation is not included.
+* `"Terse"` - A very short indication of the exit status is shown in square brackets.
+* `"None"` - No message is shown.
+
+If omitted, the global `exit_behavior_messaging` configuration will be used.
+
+### Example: Minimal exit messaging for a monitoring command
+
+```lua
+config.keys = {
+  {
+    key = 'm',
+    mods = 'CMD',
+    action = wezterm.action.SpawnCommandInNewTab {
+      args = { 'htop' },
+      exit_behavior = 'Close',
+      exit_behavior_messaging = 'None',
+    },
+  },
 }
 ```
 
