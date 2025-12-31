@@ -1,8 +1,8 @@
 use crate::domain::DomainId;
 use crate::renderable::*;
-use crate::ExitBehavior;
 use async_trait::async_trait;
 use config::keyassignment::{KeyAssignment, ScrollbackEraseMode};
+use config::{ExitBehavior, ExitBehaviorMessaging};
 use downcast_rs::{impl_downcast, Downcast};
 use parking_lot::MappedMutexGuard;
 use rangeset::RangeSet;
@@ -343,6 +343,10 @@ pub trait Pane: Downcast + Send + Sync {
     }
 
     fn exit_behavior(&self) -> Option<ExitBehavior> {
+        None
+    }
+
+    fn exit_behavior_messaging(&self) -> Option<ExitBehaviorMessaging> {
         None
     }
 }

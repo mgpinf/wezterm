@@ -1,3 +1,4 @@
+use crate::config::{ExitBehavior, ExitBehaviorMessaging};
 use crate::default_true;
 use crate::keys::KeyNoAction;
 use crate::window::WindowLevel;
@@ -323,6 +324,16 @@ pub struct SpawnCommand {
     pub domain: SpawnTabDomain,
 
     pub position: Option<crate::GuiPosition>,
+
+    /// Specifies the behavior when the spawned process exits.
+    /// If omitted, the global `exit_behavior` configuration will be used.
+    #[dynamic(default)]
+    pub exit_behavior: Option<ExitBehavior>,
+
+    /// Specifies how exit information is displayed when the process exits.
+    /// If omitted, the global `exit_behavior_messaging` configuration will be used.
+    #[dynamic(default)]
+    pub exit_behavior_messaging: Option<ExitBehaviorMessaging>,
 }
 impl_lua_conversion_dynamic!(SpawnCommand);
 
@@ -347,6 +358,16 @@ impl std::fmt::Display for SpawnCommand {
         }
         for (k, v) in &self.set_environment_variables {
             write!(fmt, " {}={}", k, v)?;
+        }
+        if let Some(exit_behavior) = &self.exit_behavior {
+            write!(fmt, " exit_behavior={:?}", exit_behavior)?;
+        }
+        if let Some(exit_behavior_messaging) = &self.exit_behavior_messaging {
+            write!(
+                fmt,
+                " exit_behavior_messaging={:?}",
+                exit_behavior_messaging
+            )?;
         }
         Ok(())
     }
@@ -387,6 +408,8 @@ impl SpawnCommand {
             set_environment_variables,
             cwd,
             position: None,
+            exit_behavior: None,
+            exit_behavior_messaging: None,
         })
     }
 }

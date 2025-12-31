@@ -15,6 +15,7 @@ use crate::Mux;
 use anyhow::bail;
 use async_trait::async_trait;
 use config::keyassignment::ScrollbackEraseMode;
+use config::{ExitBehavior, ExitBehaviorMessaging};
 use crossbeam::channel::{unbounded as channel, Receiver, Sender};
 use fancy_regex::Regex;
 use filedescriptor::{FileDescriptor, Pipe};
@@ -56,6 +57,8 @@ impl Domain for TermWizTerminalDomain {
         _size: TerminalSize,
         _command: Option<CommandBuilder>,
         _command_dir: Option<String>,
+        _exit_behavior: Option<ExitBehavior>,
+        _exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<dyn Pane>> {
         bail!("cannot spawn panes in a TermWizTerminalPane");
     }
