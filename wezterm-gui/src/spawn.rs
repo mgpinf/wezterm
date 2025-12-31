@@ -113,6 +113,8 @@ pub async fn spawn_command_internal(
                         SplitSource::Spawn {
                             command: cmd_builder,
                             command_dir: cwd,
+                            exit_behavior: spawn.exit_behavior,
+                            exit_behavior_messaging: spawn.exit_behavior_messaging,
                         },
                         spawn.domain,
                     )
@@ -170,7 +172,15 @@ pub async fn spawn_command_internal(
                 }
                 .ok_or_else(|| anyhow!("domain not found"))?;
 
-                let pane = domain.spawn_pane(size, cmd_builder, cwd).await?;
+                let pane = domain
+                    .spawn_pane(
+                        size,
+                        cmd_builder,
+                        cwd,
+                        spawn.exit_behavior,
+                        spawn.exit_behavior_messaging,
+                    )
+                    .await?;
                 pane.set_config(term_config);
                 tab.assign_floating_pane(&pane);
             }
@@ -189,6 +199,8 @@ pub async fn spawn_command_internal(
                     current_pane_id,
                     workspace,
                     spawn.position,
+                    spawn.exit_behavior,
+                    spawn.exit_behavior_messaging,
                 )
                 .await
                 .context("spawn_tab_or_window")?;

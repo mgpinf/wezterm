@@ -8,6 +8,7 @@ use crate::tmux_commands::{
 use crate::window::WindowId;
 use crate::{Mux, MuxWindowBuilder};
 use async_trait::async_trait;
+use config::{ExitBehavior, ExitBehaviorMessaging};
 use filedescriptor::FileDescriptor;
 use parking_lot::{Condvar, Mutex};
 use portable_pty::CommandBuilder;
@@ -368,6 +369,8 @@ impl Domain for TmuxDomain {
         _command: Option<CommandBuilder>,
         _command_dir: Option<String>,
         _window: WindowId,
+        _exit_behavior: Option<ExitBehavior>,
+        _exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<Tab>> {
         self.inner.create_tmux_window();
         // This is intention, we would not return a Tab, since we don't have now!
@@ -405,6 +408,8 @@ impl Domain for TmuxDomain {
         _size: TerminalSize,
         _command: Option<CommandBuilder>,
         _command_dir: Option<String>,
+        _exit_behavior: Option<ExitBehavior>,
+        _exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<dyn Pane>> {
         anyhow::bail!("Spawn_pane not yet implemented for TmuxDomain");
     }

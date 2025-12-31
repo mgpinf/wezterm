@@ -5,7 +5,7 @@ use crate::pane::{alloc_pane_id, Pane, PaneId};
 use crate::Mux;
 use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
-use config::{Shell, SshBackend, SshDomain};
+use config::{ExitBehavior, ExitBehaviorMessaging, Shell, SshBackend, SshDomain};
 use filedescriptor::{poll, pollfd, socketpair, AsRawSocketDescriptor, FileDescriptor, POLLIN};
 use portable_pty::cmdbuilder::CommandBuilder;
 use portable_pty::{ChildKiller, ExitStatus, MasterPty, PtySize};
@@ -704,6 +704,8 @@ impl Domain for RemoteSshDomain {
         size: TerminalSize,
         command: Option<CommandBuilder>,
         command_dir: Option<String>,
+        exit_behavior: Option<ExitBehavior>,
+        exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<dyn Pane>> {
         let pane_id = alloc_pane_id();
 
@@ -775,6 +777,8 @@ impl Domain for RemoteSshDomain {
             Box::new(writer),
             self.id,
             "RemoteSshDomain".to_string(),
+            exit_behavior,
+            exit_behavior_messaging,
         ));
         let mux = Mux::get();
         mux.add_pane(&pane)?;
