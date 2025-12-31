@@ -45,6 +45,7 @@ struct TabInner {
     active: usize,
     zoomed: Option<Arc<dyn Pane>>,
     floating: Option<Arc<dyn Pane>>,
+    floating_hidden: bool,
     title: String,
     recency: Recency,
 }
@@ -770,6 +771,10 @@ impl Tab {
     pub fn take_floating_pane(&self) -> Option<Arc<dyn Pane>> {
         self.inner.lock().floating.take()
     }
+
+    pub fn toggle_floating_pane(&self) {
+        self.inner.lock().toggle_floating_pane()
+    }
 }
 
 impl TabInner {
@@ -782,6 +787,7 @@ impl TabInner {
             active: 0,
             zoomed: None,
             floating: None,
+            floating_hidden: false,
             title: String::new(),
             recency: Recency::default(),
         }
@@ -1024,22 +1030,24 @@ impl TabInner {
         let mut panes = vec![];
 
         if respect_zoom_state {
-            if let Some(floating) = self.floating.as_ref() {
-                let size = self.size;
-                panes.push(PositionedPane {
-                    index: 0,
-                    is_active: true,
-                    is_zoomed: false,
-                    is_floating: true,
-                    left: 0,
-                    top: 0,
-                    width: size.cols.into(),
-                    pixel_width: size.pixel_width.into(),
-                    height: size.rows.into(),
-                    pixel_height: size.pixel_height.into(),
-                    pane: Arc::clone(floating),
-                });
-                return panes;
+            if !self.floating_hidden {
+                if let Some(floating) = self.floating.as_ref() {
+                    let size = self.size;
+                    panes.push(PositionedPane {
+                        index: 0,
+                        is_active: true,
+                        is_zoomed: false,
+                        is_floating: true,
+                        left: 0,
+                        top: 0,
+                        width: size.cols.into(),
+                        pixel_width: size.pixel_width.into(),
+                        height: size.rows.into(),
+                        pixel_height: size.pixel_height.into(),
+                        pane: Arc::clone(floating),
+                    });
+                    return panes;
+                }
             }
 
             if let Some(zoomed) = self.zoomed.as_ref() {
@@ -1810,8 +1818,10 @@ impl TabInner {
     }
 
     fn get_active_pane(&mut self) -> Option<Arc<dyn Pane>> {
-        if let Some(floating) = self.floating.as_ref() {
-            return Some(Arc::clone(floating));
+        if !self.floating_hidden {
+            if let Some(floating) = self.floating.as_ref() {
+                return Some(Arc::clone(floating));
+            }
         }
 
         if let Some(zoomed) = self.zoomed.as_ref() {
@@ -1892,6 +1902,15 @@ impl TabInner {
     fn assign_floating_pane(&mut self, pane: &Arc<dyn Pane>) {
         pane.resize(self.size).ok();
         self.floating.replace(Arc::clone(pane));
+        self.floating_hidden = false;
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+    }
+
+    fn toggle_floating_pane(&mut self) {
+        if self.floating.is_none() {
+            return;
+        }
+        self.floating_hidden = !self.floating_hidden;
         Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
