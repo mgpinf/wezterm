@@ -5,7 +5,7 @@ use crate::tab::{SplitRequest, Tab, TabId};
 use crate::window::{Window, WindowId};
 use anyhow::{anyhow, Context, Error};
 use config::keyassignment::SpawnTabDomain;
-use config::{configuration, ExitBehavior, GuiPosition};
+use config::{configuration, ExitBehavior, ExitBehaviorMessaging, GuiPosition};
 use domain::{Domain, DomainId, DomainState, SplitSource};
 use filedescriptor::{poll, pollfd, socketpair, AsRawSocketDescriptor, FileDescriptor, POLLIN};
 #[cfg(unix)]
@@ -1222,6 +1222,8 @@ impl Mux {
             SplitSource::Spawn {
                 command,
                 command_dir,
+                exit_behavior,
+                exit_behavior_messaging,
             } => SplitSource::Spawn {
                 command,
                 command_dir: self.resolve_cwd(
@@ -1230,6 +1232,8 @@ impl Mux {
                     domain.domain_id(),
                     CachePolicy::FetchImmediate,
                 ),
+                exit_behavior,
+                exit_behavior_messaging,
             },
             other => other,
         };
@@ -1323,6 +1327,8 @@ impl Mux {
         current_pane_id: Option<PaneId>,
         workspace_for_new_window: String,
         window_position: Option<GuiPosition>,
+        exit_behavior: Option<ExitBehavior>,
+        exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<(Arc<Tab>, Arc<dyn Pane>, WindowId)> {
         let domain = self
             .resolve_spawn_tab_domain(current_pane_id, &domain)
@@ -1378,7 +1384,14 @@ impl Mux {
         );
 
         let tab = domain
-            .spawn(size, command.clone(), cwd.clone(), window_id)
+            .spawn(
+                size,
+                command.clone(),
+                cwd.clone(),
+                window_id,
+                exit_behavior,
+                exit_behavior_messaging,
+            )
             .await
             .with_context(|| {
                 format!(

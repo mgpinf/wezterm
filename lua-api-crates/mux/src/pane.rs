@@ -461,6 +461,8 @@ impl SplitPane {
         let source = SplitSource::Spawn {
             command,
             command_dir,
+            exit_behavior: None,
+            exit_behavior_messaging: None,
         };
 
         let size = if self.size == 0.0 {

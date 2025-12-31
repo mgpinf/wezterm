@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail};
 use async_trait::async_trait;
 use codec::{ListPanesResponse, SpawnV2, SplitPane};
 use config::keyassignment::SpawnTabDomain;
-use config::{SshDomain, TlsDomainClient, UnixDomain};
+use config::{ExitBehavior, ExitBehaviorMessaging, SshDomain, TlsDomainClient, UnixDomain};
 use mux::connui::{ConnectionUI, ConnectionUIParams};
 use mux::domain::{alloc_domain_id, Domain, DomainId, DomainState, SplitSource};
 use mux::pane::{Pane, PaneId};
@@ -756,6 +756,8 @@ impl Domain for ClientDomain {
         _size: TerminalSize,
         _command: Option<CommandBuilder>,
         _command_dir: Option<String>,
+        _exit_behavior: Option<ExitBehavior>,
+        _exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<dyn Pane>> {
         anyhow::bail!("spawn_pane not implemented for ClientDomain")
     }
@@ -820,6 +822,9 @@ impl Domain for ClientDomain {
         command: Option<CommandBuilder>,
         command_dir: Option<String>,
         window: WindowId,
+        // exit_behavior options are not yet sent over the wire to the mux server
+        _exit_behavior: Option<ExitBehavior>,
+        _exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> anyhow::Result<Arc<Tab>> {
         let inner = self
             .inner()
@@ -887,6 +892,9 @@ impl Domain for ClientDomain {
             SplitSource::Spawn {
                 command,
                 command_dir,
+                // exit_behavior options are not yet sent over the wire to the mux server
+                exit_behavior: _,
+                exit_behavior_messaging: _,
             } => (command, command_dir, None),
             SplitSource::MovePane(move_pane_id) => (None, None, Some(move_pane_id)),
         };
