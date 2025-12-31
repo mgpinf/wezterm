@@ -256,6 +256,8 @@ impl GuiFrontEnd {
                             pane_id,
                             workspace,
                             None, // optional position
+                            None, // exit_behavior
+                            None, // exit_behavior_messaging
                         )
                         .await
                     {

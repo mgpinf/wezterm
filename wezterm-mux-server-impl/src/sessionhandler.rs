@@ -1054,6 +1054,8 @@ async fn split_pane(split: SplitPane, client_id: Option<Arc<ClientId>>) -> anyho
         SplitSource::Spawn {
             command: split.command,
             command_dir: split.command_dir,
+            exit_behavior: None,
+            exit_behavior_messaging: None,
         }
     };
 
@@ -1083,6 +1085,8 @@ async fn domain_spawn_v2(spawn: SpawnV2, client_id: Option<Arc<ClientId>>) -> an
             None, // optional current pane_id
             spawn.workspace,
             None, // optional gui window position
+            None, // exit_behavior not yet sent over wire
+            None, // exit_behavior_messaging not yet sent over wire
         )
         .await?;
 
