@@ -67,6 +67,7 @@ cocoa = "=0.25.0"
 codec = { path = "codec" }
 color-funcs = { path = "lua-api-crates/color-funcs" }
 colorgrad = "0.6"
+crypto-funcs = { path = "lua-api-crates/crypto" }
 config = { path = "config" }
 core-foundation = "=0.10.0"
 core-graphics = "=0.24.0"
