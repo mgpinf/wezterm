@@ -133,6 +133,8 @@ pub struct LocalPane {
     #[cfg(unix)]
     leader: Arc<Mutex<Option<CachedLeaderInfo>>>,
     command_description: String,
+    exit_behavior: Option<ExitBehavior>,
+    exit_behavior_messaging: Option<ExitBehaviorMessaging>,
 }
 
 #[async_trait(?Send)]
@@ -237,8 +239,12 @@ impl Pane for LocalPane {
         if is_ssh_connecting || is_failed_spawn {
             Some(ExitBehavior::CloseOnCleanExit)
         } else {
-            None
+            self.exit_behavior
         }
+    }
+
+    fn exit_behavior_messaging(&self) -> Option<ExitBehaviorMessaging> {
+        self.exit_behavior_messaging
     }
 
     fn kill(&self) {
@@ -338,7 +344,10 @@ impl Pane for LocalPane {
 
         let mut notify = None;
         if !terse.is_empty() {
-            match configuration().exit_behavior_messaging {
+            match self
+                .exit_behavior_messaging
+                .unwrap_or_else(|| configuration().exit_behavior_messaging)
+            {
                 ExitBehaviorMessaging::Verbose => {
                     if terse == "done" {
                         notify = Some(format!("\r\n{brief}\r\n{trailer}"));
@@ -1003,6 +1012,8 @@ impl LocalPane {
         writer: Box<dyn Write + Send>,
         domain_id: DomainId,
         command_description: String,
+        exit_behavior: Option<ExitBehavior>,
+        exit_behavior_messaging: Option<ExitBehaviorMessaging>,
     ) -> Self {
         let (process, signaller, pid) = split_child(process);
 
@@ -1029,6 +1040,8 @@ impl LocalPane {
             #[cfg(unix)]
             leader: Arc::new(Mutex::new(None)),
             command_description,
+            exit_behavior,
+            exit_behavior_messaging,
         }
     }
 
