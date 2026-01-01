@@ -38,10 +38,14 @@ local wezterm = require 'wezterm'
 
 wezterm.on('update-status', function(window, pane)
   local cwd = pane:get_current_working_dir()
-  if not cwd then return end
+  if not cwd then
+    return
+  end
 
   local branch = wezterm.git.get_current_branch(cwd.file_path)
-  if not branch then return end
+  if not branch then
+    return
+  end
 
   local parts = { branch }
   local ab = wezterm.git.get_ahead_behind(cwd.file_path)

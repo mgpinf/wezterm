@@ -27,7 +27,7 @@ local wezterm = require 'wezterm'
 
 -- Simple commit
 local hash = wezterm.git.commit('/path/to/repo', {
-  message = 'Add new feature'
+  message = 'Add new feature',
 })
 wezterm.log_info('Created commit: ' .. hash)
 
@@ -35,7 +35,7 @@ wezterm.log_info('Created commit: ' .. hash)
 wezterm.git.commit('/path/to/repo', {
   message = 'Fix bug',
   author_name = 'John Doe',
-  author_email = 'john@example.com'
+  author_email = 'john@example.com',
 })
 ```
 
@@ -47,6 +47,6 @@ local wezterm = require 'wezterm'
 -- Stage all changes and commit
 wezterm.git.add('/path/to/repo', '.')
 local hash = wezterm.git.commit('/path/to/repo', {
-  message = 'Update files'
+  message = 'Update files',
 })
 ```

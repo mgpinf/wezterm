@@ -34,7 +34,7 @@ wezterm.git.push('/path/to/repo', { remote = 'upstream' })
 -- Push specific branch
 wezterm.git.push('/path/to/repo', {
   remote = 'origin',
-  branch = 'feature-branch'
+  branch = 'feature-branch',
 })
 ```
 

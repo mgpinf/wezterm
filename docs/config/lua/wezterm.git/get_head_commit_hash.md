@@ -27,6 +27,7 @@ local hash = wezterm.git.get_head_commit_hash '/path/to/repo'
 -- e.g., "abc123def456789..."
 
 -- Get short hash
-local short = wezterm.git.get_head_commit_hash('/path/to/repo', { short = true })
+local short =
+  wezterm.git.get_head_commit_hash('/path/to/repo', { short = true })
 -- e.g., "abc123d"
 ```

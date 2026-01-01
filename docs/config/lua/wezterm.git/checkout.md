@@ -34,7 +34,7 @@ wezterm.git.checkout('/path/to/repo', 'feature-branch', { create = true })
 -- Create branch from specific commit
 wezterm.git.checkout('/path/to/repo', 'hotfix', {
   create = true,
-  start_point = 'origin/main'
+  start_point = 'origin/main',
 })
 
 -- Checkout a tag

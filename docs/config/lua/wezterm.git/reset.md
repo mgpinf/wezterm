@@ -37,12 +37,12 @@ wezterm.git.reset '/path/to/repo'
 -- Soft reset to previous commit
 wezterm.git.reset('/path/to/repo', {
   mode = 'soft',
-  target = 'HEAD~1'
+  target = 'HEAD~1',
 })
 
 -- Hard reset to specific commit (discards changes!)
 wezterm.git.reset('/path/to/repo', {
   mode = 'hard',
-  target = 'origin/main'
+  target = 'origin/main',
 })
 ```
