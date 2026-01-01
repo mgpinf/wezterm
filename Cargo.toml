@@ -107,6 +107,7 @@ futures-util = "0.3"
 gethostname = "0.5"
 getrandom = "0.3.1"
 git2 = { version = "0.20", default-features = false, features = ["https"] }
+git-funcs = { path = "lua-api-crates/git-funcs" }
 gl_generator = "0.14"
 glium = { version = "0.35", default-features = false }
 globset = "0.4"
