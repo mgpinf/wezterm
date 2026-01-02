@@ -854,6 +854,8 @@ impl<'a> TransientState<'a> {
 struct TransientResultEntry {
     flag: String,
     value: Value,
+    #[dynamic(default)]
+    tag: Option<String>,
 }
 
 #[derive(FromDynamic, ToDynamic)]
@@ -873,12 +875,14 @@ impl From<&Vec<TransientSection<'_>>> for TransientResult {
                         entries.push(TransientResultEntry {
                             flag: option.delegate.flag.clone(),
                             value: option.value.borrow().to_dynamic(),
+                            tag: option.delegate.tag.clone(),
                         });
                     }
                     RenderableEntity::TransientSwitch(switch) => {
                         entries.push(TransientResultEntry {
                             flag: switch.delegate.flag.clone(),
                             value: switch.value.get().to_dynamic(),
+                            tag: switch.delegate.tag.clone(),
                         });
                     }
                     RenderableEntity::TransientCyclicSwitch(cyclic_switch) => {
@@ -889,6 +893,7 @@ impl From<&Vec<TransientSection<'_>>> for TransientResult {
                                 .get()
                                 .map(|idx| cyclic_switch.delegate.choices.get(idx).cloned())
                                 .to_dynamic(),
+                            tag: cyclic_switch.delegate.tag.clone(),
                         });
                     }
                     _ => {}
