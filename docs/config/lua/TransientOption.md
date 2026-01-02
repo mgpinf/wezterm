@@ -26,6 +26,9 @@ It is a lua object with the following fields:
   when setting an option. Else, a line prompt is displayed
   If omitted, when setting an option, a line prompt is displayed
   when setting an option
+* `tag` - optional string that is passed along with the result to the callback.
+  This is not displayed in the overlay and can be used to associate
+  additional metadata with the entry
 
 
 Example of `TransientOption` object:
@@ -38,5 +41,6 @@ local option = {
   flag = '--tail=',
   allow_nil = true,
   choices = { 'choice1', 'choice2' },
+  tag = 'tail_lines',
 }
 ```

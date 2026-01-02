@@ -24,6 +24,9 @@ It is a lua object with the following fields:
   at the last choice. Else cyclic switch is set to first choice.
   Defaults to `true`
 * `choices` - the list of choices to toggle between
+* `tag` - optional string that is passed along with the result to the callback.
+  This is not displayed in the overlay and can be used to associate
+  additional metadata with the entry
 
 
 Example of `TransientCyclicSwitch` object:
@@ -36,5 +39,6 @@ local cyclic_switch = {
   flag = '--sample-flag',
   choices = { 'choice1', 'choice2' },
   allow_nil = true,
+  tag = 'sample_switch',
 }
 ```

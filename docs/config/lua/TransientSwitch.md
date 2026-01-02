@@ -17,6 +17,9 @@ It is a lua object with the following fields:
 * `description` - text to describe the switch
 * `flag` - text that is passed against flag in the callback
   when an argument is activated
+* `tag` - optional string that is passed along with the result to the callback.
+  This is not displayed in the overlay and can be used to associate
+  additional metadata with the entry
 
 
 Example of `TransientSwitch` object:
@@ -27,5 +30,6 @@ local switch = {
   default = false,
   description = 'Follow',
   flag = '--follow',
+  tag = 'follow_logs',
 }
 ```
