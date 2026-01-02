@@ -421,6 +421,17 @@ async fn commit<'lua>(_: &'lua Lua, (path, options): (String, Value<'_>)) -> mlu
 struct FetchOptions_ {
     #[dynamic(default = "default_origin")]
     remote: String,
+    /// Remote branch to fetch (e.g., "main")
+    #[dynamic(default)]
+    remote_branch: Option<String>,
+    /// Local branch to update (e.g., "my-local-branch")
+    /// If specified with remote_branch, creates refspec: remote_branch:local_branch
+    #[dynamic(default)]
+    local_branch: Option<String>,
+    /// Custom refspec (e.g., "refs/heads/main:refs/heads/local-main")
+    /// Takes precedence over remote_branch/local_branch if specified
+    #[dynamic(default)]
+    refspec: Option<String>,
 }
 
 fn default_origin() -> String {
@@ -457,9 +468,31 @@ async fn fetch<'lua>(
         let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
 
-        remote
-            .fetch(&[] as &[&str], Some(&mut fetch_opts), None)
-            .map_err(mlua::Error::external)?;
+        // Build refspec if specified
+        let refspec: Option<String> = if let Some(ref custom_refspec) = opts.refspec {
+            Some(custom_refspec.clone())
+        } else if let Some(ref remote_branch) = opts.remote_branch {
+            let local_branch = opts.local_branch.as_ref().unwrap_or(remote_branch);
+            Some(format!(
+                "refs/heads/{}:refs/heads/{}",
+                remote_branch, local_branch
+            ))
+        } else {
+            None
+        };
+
+        match refspec {
+            Some(ref rs) => {
+                remote
+                    .fetch(&[rs.as_str()], Some(&mut fetch_opts), None)
+                    .map_err(mlua::Error::external)?;
+            }
+            None => {
+                remote
+                    .fetch(&[] as &[&str], Some(&mut fetch_opts), None)
+                    .map_err(mlua::Error::external)?;
+            }
+        }
 
         Ok(true)
     })
