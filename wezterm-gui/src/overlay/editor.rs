@@ -267,6 +267,7 @@ enum LastChange {
     InsertText(String, InsertStyle),
     ToggleCase,
     JoinLines,
+    JoinLinesNoSpace,
     ReplaceChar(char),
     ReplaceMode(String),
     IncrementNumber,
@@ -3234,6 +3235,7 @@ impl<'a> EditorState<'a> {
             }
             LastChange::ToggleCase => self.toggle_case(),
             LastChange::JoinLines => self.join_lines(),
+            LastChange::JoinLinesNoSpace => self.join_lines_no_space(),
             LastChange::ReplaceChar(c) => self.replace_char(c),
             LastChange::ReplaceMode(text) => {
                 self.save_undo_state();
@@ -3784,6 +3786,18 @@ impl<'a> EditorState<'a> {
             }
 
             current_line.push_str(next_line_trimmed);
+            self.record_change();
+        }
+    }
+
+    fn join_lines_no_space(&mut self) {
+        if self.cursor.0 < self.lines.len() - 1 {
+            self.save_undo_state();
+            self.lines_version += 1;
+            let next_line = self.lines.remove(self.cursor.0 + 1);
+            let current_line = &mut self.lines[self.cursor.0];
+            self.cursor.1 = current_line.len();
+            current_line.push_str(&next_line);
             self.record_change();
         }
     }
@@ -7591,6 +7605,10 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // gE - move backward to end of previous WORD
                                 self.move_to_word_end_backward(WordType::LongWord);
+                            } else if first == KeyCode::Char('g') && c == 'J' {
+                                // gJ - join lines without space
+                                self.join_lines_no_space();
+                                self.last_change = LastChange::JoinLinesNoSpace;
                             } else if first == KeyCode::Char('g')
                                 && (c == 'u' || c == 'U' || c == '~')
                             {
