@@ -6626,7 +6626,23 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char(c),
                         ..
                     }) => {
-                        if c.is_ascii_digit() && (c != '0' || self.count_prefix.is_some()) {
+                        // Check if we have a pending key that expects a character argument
+                        // (like r, f, F, t, T) - in this case, don't treat digits as count
+                        let has_char_pending = self.pending_keys.first().map_or(false, |k| {
+                            matches!(
+                                k,
+                                KeyCode::Char('r')
+                                    | KeyCode::Char('f')
+                                    | KeyCode::Char('F')
+                                    | KeyCode::Char('t')
+                                    | KeyCode::Char('T')
+                            )
+                        });
+
+                        if c.is_ascii_digit()
+                            && (c != '0' || self.count_prefix.is_some())
+                            && !has_char_pending
+                        {
                             self.add_count_digit(c);
                             self.render()?;
                             continue;
