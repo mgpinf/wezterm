@@ -1421,11 +1421,7 @@ impl<'a> EditorState<'a> {
         let content_start_row = if self.args.title.is_some() { 1 } else { 0 };
         let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
         let half = content_rows / 2;
-
-        // Set viewport_top so cursor is in the middle
         self.viewport_top = self.cursor.0.saturating_sub(half);
-
-        // Clamp viewport to valid range
         let max_viewport = self.lines.len().saturating_sub(1);
         self.viewport_top = self.viewport_top.min(max_viewport);
     }
@@ -1433,8 +1429,6 @@ impl<'a> EditorState<'a> {
     /// Scroll viewport so cursor line is at top of screen (zt)
     fn scroll_cursor_to_top(&mut self) {
         self.viewport_top = self.cursor.0;
-
-        // Clamp viewport to valid range
         let max_viewport = self.lines.len().saturating_sub(1);
         self.viewport_top = self.viewport_top.min(max_viewport);
     }
@@ -1444,11 +1438,7 @@ impl<'a> EditorState<'a> {
         let (_cols, rows) = self.buf.dimensions();
         let content_start_row = if self.args.title.is_some() { 1 } else { 0 };
         let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
-
-        // Set viewport_top so cursor is at the bottom visible line
         self.viewport_top = self.cursor.0.saturating_sub(content_rows.saturating_sub(1));
-
-        // Clamp viewport to valid range (at minimum 0)
         let max_viewport = self.lines.len().saturating_sub(1);
         self.viewport_top = self.viewport_top.min(max_viewport);
     }
@@ -3816,8 +3806,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Apply a case transformation to a range of text
-    /// start and end are (row, col) positions, inclusive
     fn apply_case_change<F>(&mut self, start: (usize, usize), end: (usize, usize), transform: F)
     where
         F: Fn(char) -> char,
@@ -3828,7 +3816,6 @@ impl<'a> EditorState<'a> {
         self.lines_version += 1;
 
         if start_row == end_row {
-            // Single line case
             let line = &mut self.lines[start_row];
             let chars: Vec<char> = line.chars().collect();
             let new_line: String = chars
@@ -3844,7 +3831,6 @@ impl<'a> EditorState<'a> {
                 .collect();
             *line = new_line;
         } else {
-            // Multi-line case
             for row in start_row..=end_row {
                 if row >= self.lines.len() {
                     break;
@@ -3872,17 +3858,14 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
-    /// Lowercase text in range (for gu operator)
     fn lowercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
         self.apply_case_change(start, end, |c| c.to_lowercase().next().unwrap_or(c));
     }
 
-    /// Uppercase text in range (for gU operator)
     fn uppercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
         self.apply_case_change(start, end, |c| c.to_uppercase().next().unwrap_or(c));
     }
 
-    /// Toggle case of text in range (for g~ operator)
     fn toggle_case_range(&mut self, start: (usize, usize), end: (usize, usize)) {
         self.apply_case_change(start, end, |c| {
             if c.is_lowercase() {
@@ -3976,7 +3959,6 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Apply case change to entire line (for guu, gUU, g~~)
     fn case_change_line(&mut self, op: char) {
         let row = self.cursor.0;
         let line_len = self.lines[row].chars().count();
@@ -9528,41 +9510,28 @@ mod tests {
             self.clamp_cursor();
         }
 
-        /// Scroll viewport so cursor line is at center of screen (zz)
         fn scroll_cursor_to_center(&mut self) {
             let half = self.screen_height / 2;
-
-            // Set viewport_top so cursor is in the middle
             self.viewport_top = self.cursor.0.saturating_sub(half);
-
-            // Clamp viewport to valid range
             let max_viewport = self.lines.len().saturating_sub(1);
             self.viewport_top = self.viewport_top.min(max_viewport);
         }
 
-        /// Scroll viewport so cursor line is at top of screen (zt)
         fn scroll_cursor_to_top(&mut self) {
             self.viewport_top = self.cursor.0;
-
-            // Clamp viewport to valid range
             let max_viewport = self.lines.len().saturating_sub(1);
             self.viewport_top = self.viewport_top.min(max_viewport);
         }
 
-        /// Scroll viewport so cursor line is at bottom of screen (zb)
         fn scroll_cursor_to_bottom(&mut self) {
-            // Set viewport_top so cursor is at the bottom visible line
             self.viewport_top = self
                 .cursor
                 .0
                 .saturating_sub(self.screen_height.saturating_sub(1));
-
-            // Clamp viewport to valid range (at minimum 0)
             let max_viewport = self.lines.len().saturating_sub(1);
             self.viewport_top = self.viewport_top.min(max_viewport);
         }
 
-        /// Apply a case transformation to a range of text
         fn apply_case_change<F>(&mut self, start: (usize, usize), end: (usize, usize), transform: F)
         where
             F: Fn(char) -> char,
@@ -9615,17 +9584,14 @@ mod tests {
             self.lines_version += 1;
         }
 
-        /// Lowercase text in range (for gu operator)
         fn lowercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
             self.apply_case_change(start, end, |c| c.to_lowercase().next().unwrap_or(c));
         }
 
-        /// Uppercase text in range (for gU operator)
         fn uppercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
             self.apply_case_change(start, end, |c| c.to_uppercase().next().unwrap_or(c));
         }
 
-        /// Toggle case of text in range (for g~ operator)
         fn toggle_case_range(&mut self, start: (usize, usize), end: (usize, usize)) {
             self.apply_case_change(start, end, |c| {
                 if c.is_lowercase() {
@@ -9636,7 +9602,6 @@ mod tests {
             });
         }
 
-        /// Apply case change to entire line (for guu, gUU, g~~)
         fn case_change_line(&mut self, op: char) {
             let row = self.cursor.0;
             let line_len = self.lines[row].chars().count();
