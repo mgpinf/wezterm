@@ -1,6 +1,7 @@
 ---
 tags:
   - overlay
+  - input_text
 ---
 
 # `InputText`
