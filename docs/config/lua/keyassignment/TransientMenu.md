@@ -37,15 +37,41 @@ of above-mentioned entities passed as an argument.
 
 ### `TransientEntry`
 
-`TransientEntry` struct is a lua object for which the possible values are:
-* `{ TransientSwitch = obj }` where `obj` is a [TransientSwitch](../TransientSwitch.md)
-  object
-* `{ TransientOption = obj }` where `obj` is a [TransientOption](../TransientOption.md)
-  object
-* `{ TransientCyclicSwitch = obj }` where `obj` is a
-  [TransientCyclicSwitch](../TransientCyclicSwitch.md) object
-* `{ TransientArgument = obj }` where `obj` is a [TransientArgument](../TransientArgument.md)
-  object
+`TransientEntry` is a lua object with a `type` field to specify the entry type,
+and all other fields at the same level:
+
+```lua
+entries = {
+  {
+    type = 'switch',
+    key = '-f',
+    description = 'Follow',
+    flag = '--follow',
+    default = true,
+  },
+  {
+    type = 'option',
+    key = '-t',
+    description = 'Tail',
+    flag = '--tail=',
+    default = '0',
+  },
+  {
+    type = 'cyclic',
+    key = '-c',
+    description = 'Choice',
+    flag = '--choice=',
+    choices = { 'a', 'b' },
+  },
+  { type = 'argument', key = 'l', description = 'Logs', action = callback },
+}
+```
+
+The `type` field accepts:
+* `"switch"` - boolean toggle, see [TransientSwitch](../TransientSwitch.md)
+* `"option"` - value input, see [TransientOption](../TransientOption.md)
+* `"cyclic"` - cycle through choices, see [TransientCyclicSwitch](../TransientCyclicSwitch.md)
+* `"argument"` - trigger action, see [TransientArgument](../TransientArgument.md)
 
 ## Combining TransientMenu and SelectorActions for viewing logs for Docker containers with an ability to move between KeyAssignments
 
@@ -123,21 +149,19 @@ containers_logs_transient = function(state)
             header = header 'Flags',
             entries = {
               {
-                TransientSwitch = {
-                  key = '-f',
-                  default = true,
-                  description = 'Follow',
-                  flag = '--follow',
-                },
+                type = 'switch',
+                key = '-f',
+                default = true,
+                description = 'Follow',
+                flag = '--follow',
               },
               {
-                TransientOption = {
-                  key = '-t',
-                  default = '0',
-                  description = 'Tail',
-                  flag = '--tail=',
-                  allow_nil = false,
-                },
+                type = 'option',
+                key = '-t',
+                default = '0',
+                description = 'Tail',
+                flag = '--tail=',
+                allow_nil = false,
               },
             },
           },
@@ -145,31 +169,30 @@ containers_logs_transient = function(state)
             header = header 'Actions',
             entries = {
               {
-                TransientArgument = {
-                  key = 'l',
-                  description = 'Logs',
-                  action = wezterm.action_callback(
-                    function(inner_window, inner_pane, result)
-                      local cmd = { 'docker', 'logs' }
-                      for _, entry in ipairs(result.entries) do
-                        if entry.value == true then
-                          table.insert(cmd, entry.flag)
-                        elseif entry.value then
-                          table.insert(cmd, entry.flag .. entry.value)
-                        end
-                      end
-
-                      local cmd_len = #cmd
-                      for _, container in ipairs(state.choices) do
-                        cmd[cmd_len + 1] = container.id
-                        inner_window:perform_action(
-                          act.SpawnCommandInNewTab { args = cmd },
-                          inner_pane
-                        )
+                type = 'argument',
+                key = 'l',
+                description = 'Logs',
+                action = wezterm.action_callback(
+                  function(inner_window, inner_pane, result)
+                    local cmd = { 'docker', 'logs' }
+                    for _, entry in ipairs(result.entries) do
+                      if entry.value == true then
+                        table.insert(cmd, entry.flag)
+                      elseif entry.value then
+                        table.insert(cmd, entry.flag .. entry.value)
                       end
                     end
-                  ),
-                },
+
+                    local cmd_len = #cmd
+                    for _, container in ipairs(state.choices) do
+                      cmd[cmd_len + 1] = container.id
+                      inner_window:perform_action(
+                        act.SpawnCommandInNewTab { args = cmd },
+                        inner_pane
+                      )
+                    end
+                  end
+                ),
               },
             },
           },
@@ -262,18 +285,17 @@ docker_actions_transient = function(state)
             header = header 'Actions',
             entries = {
               {
-                TransientArgument = {
-                  key = 'c',
-                  description = 'Containers',
-                  action = wezterm.action_callback(
-                    function(inner_window, inner_pane, result)
-                      inner_window:perform_action(
-                        containers_selector_actions(state),
-                        inner_pane
-                      )
-                    end
-                  ),
-                },
+                type = 'argument',
+                key = 'c',
+                description = 'Containers',
+                action = wezterm.action_callback(
+                  function(inner_window, inner_pane, result)
+                    inner_window:perform_action(
+                      containers_selector_actions(state),
+                      inner_pane
+                    )
+                  end
+                ),
               },
             },
           },

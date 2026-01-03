@@ -720,12 +720,67 @@ pub struct TransientArgument {
     pub action: Box<KeyAssignment>,
 }
 
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, PartialEq, ToDynamic)]
 pub enum TransientEntry {
     TransientSwitch(TransientSwitch),
     TransientOption(TransientOption),
     TransientCyclicSwitch(TransientCyclicSwitch),
     TransientArgument(TransientArgument),
+}
+
+impl FromDynamic for TransientEntry {
+    fn from_dynamic(
+        value: &Value,
+        options: FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        match value {
+            Value::Object(obj) => {
+                let type_value = obj.get_by_str("type").ok_or_else(|| {
+                    wezterm_dynamic::Error::Message(
+                        "TransientEntry requires a 'type' field".to_string(),
+                    )
+                })?;
+
+                let type_name = match type_value {
+                    Value::String(s) => s.as_str(),
+                    _ => {
+                        return Err(wezterm_dynamic::Error::Message(
+                            "'type' field must be a string".to_string(),
+                        ))
+                    }
+                };
+
+                // Use flatten() to ignore the 'type' field when parsing inner structs
+                let inner_options = options.flatten();
+
+                match type_name {
+                    "switch" => Ok(Self::TransientSwitch(TransientSwitch::from_dynamic(
+                        value,
+                        inner_options,
+                    )?)),
+                    "option" => Ok(Self::TransientOption(TransientOption::from_dynamic(
+                        value,
+                        inner_options,
+                    )?)),
+                    "cyclic" => Ok(Self::TransientCyclicSwitch(
+                        TransientCyclicSwitch::from_dynamic(value, inner_options)?,
+                    )),
+                    "argument" => Ok(Self::TransientArgument(TransientArgument::from_dynamic(
+                        value,
+                        inner_options,
+                    )?)),
+                    _ => Err(wezterm_dynamic::Error::InvalidVariantForType {
+                        variant_name: type_name.to_string(),
+                        type_name: "TransientEntry",
+                        possible: &["switch", "option", "cyclic", "argument"],
+                    }),
+                }
+            }
+            _ => Err(wezterm_dynamic::Error::Message(
+                "TransientEntry must be an object".to_string(),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
