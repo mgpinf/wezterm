@@ -181,6 +181,8 @@ config.colors = {
   input_text_replace_mode_bg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
   input_text_command_mode_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_command_mode_bg = { AnsiColor = 'Blue' }, -- {{since('nightly', inline=True)}}
+  input_text_search_replace_mode_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  input_text_search_replace_mode_bg = { AnsiColor = 'Olive' }, -- {{since('nightly', inline=True)}}
   input_text_status_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_status_bg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   input_text_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
