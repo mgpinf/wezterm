@@ -1415,6 +1415,44 @@ impl<'a> EditorState<'a> {
         self.update_desired_col();
     }
 
+    /// Scroll viewport so cursor line is at center of screen (zz)
+    fn scroll_cursor_to_center(&mut self) {
+        let (_cols, rows) = self.buf.dimensions();
+        let content_start_row = if self.args.title.is_some() { 1 } else { 0 };
+        let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
+        let half = content_rows / 2;
+
+        // Set viewport_top so cursor is in the middle
+        self.viewport_top = self.cursor.0.saturating_sub(half);
+
+        // Clamp viewport to valid range
+        let max_viewport = self.lines.len().saturating_sub(1);
+        self.viewport_top = self.viewport_top.min(max_viewport);
+    }
+
+    /// Scroll viewport so cursor line is at top of screen (zt)
+    fn scroll_cursor_to_top(&mut self) {
+        self.viewport_top = self.cursor.0;
+
+        // Clamp viewport to valid range
+        let max_viewport = self.lines.len().saturating_sub(1);
+        self.viewport_top = self.viewport_top.min(max_viewport);
+    }
+
+    /// Scroll viewport so cursor line is at bottom of screen (zb)
+    fn scroll_cursor_to_bottom(&mut self) {
+        let (_cols, rows) = self.buf.dimensions();
+        let content_start_row = if self.args.title.is_some() { 1 } else { 0 };
+        let content_rows = rows.saturating_sub(RESERVED_ROWS + content_start_row);
+
+        // Set viewport_top so cursor is at the bottom visible line
+        self.viewport_top = self.cursor.0.saturating_sub(content_rows.saturating_sub(1));
+
+        // Clamp viewport to valid range (at minimum 0)
+        let max_viewport = self.lines.len().saturating_sub(1);
+        self.viewport_top = self.viewport_top.min(max_viewport);
+    }
+
     fn get_line_start_pos(&self) -> (usize, usize) {
         (self.cursor.0, 0)
     }
@@ -7130,6 +7168,15 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // gE - move backward to end of previous WORD
                                 self.move_to_word_end_backward(WordType::LongWord);
+                            } else if first == KeyCode::Char('z') && c == 'z' {
+                                // zz - scroll cursor line to center of screen
+                                self.scroll_cursor_to_center();
+                            } else if first == KeyCode::Char('z') && c == 't' {
+                                // zt - scroll cursor line to top of screen
+                                self.scroll_cursor_to_top();
+                            } else if first == KeyCode::Char('z') && c == 'b' {
+                                // zb - scroll cursor line to bottom of screen
+                                self.scroll_cursor_to_bottom();
                             } else if first == KeyCode::Char('Z') && c == 'Z' {
                                 self.submit();
                                 break;
@@ -7174,6 +7221,7 @@ impl<'a> EditorState<'a> {
                         }
 
                         if c == 'g'
+                            || c == 'z'
                             || c == 'Z'
                             || c == '['
                             || c == ']'
@@ -9030,6 +9078,40 @@ mod tests {
             self.viewport_top = self.viewport_top.saturating_sub(half_page);
             self.cursor.0 = self.cursor.0.saturating_sub(half_page);
             self.clamp_cursor();
+        }
+
+        /// Scroll viewport so cursor line is at center of screen (zz)
+        fn scroll_cursor_to_center(&mut self) {
+            let half = self.screen_height / 2;
+
+            // Set viewport_top so cursor is in the middle
+            self.viewport_top = self.cursor.0.saturating_sub(half);
+
+            // Clamp viewport to valid range
+            let max_viewport = self.lines.len().saturating_sub(1);
+            self.viewport_top = self.viewport_top.min(max_viewport);
+        }
+
+        /// Scroll viewport so cursor line is at top of screen (zt)
+        fn scroll_cursor_to_top(&mut self) {
+            self.viewport_top = self.cursor.0;
+
+            // Clamp viewport to valid range
+            let max_viewport = self.lines.len().saturating_sub(1);
+            self.viewport_top = self.viewport_top.min(max_viewport);
+        }
+
+        /// Scroll viewport so cursor line is at bottom of screen (zb)
+        fn scroll_cursor_to_bottom(&mut self) {
+            // Set viewport_top so cursor is at the bottom visible line
+            self.viewport_top = self
+                .cursor
+                .0
+                .saturating_sub(self.screen_height.saturating_sub(1));
+
+            // Clamp viewport to valid range (at minimum 0)
+            let max_viewport = self.lines.len().saturating_sub(1);
+            self.viewport_top = self.viewport_top.min(max_viewport);
         }
 
         fn delete_line(&mut self, row: usize) {
@@ -11452,6 +11534,134 @@ mod tests {
         editor.scroll_half_page_up(1);
         assert_eq!(editor.viewport_top, 0);
         assert_eq!(editor.cursor.0, 0);
+    }
+
+    // ============ zz/zt/zb (Scroll Cursor Position) Tests ============
+
+    #[test]
+    fn test_scroll_cursor_to_center_basic() {
+        // With screen_height=10, cursor at line 10 should center viewport around line 10
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20",
+        )
+        .with_screen_height(10)
+        .with_cursor(10, 0);
+        editor.viewport_top = 0;
+        editor.scroll_cursor_to_center();
+        // With screen_height=10, half = 5, so viewport_top = 10 - 5 = 5
+        assert_eq!(editor.viewport_top, 5);
+        assert_eq!(editor.cursor.0, 10); // Cursor unchanged
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_center_at_start() {
+        // Cursor at line 0 should set viewport_top to 0 (can't center above start)
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+        )
+        .with_screen_height(10)
+        .with_cursor(0, 0);
+        editor.viewport_top = 5;
+        editor.scroll_cursor_to_center();
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 0);
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_center_near_end() {
+        // Cursor near end should still center as much as possible
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+        )
+        .with_screen_height(10)
+        .with_cursor(9, 0);
+        editor.viewport_top = 0;
+        editor.scroll_cursor_to_center();
+        // With screen_height=10, half = 5, so viewport_top = 9 - 5 = 4
+        assert_eq!(editor.viewport_top, 4);
+        assert_eq!(editor.cursor.0, 9);
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_top_basic() {
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+        )
+        .with_screen_height(10)
+        .with_cursor(5, 0);
+        editor.viewport_top = 0;
+        editor.scroll_cursor_to_top();
+        // Viewport should start at cursor line
+        assert_eq!(editor.viewport_top, 5);
+        assert_eq!(editor.cursor.0, 5);
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_top_at_start() {
+        let mut editor = TestEditor::new("line1\nline2\nline3\nline4\nline5")
+            .with_screen_height(10)
+            .with_cursor(0, 0);
+        editor.viewport_top = 3;
+        editor.scroll_cursor_to_top();
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 0);
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_top_clamps_to_max() {
+        // When cursor is at line 9 (last line) and we scroll it to top,
+        // viewport_top should be clamped to max (last line)
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+        )
+        .with_screen_height(10)
+        .with_cursor(9, 0);
+        editor.viewport_top = 0;
+        editor.scroll_cursor_to_top();
+        assert_eq!(editor.viewport_top, 9);
+        assert_eq!(editor.cursor.0, 9);
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_bottom_basic() {
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20",
+        )
+        .with_screen_height(10)
+        .with_cursor(15, 0);
+        editor.viewport_top = 15;
+        editor.scroll_cursor_to_bottom();
+        // With screen_height=10, cursor at 15 should set viewport_top = 15 - 9 = 6
+        assert_eq!(editor.viewport_top, 6);
+        assert_eq!(editor.cursor.0, 15);
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_bottom_at_start() {
+        // Cursor at line 0, trying to scroll to bottom should set viewport_top to 0
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+        )
+        .with_screen_height(10)
+        .with_cursor(0, 0);
+        editor.viewport_top = 5;
+        editor.scroll_cursor_to_bottom();
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 0);
+    }
+
+    #[test]
+    fn test_scroll_cursor_to_bottom_near_start() {
+        // Cursor at line 3, with screen_height=10, should set viewport_top = 3 - 9 = 0 (clamped)
+        let mut editor = TestEditor::new(
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+        )
+        .with_screen_height(10)
+        .with_cursor(3, 0);
+        editor.viewport_top = 5;
+        editor.scroll_cursor_to_bottom();
+        assert_eq!(editor.viewport_top, 0);
+        assert_eq!(editor.cursor.0, 3);
     }
 
     // ============ Increment/Decrement Number Tests ============
