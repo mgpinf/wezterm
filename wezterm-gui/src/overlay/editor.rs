@@ -9616,6 +9616,12 @@ mod tests {
         viewport_top: usize,
         screen_height: usize,         // Number of visible lines for H/M/L tests
         visual_start: (usize, usize), // Anchor point for visual selection
+        // Search/replace fields
+        sr_search_input: String,
+        sr_replace_input: String,
+        sr_matches: Vec<(usize, usize, usize)>, // (row, col, len)
+        sr_current_match_idx: usize,
+        sr_replace_count: usize,
     }
 
     impl TestEditor {
@@ -9643,6 +9649,11 @@ mod tests {
                 viewport_top: 0,
                 screen_height: 24,    // Default screen height for tests
                 visual_start: (0, 0), // Default visual start
+                sr_search_input: String::new(),
+                sr_replace_input: String::new(),
+                sr_matches: Vec::new(),
+                sr_current_match_idx: 0,
+                sr_replace_count: 0,
             }
         }
 
@@ -11240,6 +11251,151 @@ mod tests {
                 LastChange::IncrementNumber => self.increment_number(use_count),
                 LastChange::DecrementNumber => self.decrement_number(use_count),
                 _ => {}
+            }
+        }
+
+        /// Find all matches of the search pattern in the document
+        fn sr_find_all_matches(&mut self) {
+            self.sr_matches.clear();
+            if self.sr_search_input.is_empty() {
+                return;
+            }
+
+            let pattern = &self.sr_search_input;
+            for (row, line) in self.lines.iter().enumerate() {
+                let mut search_start = 0;
+                while search_start < line.len() {
+                    if let Some(pos) = line[search_start..].find(pattern) {
+                        let byte_pos = search_start + pos;
+                        let char_col = line[..byte_pos].chars().count();
+                        let match_len = pattern.chars().count();
+                        self.sr_matches.push((row, char_col, match_len));
+                        search_start = byte_pos + pattern.len();
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            if !self.sr_matches.is_empty() {
+                self.sr_current_match_idx = 0;
+                let (row, col, _) = self.sr_matches[0];
+                self.cursor = (row, col);
+            }
+        }
+
+        /// Replace the current match with the replacement text
+        fn sr_replace_current(&mut self) -> bool {
+            if self.sr_matches.is_empty() || self.sr_current_match_idx >= self.sr_matches.len() {
+                return false;
+            }
+
+            let (row, col, match_len) = self.sr_matches[self.sr_current_match_idx];
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+
+            let byte_start: usize = chars[..col].iter().map(|c| c.len_utf8()).sum();
+            let byte_end: usize = chars[..col + match_len].iter().map(|c| c.len_utf8()).sum();
+
+            let new_line = format!(
+                "{}{}{}",
+                &line[..byte_start],
+                self.sr_replace_input,
+                &line[byte_end..]
+            );
+            self.lines[row] = new_line;
+            self.lines_version += 1;
+            self.sr_replace_count += 1;
+
+            // Update match positions on the same line
+            let old_pattern_len = self.sr_search_input.chars().count();
+            let new_pattern_len = self.sr_replace_input.chars().count();
+            let len_diff = new_pattern_len as isize - old_pattern_len as isize;
+
+            let mut i = self.sr_current_match_idx + 1;
+            while i < self.sr_matches.len() {
+                let (m_row, m_col, m_len) = self.sr_matches[i];
+                if m_row == row {
+                    let new_col = (m_col as isize + len_diff) as usize;
+                    self.sr_matches[i] = (m_row, new_col, m_len);
+                }
+                i += 1;
+            }
+
+            self.sr_matches.remove(self.sr_current_match_idx);
+
+            if !self.sr_matches.is_empty() {
+                if self.sr_current_match_idx >= self.sr_matches.len() {
+                    self.sr_current_match_idx = 0;
+                }
+                let (row, col, _) = self.sr_matches[self.sr_current_match_idx];
+                self.cursor = (row, col);
+            }
+
+            true
+        }
+
+        /// Skip the current match (don't replace) and move to the next
+        fn sr_skip_current(&mut self) {
+            if self.sr_matches.is_empty() || self.sr_current_match_idx >= self.sr_matches.len() {
+                return;
+            }
+
+            self.sr_matches.remove(self.sr_current_match_idx);
+
+            if !self.sr_matches.is_empty() {
+                if self.sr_current_match_idx >= self.sr_matches.len() {
+                    self.sr_current_match_idx = 0;
+                }
+                let (row, col, _) = self.sr_matches[self.sr_current_match_idx];
+                self.cursor = (row, col);
+            }
+        }
+
+        /// Replace all remaining matches
+        fn sr_replace_all(&mut self) -> usize {
+            if self.sr_matches.is_empty() {
+                return 0;
+            }
+
+            let mut matches = self.sr_matches.clone();
+            matches.reverse();
+
+            let mut count = 0;
+            for (row, col, match_len) in matches {
+                let line = &self.lines[row];
+                let chars: Vec<char> = line.chars().collect();
+
+                let byte_start: usize = chars[..col].iter().map(|c| c.len_utf8()).sum();
+                let byte_end: usize = chars[..col + match_len].iter().map(|c| c.len_utf8()).sum();
+
+                let new_line = format!(
+                    "{}{}{}",
+                    &line[..byte_start],
+                    self.sr_replace_input,
+                    &line[byte_end..]
+                );
+                self.lines[row] = new_line;
+                count += 1;
+            }
+
+            self.lines_version += 1;
+            self.sr_replace_count += count;
+            self.sr_matches.clear();
+
+            count
+        }
+
+        /// Replace char at cursor (for r command)
+        fn replace_char(&mut self, replacement: char) {
+            let line = &self.lines[self.cursor.0];
+            let chars: Vec<char> = line.chars().collect();
+            if self.cursor.1 < chars.len() {
+                self.save_undo_state();
+                self.lines_version += 1;
+                let mut new_chars = chars;
+                new_chars[self.cursor.1] = replacement;
+                self.lines[self.cursor.0] = new_chars.into_iter().collect();
             }
         }
     }
@@ -13683,5 +13839,181 @@ mod tests {
         assert!(editor.yank_is_block);
         assert!(!editor.yank_is_linewise);
         assert_eq!(editor.yank_buffer, "ing1\ning2");
+    }
+
+    // ============ Search and Replace Tests ============
+
+    #[test]
+    fn test_sr_find_all_matches() {
+        let mut editor = TestEditor::new("foo bar foo baz foo");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_find_all_matches();
+        assert_eq!(editor.sr_matches.len(), 3);
+        assert_eq!(editor.sr_matches[0], (0, 0, 3)); // First "foo"
+        assert_eq!(editor.sr_matches[1], (0, 8, 3)); // Second "foo"
+        assert_eq!(editor.sr_matches[2], (0, 16, 3)); // Third "foo"
+    }
+
+    #[test]
+    fn test_sr_find_matches_multiline() {
+        let mut editor = TestEditor::new("foo bar\nbaz foo\nfoo end");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_find_all_matches();
+        assert_eq!(editor.sr_matches.len(), 3);
+        assert_eq!(editor.sr_matches[0], (0, 0, 3)); // Line 0
+        assert_eq!(editor.sr_matches[1], (1, 4, 3)); // Line 1
+        assert_eq!(editor.sr_matches[2], (2, 0, 3)); // Line 2
+    }
+
+    #[test]
+    fn test_sr_find_no_matches() {
+        let mut editor = TestEditor::new("hello world");
+        editor.sr_search_input = "xyz".to_string();
+        editor.sr_find_all_matches();
+        assert_eq!(editor.sr_matches.len(), 0);
+    }
+
+    #[test]
+    fn test_sr_replace_current() {
+        let mut editor = TestEditor::new("foo bar foo");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_replace_input = "baz".to_string();
+        editor.sr_find_all_matches();
+        assert_eq!(editor.sr_matches.len(), 2);
+
+        editor.sr_replace_current();
+        assert_eq!(editor.text(), "baz bar foo");
+        assert_eq!(editor.sr_matches.len(), 1);
+        assert_eq!(editor.sr_replace_count, 1);
+    }
+
+    #[test]
+    fn test_sr_replace_current_updates_positions() {
+        let mut editor = TestEditor::new("aa aa aa");
+        editor.sr_search_input = "aa".to_string();
+        editor.sr_replace_input = "bbb".to_string();
+        editor.sr_find_all_matches();
+        assert_eq!(editor.sr_matches.len(), 3);
+
+        // Replace first match, should update positions of subsequent matches
+        editor.sr_replace_current();
+        assert_eq!(editor.text(), "bbb aa aa");
+        assert_eq!(editor.sr_matches.len(), 2);
+        // Second match was at col 3, now should be at col 4 (shifted by 1)
+        assert_eq!(editor.sr_matches[0], (0, 4, 2));
+    }
+
+    #[test]
+    fn test_sr_skip_current() {
+        let mut editor = TestEditor::new("foo bar foo");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_replace_input = "baz".to_string();
+        editor.sr_find_all_matches();
+        assert_eq!(editor.sr_matches.len(), 2);
+
+        editor.sr_skip_current();
+        assert_eq!(editor.text(), "foo bar foo"); // Text unchanged
+        assert_eq!(editor.sr_matches.len(), 1); // But match removed from list
+    }
+
+    #[test]
+    fn test_sr_replace_all() {
+        let mut editor = TestEditor::new("foo bar foo baz foo");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_replace_input = "XXX".to_string();
+        editor.sr_find_all_matches();
+
+        let count = editor.sr_replace_all();
+        assert_eq!(count, 3);
+        assert_eq!(editor.text(), "XXX bar XXX baz XXX");
+        assert_eq!(editor.sr_matches.len(), 0);
+    }
+
+    #[test]
+    fn test_sr_replace_all_multiline() {
+        let mut editor = TestEditor::new("foo\nfoo\nfoo");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_replace_input = "bar".to_string();
+        editor.sr_find_all_matches();
+
+        let count = editor.sr_replace_all();
+        assert_eq!(count, 3);
+        assert_eq!(editor.text(), "bar\nbar\nbar");
+    }
+
+    #[test]
+    fn test_sr_skip_then_replace_all() {
+        let mut editor = TestEditor::new("foo bar foo baz foo");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_replace_input = "XXX".to_string();
+        editor.sr_find_all_matches();
+
+        // Skip first match
+        editor.sr_skip_current();
+        assert_eq!(editor.sr_matches.len(), 2);
+
+        // Replace remaining matches
+        let count = editor.sr_replace_all();
+        assert_eq!(count, 2);
+        assert_eq!(editor.text(), "foo bar XXX baz XXX"); // First foo preserved
+    }
+
+    #[test]
+    fn test_sr_replace_with_longer_text() {
+        let mut editor = TestEditor::new("a b a");
+        editor.sr_search_input = "a".to_string();
+        editor.sr_replace_input = "xxx".to_string();
+        editor.sr_find_all_matches();
+
+        editor.sr_replace_all();
+        assert_eq!(editor.text(), "xxx b xxx");
+    }
+
+    #[test]
+    fn test_sr_replace_with_shorter_text() {
+        let mut editor = TestEditor::new("hello world hello");
+        editor.sr_search_input = "hello".to_string();
+        editor.sr_replace_input = "hi".to_string();
+        editor.sr_find_all_matches();
+
+        editor.sr_replace_all();
+        assert_eq!(editor.text(), "hi world hi");
+    }
+
+    #[test]
+    fn test_sr_replace_with_empty_text() {
+        let mut editor = TestEditor::new("foo bar foo");
+        editor.sr_search_input = "foo".to_string();
+        editor.sr_replace_input = "".to_string();
+        editor.sr_find_all_matches();
+
+        editor.sr_replace_all();
+        assert_eq!(editor.text(), " bar ");
+    }
+
+    // ============ Replace Char with Digit Tests ============
+
+    #[test]
+    fn test_r_command_with_digit() {
+        let mut editor = TestEditor::new("hello");
+        editor.cursor = (0, 1);
+        editor.replace_char('5');
+        assert_eq!(editor.text(), "h5llo");
+    }
+
+    #[test]
+    fn test_r_command_with_zero() {
+        let mut editor = TestEditor::new("hello");
+        editor.cursor = (0, 2);
+        editor.replace_char('0');
+        assert_eq!(editor.text(), "he0lo");
+    }
+
+    #[test]
+    fn test_r_command_with_special_char() {
+        let mut editor = TestEditor::new("hello");
+        editor.cursor = (0, 0);
+        editor.replace_char('@');
+        assert_eq!(editor.text(), "@ello");
     }
 }
