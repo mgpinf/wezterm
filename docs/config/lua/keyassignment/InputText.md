@@ -101,6 +101,9 @@ The editor supports Vim-style modal editing:
 | `Ctrl-U` | Scroll half page up |
 | `Ctrl-E` | Scroll one line down |
 | `Ctrl-Y` | Scroll one line up |
+| `zz` | Scroll viewport to center cursor line on screen |
+| `zt` | Scroll viewport to place cursor line at top of screen |
+| `zb` | Scroll viewport to place cursor line at bottom of screen |
 
 ### Editing (Normal mode)
 
@@ -118,7 +121,8 @@ The editor supports Vim-style modal editing:
 | `s` | Substitute character (delete + insert) |
 | `S` | Substitute line (delete line + insert) |
 | `r{char}` | Replace character with {char} |
-| `J` | Join current line with next |
+| `J` | Join current line with next (adds space) |
+| `gJ` | Join current line with next (no space, preserves whitespace) |
 | `~` | Toggle case of character |
 | `Ctrl-A` | Increment number under cursor |
 | `Ctrl-X` | Decrement number under cursor |
@@ -135,16 +139,25 @@ Operators can be combined with motions or text objects:
 | `d{motion}` | Delete |
 | `c{motion}` | Change (delete + insert) |
 | `y{motion}` | Yank (copy) |
+| `gu{motion}` | Lowercase text covered by motion |
+| `gU{motion}` | Uppercase text covered by motion |
+| `g~{motion}` | Toggle case of text covered by motion |
 
 Examples:
 * `dw` - Delete to next word
 * `ci(` - Change inside parentheses
 * `yy` - Yank current line
 * `d$` - Delete to end of line
+* `guw` - Lowercase next word
+* `gUiw` - Uppercase inner word
+* `g~$` - Toggle case to end of line
+* `guu` - Lowercase entire line
+* `gUU` - Uppercase entire line
+* `g~~` - Toggle case of entire line
 
 ### Text Objects
 
-Used with operators (`d`, `c`, `y`) or in Visual mode:
+Used with operators (`d`, `c`, `y`, `gu`, `gU`, `g~`) or in Visual mode:
 
 | Text Object | Description |
 |-------------|-------------|
