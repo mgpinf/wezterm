@@ -3816,6 +3816,182 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Apply a case transformation to a range of text
+    /// start and end are (row, col) positions, inclusive
+    fn apply_case_change<F>(&mut self, start: (usize, usize), end: (usize, usize), transform: F)
+    where
+        F: Fn(char) -> char,
+    {
+        let (start_row, start_col) = start;
+        let (end_row, end_col) = end;
+
+        self.lines_version += 1;
+
+        if start_row == end_row {
+            // Single line case
+            let line = &mut self.lines[start_row];
+            let chars: Vec<char> = line.chars().collect();
+            let new_line: String = chars
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| {
+                    if i >= start_col && i <= end_col {
+                        transform(c)
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            *line = new_line;
+        } else {
+            // Multi-line case
+            for row in start_row..=end_row {
+                if row >= self.lines.len() {
+                    break;
+                }
+                let line = &mut self.lines[row];
+                let chars: Vec<char> = line.chars().collect();
+                let new_line: String = chars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &c)| {
+                        if row == start_row && i >= start_col {
+                            transform(c)
+                        } else if row == end_row && i <= end_col {
+                            transform(c)
+                        } else if row > start_row && row < end_row {
+                            transform(c)
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                *line = new_line;
+            }
+        }
+        self.record_change();
+    }
+
+    /// Lowercase text in range (for gu operator)
+    fn lowercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
+        self.apply_case_change(start, end, |c| c.to_lowercase().next().unwrap_or(c));
+    }
+
+    /// Uppercase text in range (for gU operator)
+    fn uppercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
+        self.apply_case_change(start, end, |c| c.to_uppercase().next().unwrap_or(c));
+    }
+
+    /// Toggle case of text in range (for g~ operator)
+    fn toggle_case_range(&mut self, start: (usize, usize), end: (usize, usize)) {
+        self.apply_case_change(start, end, |c| {
+            if c.is_lowercase() {
+                c.to_uppercase().next().unwrap_or(c)
+            } else {
+                c.to_lowercase().next().unwrap_or(c)
+            }
+        });
+    }
+
+    /// Perform a case change operation with a motion
+    fn perform_case_change_motion<F>(&mut self, get_target: F, op: char, inclusive: bool)
+    where
+        F: FnOnce(&Self) -> Option<(usize, usize)>,
+    {
+        if let Some(target) = get_target(self) {
+            let start = self.cursor;
+            let end = target;
+
+            // Determine actual start and end (handle backward motions)
+            let (actual_start, actual_end) =
+                if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+                    if inclusive {
+                        (start, end)
+                    } else {
+                        (start, (end.0, end.1.saturating_sub(1)))
+                    }
+                } else {
+                    if inclusive {
+                        (end, start)
+                    } else {
+                        ((end.0, end.1), (start.0, start.1.saturating_sub(1)))
+                    }
+                };
+
+            match op {
+                'u' => self.lowercase_range(actual_start, actual_end),
+                'U' => self.uppercase_range(actual_start, actual_end),
+                '~' => self.toggle_case_range(actual_start, actual_end),
+                _ => {}
+            }
+        }
+    }
+
+    /// Perform a case change operation with count
+    fn perform_case_change_motion_with_count<F>(
+        &mut self,
+        get_target: F,
+        count: usize,
+        op: char,
+        inclusive: bool,
+    ) where
+        F: Fn(&Self) -> Option<(usize, usize)>,
+    {
+        let start = self.cursor;
+        let mut end = start;
+
+        for _ in 0..count {
+            if let Some(target) = get_target(self) {
+                end = target;
+                self.cursor = target;
+            } else {
+                break;
+            }
+        }
+
+        // Restore cursor to start
+        self.cursor = start;
+
+        // Determine actual start and end (handle backward motions)
+        let (actual_start, actual_end) =
+            if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+                if inclusive {
+                    (start, end)
+                } else {
+                    (start, (end.0, end.1.saturating_sub(1)))
+                }
+            } else {
+                if inclusive {
+                    (end, start)
+                } else {
+                    ((end.0, end.1), (start.0, start.1.saturating_sub(1)))
+                }
+            };
+
+        match op {
+            'u' => self.lowercase_range(actual_start, actual_end),
+            'U' => self.uppercase_range(actual_start, actual_end),
+            '~' => self.toggle_case_range(actual_start, actual_end),
+            _ => {}
+        }
+    }
+
+    /// Apply case change to entire line (for guu, gUU, g~~)
+    fn case_change_line(&mut self, op: char) {
+        let row = self.cursor.0;
+        let line_len = self.lines[row].chars().count();
+        if line_len > 0 {
+            let start = (row, 0);
+            let end = (row, line_len - 1);
+            match op {
+                'u' => self.lowercase_range(start, end),
+                'U' => self.uppercase_range(start, end),
+                '~' => self.toggle_case_range(start, end),
+                _ => {}
+            }
+        }
+    }
+
     fn find_number_at_cursor(&self) -> Option<NumberAtCursor> {
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
@@ -6192,9 +6368,19 @@ impl<'a> EditorState<'a> {
                                     self.change_to_start_of_file();
                                 } else if op == 'y' {
                                     self.yank_to_start_of_file();
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    let start = (0, 0);
+                                    let end = self.cursor;
+                                    match op {
+                                        'u' => self.lowercase_range(start, end),
+                                        'U' => self.uppercase_range(start, end),
+                                        '~' => self.toggle_case_range(start, end),
+                                        _ => {}
+                                    }
                                 }
                             } else if first == KeyCode::Char('g') && c == 'e' {
-                                // dge / cge / yge - delete/change/yank backward to end of previous word
+                                // dge / cge / yge / guge / gUge / g~ge
                                 let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
@@ -6217,6 +6403,14 @@ impl<'a> EditorState<'a> {
                                     self.perform_yank_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::Word),
                                         count,
+                                        true,
+                                    );
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    self.perform_case_change_motion_with_count(
+                                        |s| Some(s.get_word_end_backward_pos(WordType::Word)),
+                                        count,
+                                        op,
                                         true,
                                     );
                                 } else {
@@ -6236,7 +6430,7 @@ impl<'a> EditorState<'a> {
                                     );
                                 }
                             } else if first == KeyCode::Char('g') && c == 'E' {
-                                // dgE / cgE / ygE - delete/change/yank backward to end of previous WORD
+                                // dgE / cgE / ygE / gugE / gUgE / g~gE
                                 let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
@@ -6261,6 +6455,14 @@ impl<'a> EditorState<'a> {
                                         count,
                                         true,
                                     );
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    self.perform_case_change_motion_with_count(
+                                        |s| Some(s.get_word_end_backward_pos(WordType::LongWord)),
+                                        count,
+                                        op,
+                                        true,
+                                    );
                                 } else {
                                     self.perform_delete_motion_with_count(
                                         |s| s.get_word_end_backward_pos(WordType::LongWord),
@@ -6278,7 +6480,7 @@ impl<'a> EditorState<'a> {
                                     );
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
-                                // diw / ciw / yiw - delete/change/yank inner word
+                                // diw / ciw / yiw / guiw / gUiw / g~iw
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6288,6 +6490,18 @@ impl<'a> EditorState<'a> {
                                     self.delete_inner_word();
                                 } else if op == 'y' {
                                     self.yank_inner_word();
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    let (start_col, end_col) = self.get_inner_word_bounds();
+                                    let row = self.cursor.0;
+                                    let start = (row, start_col);
+                                    let end = (row, end_col.saturating_sub(1));
+                                    match op {
+                                        'u' => self.lowercase_range(start, end),
+                                        'U' => self.uppercase_range(start, end),
+                                        '~' => self.toggle_case_range(start, end),
+                                        _ => {}
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Word(WordType::Word),
@@ -6295,7 +6509,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_inner_word();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'w' {
-                                // daw / caw / yaw - delete/change/yank a word
+                                // daw / caw / yaw / guaw / gUaw / g~aw
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6305,6 +6519,18 @@ impl<'a> EditorState<'a> {
                                     self.delete_a_word();
                                 } else if op == 'y' {
                                     self.yank_a_word();
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    let (start_col, end_col) = self.get_a_word_bounds();
+                                    let row = self.cursor.0;
+                                    let start = (row, start_col);
+                                    let end = (row, end_col.saturating_sub(1));
+                                    match op {
+                                        'u' => self.lowercase_range(start, end),
+                                        'U' => self.uppercase_range(start, end),
+                                        '~' => self.toggle_case_range(start, end),
+                                        _ => {}
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Word(WordType::Word),
@@ -6312,7 +6538,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_a_word();
                                 }
                             } else if first == KeyCode::Char('i') && c == 'W' {
-                                // diW / ciW / yiW - delete/change/yank inner WORD
+                                // diW / ciW / yiW / guiW / gUiW / g~iW
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6322,6 +6548,18 @@ impl<'a> EditorState<'a> {
                                     self.delete_inner_long_word();
                                 } else if op == 'y' {
                                     self.yank_inner_long_word();
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    let (start_col, end_col) = self.get_inner_long_word_bounds();
+                                    let row = self.cursor.0;
+                                    let start = (row, start_col);
+                                    let end = (row, end_col.saturating_sub(1));
+                                    match op {
+                                        'u' => self.lowercase_range(start, end),
+                                        'U' => self.uppercase_range(start, end),
+                                        '~' => self.toggle_case_range(start, end),
+                                        _ => {}
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Word(WordType::LongWord),
@@ -6329,7 +6567,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_inner_long_word();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'W' {
-                                // daW / caW / yaW - delete/change/yank a WORD
+                                // daW / caW / yaW / guaW / gUaW / g~aW
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6339,6 +6577,18 @@ impl<'a> EditorState<'a> {
                                     self.delete_a_long_word();
                                 } else if op == 'y' {
                                     self.yank_a_long_word();
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    let (start_col, end_col) = self.get_a_long_word_bounds();
+                                    let row = self.cursor.0;
+                                    let start = (row, start_col);
+                                    let end = (row, end_col.saturating_sub(1));
+                                    match op {
+                                        'u' => self.lowercase_range(start, end),
+                                        'U' => self.uppercase_range(start, end),
+                                        '~' => self.toggle_case_range(start, end),
+                                        _ => {}
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Word(WordType::LongWord),
@@ -6488,7 +6738,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_next_unmatched(open, close);
                                 }
                             } else if first == KeyCode::Char('f') {
-                                // df{char} / cf{char} / yf{char} - delete/change/yank to char (inclusive)
+                                // df{char} / cf{char} / yf{char} / guf{char} / gUf{char} / g~f{char}
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6500,6 +6750,18 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_char_forward(c, true);
                                 } else if op == 'y' {
                                     self.yank_to_char_forward(c, true);
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    if let Some(target_col) = self.find_char_forward(c) {
+                                        let start = self.cursor;
+                                        let end = (self.cursor.0, target_col);
+                                        match op {
+                                            'u' => self.lowercase_range(start, end),
+                                            'U' => self.uppercase_range(start, end),
+                                            '~' => self.toggle_case_range(start, end),
+                                            _ => {}
+                                        }
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
@@ -6509,7 +6771,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_char_forward(c, true);
                                 }
                             } else if first == KeyCode::Char('F') {
-                                // dF{char} / cF{char} / yF{char} - delete/change/yank backward to char (inclusive)
+                                // dF{char} / cF{char} / yF{char} / guF{char} / gUF{char} / g~F{char}
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6521,6 +6783,18 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_char_backward(c, true);
                                 } else if op == 'y' {
                                     self.yank_to_char_backward(c, true);
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    if let Some(target_col) = self.find_char_backward(c) {
+                                        let start = (self.cursor.0, target_col);
+                                        let end = self.cursor;
+                                        match op {
+                                            'u' => self.lowercase_range(start, end),
+                                            'U' => self.uppercase_range(start, end),
+                                            '~' => self.toggle_case_range(start, end),
+                                            _ => {}
+                                        }
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
@@ -6530,7 +6804,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_char_backward(c, true);
                                 }
                             } else if first == KeyCode::Char('t') {
-                                // dt{char} / ct{char} / yt{char} - delete/change/yank till char (exclusive)
+                                // dt{char} / ct{char} / yt{char} / gut{char} / gUt{char} / g~t{char}
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6542,6 +6816,21 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_char_forward(c, false);
                                 } else if op == 'y' {
                                     self.yank_to_char_forward(c, false);
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    if let Some(target_col) = self.find_char_forward(c) {
+                                        // 't' is exclusive, so stop before the character
+                                        let start = self.cursor;
+                                        let end = (self.cursor.0, target_col.saturating_sub(1));
+                                        if end.1 >= start.1 {
+                                            match op {
+                                                'u' => self.lowercase_range(start, end),
+                                                'U' => self.uppercase_range(start, end),
+                                                '~' => self.toggle_case_range(start, end),
+                                                _ => {}
+                                            }
+                                        }
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
@@ -6551,7 +6840,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_char_forward(c, false);
                                 }
                             } else if first == KeyCode::Char('T') {
-                                // dT{char} / cT{char} / yT{char} - delete/change/yank backward till char (exclusive)
+                                // dT{char} / cT{char} / yT{char} / guT{char} / gUT{char} / g~T{char}
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -6563,6 +6852,21 @@ impl<'a> EditorState<'a> {
                                     self.delete_to_char_backward(c, false);
                                 } else if op == 'y' {
                                     self.yank_to_char_backward(c, false);
+                                } else if op == 'u' || op == 'U' || op == '~' {
+                                    self.save_undo_state();
+                                    if let Some(target_col) = self.find_char_backward(c) {
+                                        // 'T' is exclusive, so stop after the character
+                                        let start = (self.cursor.0, target_col + 1);
+                                        let end = self.cursor;
+                                        if start.1 <= end.1 {
+                                            match op {
+                                                'u' => self.lowercase_range(start, end),
+                                                'U' => self.uppercase_range(start, end),
+                                                '~' => self.toggle_case_range(start, end),
+                                                _ => {}
+                                            }
+                                        }
+                                    }
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::ToChar(
                                         c,
@@ -7144,6 +7448,143 @@ impl<'a> EditorState<'a> {
                                     }
                                     _ => {}
                                 }
+                            } else if op == 'u' || op == 'U' || op == '~' {
+                                self.save_undo_state();
+                                match c {
+                                    'u' | 'U' | '~' => {
+                                        self.case_change_line(op);
+                                    }
+                                    'w' => {
+                                        let count = self.take_count();
+                                        self.perform_case_change_motion_with_count(
+                                            |s| Some(s.get_word_forward_pos(WordType::Word)),
+                                            count,
+                                            op,
+                                            false,
+                                        );
+                                    }
+                                    'W' => {
+                                        let count = self.take_count();
+                                        self.perform_case_change_motion_with_count(
+                                            |s| Some(s.get_word_forward_pos(WordType::LongWord)),
+                                            count,
+                                            op,
+                                            false,
+                                        );
+                                    }
+                                    'e' => {
+                                        let count = self.take_count();
+                                        self.perform_case_change_motion_with_count(
+                                            |s| Some(s.get_word_end_pos(WordType::Word)),
+                                            count,
+                                            op,
+                                            true,
+                                        );
+                                    }
+                                    'E' => {
+                                        let count = self.take_count();
+                                        self.perform_case_change_motion_with_count(
+                                            |s| Some(s.get_word_end_pos(WordType::LongWord)),
+                                            count,
+                                            op,
+                                            true,
+                                        );
+                                    }
+                                    'b' => {
+                                        let count = self.take_count();
+                                        self.perform_case_change_motion_with_count(
+                                            |s| Some(s.get_word_backward_pos(WordType::Word)),
+                                            count,
+                                            op,
+                                            false,
+                                        );
+                                    }
+                                    'B' => {
+                                        let count = self.take_count();
+                                        self.perform_case_change_motion_with_count(
+                                            |s| Some(s.get_word_backward_pos(WordType::LongWord)),
+                                            count,
+                                            op,
+                                            false,
+                                        );
+                                    }
+                                    '$' => {
+                                        let line_len = self.lines[self.cursor.0].chars().count();
+                                        if line_len > 0 {
+                                            let start = self.cursor;
+                                            let end = (self.cursor.0, line_len - 1);
+                                            match op {
+                                                'u' => self.lowercase_range(start, end),
+                                                'U' => self.uppercase_range(start, end),
+                                                '~' => self.toggle_case_range(start, end),
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    '^' => {
+                                        self.perform_case_change_motion(
+                                            |s| Some(s.get_first_non_blank_pos()),
+                                            op,
+                                            false,
+                                        );
+                                    }
+                                    '0' => {
+                                        self.perform_case_change_motion(
+                                            |s| Some(s.get_line_start_pos()),
+                                            op,
+                                            false,
+                                        );
+                                    }
+                                    'h' => {
+                                        self.perform_case_change_motion(
+                                            |s| Some(s.get_char_left_pos()),
+                                            op,
+                                            false,
+                                        );
+                                    }
+                                    'l' => {
+                                        self.perform_case_change_motion(
+                                            |s| Some(s.get_char_right_pos()),
+                                            op,
+                                            true,
+                                        );
+                                    }
+                                    'g' => {
+                                        // Wait for second 'g' to complete 'gugg', 'gUgg', 'g~gg'
+                                        self.pending_keys.push(KeyCode::Char('g'));
+                                        self.pending_operator = Some(op);
+                                        self.render()?;
+                                        continue;
+                                    }
+                                    'G' => {
+                                        let start = self.cursor;
+                                        let last_row = self.lines.len().saturating_sub(1);
+                                        let last_col =
+                                            self.lines[last_row].chars().count().saturating_sub(1);
+                                        let end = (last_row, last_col);
+                                        match op {
+                                            'u' => self.lowercase_range(start, end),
+                                            'U' => self.uppercase_range(start, end),
+                                            '~' => self.toggle_case_range(start, end),
+                                            _ => {}
+                                        }
+                                    }
+                                    'i' | 'a' => {
+                                        // Wait for text object (e.g., 'w' for guiw/guaw)
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some(op);
+                                        self.render()?;
+                                        continue;
+                                    }
+                                    'f' | 'F' | 't' | 'T' => {
+                                        // Wait for target char
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some(op);
+                                        self.render()?;
+                                        continue;
+                                    }
+                                    _ => {}
+                                }
                             }
 
                             self.render()?;
@@ -7168,6 +7609,13 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // gE - move backward to end of previous WORD
                                 self.move_to_word_end_backward(WordType::LongWord);
+                            } else if first == KeyCode::Char('g')
+                                && (c == 'u' || c == 'U' || c == '~')
+                            {
+                                self.pending_keys.clear();
+                                self.pending_operator = Some(c);
+                                self.render()?;
+                                continue;
                             } else if first == KeyCode::Char('z') && c == 'z' {
                                 // zz - scroll cursor line to center of screen
                                 self.scroll_cursor_to_center();
@@ -9112,6 +9560,96 @@ mod tests {
             // Clamp viewport to valid range (at minimum 0)
             let max_viewport = self.lines.len().saturating_sub(1);
             self.viewport_top = self.viewport_top.min(max_viewport);
+        }
+
+        /// Apply a case transformation to a range of text
+        fn apply_case_change<F>(&mut self, start: (usize, usize), end: (usize, usize), transform: F)
+        where
+            F: Fn(char) -> char,
+        {
+            let (start_row, start_col) = start;
+            let (end_row, end_col) = end;
+
+            if start_row == end_row {
+                // Single line case
+                let line = &mut self.lines[start_row];
+                let chars: Vec<char> = line.chars().collect();
+                let new_line: String = chars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &c)| {
+                        if i >= start_col && i <= end_col {
+                            transform(c)
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                *line = new_line;
+            } else {
+                // Multi-line case
+                for row in start_row..=end_row {
+                    if row >= self.lines.len() {
+                        break;
+                    }
+                    let line = &mut self.lines[row];
+                    let chars: Vec<char> = line.chars().collect();
+                    let new_line: String = chars
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &c)| {
+                            if row == start_row && i >= start_col {
+                                transform(c)
+                            } else if row == end_row && i <= end_col {
+                                transform(c)
+                            } else if row > start_row && row < end_row {
+                                transform(c)
+                            } else {
+                                c
+                            }
+                        })
+                        .collect();
+                    *line = new_line;
+                }
+            }
+            self.lines_version += 1;
+        }
+
+        /// Lowercase text in range (for gu operator)
+        fn lowercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
+            self.apply_case_change(start, end, |c| c.to_lowercase().next().unwrap_or(c));
+        }
+
+        /// Uppercase text in range (for gU operator)
+        fn uppercase_range(&mut self, start: (usize, usize), end: (usize, usize)) {
+            self.apply_case_change(start, end, |c| c.to_uppercase().next().unwrap_or(c));
+        }
+
+        /// Toggle case of text in range (for g~ operator)
+        fn toggle_case_range(&mut self, start: (usize, usize), end: (usize, usize)) {
+            self.apply_case_change(start, end, |c| {
+                if c.is_lowercase() {
+                    c.to_uppercase().next().unwrap_or(c)
+                } else {
+                    c.to_lowercase().next().unwrap_or(c)
+                }
+            });
+        }
+
+        /// Apply case change to entire line (for guu, gUU, g~~)
+        fn case_change_line(&mut self, op: char) {
+            let row = self.cursor.0;
+            let line_len = self.lines[row].chars().count();
+            if line_len > 0 {
+                let start = (row, 0);
+                let end = (row, line_len - 1);
+                match op {
+                    'u' => self.lowercase_range(start, end),
+                    'U' => self.uppercase_range(start, end),
+                    '~' => self.toggle_case_range(start, end),
+                    _ => {}
+                }
+            }
         }
 
         fn delete_line(&mut self, row: usize) {
@@ -11662,6 +12200,92 @@ mod tests {
         editor.scroll_cursor_to_bottom();
         assert_eq!(editor.viewport_top, 0);
         assert_eq!(editor.cursor.0, 3);
+    }
+
+    // ============ gu/gU/g~ (Case Change) Tests ============
+
+    #[test]
+    fn test_lowercase_range_single_line() {
+        let mut editor = TestEditor::new("Hello WORLD");
+        editor.lowercase_range((0, 0), (0, 10));
+        assert_eq!(editor.text(), "hello world");
+    }
+
+    #[test]
+    fn test_lowercase_range_partial() {
+        let mut editor = TestEditor::new("Hello WORLD");
+        editor.lowercase_range((0, 6), (0, 10));
+        assert_eq!(editor.text(), "Hello world");
+    }
+
+    #[test]
+    fn test_uppercase_range_single_line() {
+        let mut editor = TestEditor::new("Hello world");
+        editor.uppercase_range((0, 0), (0, 10));
+        assert_eq!(editor.text(), "HELLO WORLD");
+    }
+
+    #[test]
+    fn test_uppercase_range_partial() {
+        let mut editor = TestEditor::new("Hello world");
+        editor.uppercase_range((0, 0), (0, 4));
+        assert_eq!(editor.text(), "HELLO world");
+    }
+
+    #[test]
+    fn test_toggle_case_range_single_line() {
+        let mut editor = TestEditor::new("Hello World");
+        editor.toggle_case_range((0, 0), (0, 10));
+        assert_eq!(editor.text(), "hELLO wORLD");
+    }
+
+    #[test]
+    fn test_toggle_case_range_partial() {
+        let mut editor = TestEditor::new("Hello World");
+        editor.toggle_case_range((0, 0), (0, 4));
+        assert_eq!(editor.text(), "hELLO World");
+    }
+
+    #[test]
+    fn test_case_change_line_lowercase() {
+        let mut editor = TestEditor::new("HELLO WORLD\nsecond line").with_cursor(0, 0);
+        editor.case_change_line('u');
+        assert_eq!(editor.text(), "hello world\nsecond line");
+    }
+
+    #[test]
+    fn test_case_change_line_uppercase() {
+        let mut editor = TestEditor::new("hello world\nsecond line").with_cursor(0, 0);
+        editor.case_change_line('U');
+        assert_eq!(editor.text(), "HELLO WORLD\nsecond line");
+    }
+
+    #[test]
+    fn test_case_change_line_toggle() {
+        let mut editor = TestEditor::new("Hello World\nsecond line").with_cursor(0, 0);
+        editor.case_change_line('~');
+        assert_eq!(editor.text(), "hELLO wORLD\nsecond line");
+    }
+
+    #[test]
+    fn test_lowercase_range_multi_line() {
+        let mut editor = TestEditor::new("HELLO\nWORLD\nTEST");
+        editor.lowercase_range((0, 2), (2, 3));
+        assert_eq!(editor.text(), "HEllo\nworld\ntest");
+    }
+
+    #[test]
+    fn test_uppercase_range_multi_line() {
+        let mut editor = TestEditor::new("hello\nworld\ntest");
+        editor.uppercase_range((0, 2), (2, 3));
+        assert_eq!(editor.text(), "heLLO\nWORLD\nTEST");
+    }
+
+    #[test]
+    fn test_toggle_case_preserves_non_alpha() {
+        let mut editor = TestEditor::new("Hello, World! 123");
+        editor.toggle_case_range((0, 0), (0, 16));
+        assert_eq!(editor.text(), "hELLO, wORLD! 123");
     }
 
     // ============ Increment/Decrement Number Tests ============
