@@ -37,6 +37,7 @@ struct EditorColors {
     insert_mode_text: String,
     replace_mode_text: String,
     command_mode_text: String,
+    search_replace_mode_text: String,
     visual_mode_text: String,
     visual_line_mode_text: String,
     visual_block_mode_text: String,
@@ -164,6 +165,7 @@ impl EditorColors {
             insert_mode_text: config.input_text_insert_mode_text.clone(),
             replace_mode_text: config.input_text_replace_mode_text.clone(),
             command_mode_text: config.input_text_command_mode_text.clone(),
+            search_replace_mode_text: "S/R".to_string(),
             visual_mode_text: config.input_text_visual_mode_text.clone(),
             visual_line_mode_text: config.input_text_visual_line_mode_text.clone(),
             visual_block_mode_text: config.input_text_visual_block_mode_text.clone(),
@@ -177,9 +179,21 @@ enum EditorMode {
     Insert,
     Replace,
     Search,
+    SearchReplace,
     Visual,
     VisualLine,
     VisualBlock,
+}
+
+/// Phase of search/replace operation
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum SearchReplacePhase {
+    /// Entering search pattern
+    Search,
+    /// Entering replacement text
+    Replace,
+    /// Confirming replacements interactively
+    Confirm,
 }
 
 /// Direction for search and motion operations
@@ -345,6 +359,20 @@ struct EditorState<'a> {
     visual_start: (usize, usize),
     replace_originals: Vec<Option<char>>,
     replace_start_pos: (usize, usize),
+    /// Search/Replace mode: search pattern input
+    sr_search_input: String,
+    /// Search/Replace mode: replacement text input
+    sr_replace_input: String,
+    /// Search/Replace mode: current phase
+    sr_phase: SearchReplacePhase,
+    /// Search/Replace mode: all matches (row, col, length)
+    sr_matches: Vec<(usize, usize, usize)>,
+    /// Search/Replace mode: current match index
+    sr_current_match_idx: usize,
+    /// Search/Replace mode: saved cursor position before entering mode
+    sr_start_pos: (usize, usize),
+    /// Search/Replace mode: count of replacements made
+    sr_replace_count: usize,
 }
 
 impl<'a> EditorState<'a> {
@@ -400,6 +428,13 @@ impl<'a> EditorState<'a> {
             visual_start: (0, 0),
             replace_originals: Vec::new(),
             replace_start_pos: (0, 0),
+            sr_search_input: String::new(),
+            sr_replace_input: String::new(),
+            sr_phase: SearchReplacePhase::Search,
+            sr_matches: Vec::new(),
+            sr_current_match_idx: 0,
+            sr_start_pos: (0, 0),
+            sr_replace_count: 0,
         }
     }
 
@@ -4184,6 +4219,7 @@ impl<'a> EditorState<'a> {
             EditorMode::Insert => &self.colors.insert_mode_text,
             EditorMode::Replace => &self.colors.replace_mode_text,
             EditorMode::Search => &self.colors.command_mode_text,
+            EditorMode::SearchReplace => &self.colors.search_replace_mode_text,
             EditorMode::Visual => &self.colors.visual_mode_text,
             EditorMode::VisualLine => &self.colors.visual_line_mode_text,
             EditorMode::VisualBlock => &self.colors.visual_block_mode_text,
@@ -4208,7 +4244,9 @@ impl<'a> EditorState<'a> {
             EditorMode::Normal => (self.colors.normal_mode_fg, self.colors.normal_mode_bg),
             EditorMode::Insert => (self.colors.insert_mode_fg, self.colors.insert_mode_bg),
             EditorMode::Replace => (self.colors.replace_mode_fg, self.colors.replace_mode_bg),
-            EditorMode::Search => (self.colors.command_mode_fg, self.colors.command_mode_bg),
+            EditorMode::Search | EditorMode::SearchReplace => {
+                (self.colors.command_mode_fg, self.colors.command_mode_bg)
+            }
             EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
                 (self.colors.visual_mode_fg, self.colors.visual_mode_bg)
             }
@@ -4260,6 +4298,38 @@ impl<'a> EditorState<'a> {
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Text(format!("{:<width$}", search_text, width = cols)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        } else if self.mode == EditorMode::SearchReplace {
+            let sr_prompt = match self.sr_phase {
+                SearchReplacePhase::Search => {
+                    format!("Find: {}", self.sr_search_input)
+                }
+                SearchReplacePhase::Replace => {
+                    format!(
+                        "Find: {} | Replace: {}",
+                        self.sr_search_input, self.sr_replace_input
+                    )
+                }
+                SearchReplacePhase::Confirm => {
+                    let match_info = if self.sr_matches.is_empty() {
+                        "No matches".to_string()
+                    } else {
+                        format!(
+                            "{}/{} matches",
+                            self.sr_current_match_idx + 1,
+                            self.sr_matches.len()
+                        )
+                    };
+                    format!("{} | [y]es [n]o [a]ll [q]uit [l]ast", match_info)
+                }
+            };
+            self.buf.add_changes(vec![
+                Change::CursorPosition {
+                    x: Position::Absolute(0),
+                    y: Position::Absolute(rows - 1),
+                },
+                Change::Text(format!("{:<width$}", sr_prompt, width = cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else {
@@ -4488,28 +4558,51 @@ impl<'a> EditorState<'a> {
             line_idx += 1;
         }
 
-        let (cursor_screen_x, cursor_screen_y, cursor_shape) = if self.mode == EditorMode::Search {
-            let x = 1 + self.search_input.len();
-            (x, rows - 1, CursorShape::SteadyBlock)
-        } else {
-            let y = cursor_screen_row.unwrap_or(content_start_row);
-            let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
-            let shape = if self.pending_operator.is_some() {
-                CursorShape::SteadyUnderline
-            } else if self.pending_keys.contains(&KeyCode::Char('r')) {
-                CursorShape::SteadyUnderline
-            } else {
-                match self.mode {
-                    EditorMode::Normal => CursorShape::SteadyBlock,
-                    EditorMode::Insert => CursorShape::SteadyBar,
-                    EditorMode::Replace => CursorShape::SteadyUnderline,
-                    EditorMode::Search => CursorShape::SteadyBar,
-                    EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
-                        CursorShape::SteadyBlock
+        let (cursor_screen_x, cursor_screen_y, cursor_shape, cursor_visible) =
+            if self.mode == EditorMode::Search {
+                let x = 1 + self.search_input.len();
+                (x, rows - 1, CursorShape::SteadyBlock, true)
+            } else if self.mode == EditorMode::SearchReplace {
+                match self.sr_phase {
+                    SearchReplacePhase::Search => {
+                        let x = 6 + self.sr_search_input.len(); // "Find: " = 6 chars
+                        (x, rows - 1, CursorShape::SteadyBlock, true)
+                    }
+                    SearchReplacePhase::Replace => {
+                        // "Find: " + search + " | Replace: " = 6 + search.len() + 12
+                        let x = 6 + self.sr_search_input.len() + 12 + self.sr_replace_input.len();
+                        (x, rows - 1, CursorShape::SteadyBlock, true)
+                    }
+                    SearchReplacePhase::Confirm => {
+                        // Hide cursor during confirm phase
+                        (0, rows - 1, CursorShape::SteadyBlock, false)
                     }
                 }
+            } else {
+                let y = cursor_screen_row.unwrap_or(content_start_row);
+                let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
+                let shape = if self.pending_operator.is_some() {
+                    CursorShape::SteadyUnderline
+                } else if self.pending_keys.contains(&KeyCode::Char('r')) {
+                    CursorShape::SteadyUnderline
+                } else {
+                    match self.mode {
+                        EditorMode::Normal => CursorShape::SteadyBlock,
+                        EditorMode::Insert => CursorShape::SteadyBar,
+                        EditorMode::Replace => CursorShape::SteadyUnderline,
+                        EditorMode::Search | EditorMode::SearchReplace => CursorShape::SteadyBar,
+                        EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
+                            CursorShape::SteadyBlock
+                        }
+                    }
+                };
+                (x, y, shape, true)
             };
-            (x, y, shape)
+
+        let visibility = if cursor_visible {
+            CursorVisibility::Visible
+        } else {
+            CursorVisibility::Hidden
         };
 
         self.buf.add_changes(vec![
@@ -4517,7 +4610,7 @@ impl<'a> EditorState<'a> {
                 x: Position::Absolute(cursor_screen_x),
                 y: Position::Absolute(cursor_screen_y),
             },
-            Change::CursorVisibility(CursorVisibility::Visible),
+            Change::CursorVisibility(visibility),
             Change::CursorShape(cursor_shape),
         ]);
 
@@ -5964,6 +6057,187 @@ impl<'a> EditorState<'a> {
         self.current_match = Some(self.cursor);
     }
 
+    /// Find all matches of the search pattern in the document
+    fn sr_find_all_matches(&mut self) {
+        self.sr_matches.clear();
+        if self.sr_search_input.is_empty() {
+            return;
+        }
+
+        let pattern = &self.sr_search_input;
+        for (row, line) in self.lines.iter().enumerate() {
+            let mut search_start = 0;
+            while search_start < line.len() {
+                if let Some(pos) = line[search_start..].find(pattern) {
+                    let byte_pos = search_start + pos;
+                    let char_col = line[..byte_pos].chars().count();
+                    let match_len = pattern.chars().count();
+                    self.sr_matches.push((row, char_col, match_len));
+                    // Move past this match to find the next one
+                    search_start = byte_pos + pattern.len();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Position cursor on first match if any
+        if !self.sr_matches.is_empty() {
+            self.sr_current_match_idx = 0;
+            let (row, col, _) = self.sr_matches[0];
+            self.cursor = (row, col);
+            self.search_highlight = true;
+            self.search_pattern = self.sr_search_input.clone();
+        }
+    }
+
+    /// Replace the current match with the replacement text
+    fn sr_replace_current(&mut self) -> bool {
+        if self.sr_matches.is_empty() || self.sr_current_match_idx >= self.sr_matches.len() {
+            return false;
+        }
+
+        let (row, col, match_len) = self.sr_matches[self.sr_current_match_idx];
+        let line = &self.lines[row];
+        let chars: Vec<char> = line.chars().collect();
+
+        // Calculate byte positions from char positions
+        let byte_start: usize = chars[..col].iter().map(|c| c.len_utf8()).sum();
+        let byte_end: usize = chars[..col + match_len].iter().map(|c| c.len_utf8()).sum();
+
+        // Perform the replacement
+        let new_line = format!(
+            "{}{}{}",
+            &line[..byte_start],
+            self.sr_replace_input,
+            &line[byte_end..]
+        );
+        self.lines[row] = new_line;
+        self.lines_version += 1;
+        self.sr_replace_count += 1;
+
+        // Recalculate matches since the text changed
+        let old_pattern_len = self.sr_search_input.chars().count();
+        let new_pattern_len = self.sr_replace_input.chars().count();
+        let len_diff = new_pattern_len as isize - old_pattern_len as isize;
+
+        // Update match positions on the same line after the current match
+        let mut i = self.sr_current_match_idx + 1;
+        while i < self.sr_matches.len() {
+            let (m_row, m_col, m_len) = self.sr_matches[i];
+            if m_row == row {
+                // Adjust column for matches on the same line
+                let new_col = (m_col as isize + len_diff) as usize;
+                self.sr_matches[i] = (m_row, new_col, m_len);
+            }
+            i += 1;
+        }
+
+        // Remove the current match from the list
+        self.sr_matches.remove(self.sr_current_match_idx);
+
+        // Adjust current index if needed
+        if !self.sr_matches.is_empty() {
+            if self.sr_current_match_idx >= self.sr_matches.len() {
+                self.sr_current_match_idx = 0;
+            }
+            let (row, col, _) = self.sr_matches[self.sr_current_match_idx];
+            self.cursor = (row, col);
+            self.current_match = Some(self.cursor);
+        } else {
+            self.current_match = None;
+        }
+
+        true
+    }
+
+    /// Skip the current match (don't replace it) and move to the next
+    fn sr_skip_current(&mut self) {
+        if self.sr_matches.is_empty() || self.sr_current_match_idx >= self.sr_matches.len() {
+            return;
+        }
+
+        // Remove the current match from the list (without replacing)
+        self.sr_matches.remove(self.sr_current_match_idx);
+
+        // Adjust current index if needed
+        if !self.sr_matches.is_empty() {
+            if self.sr_current_match_idx >= self.sr_matches.len() {
+                self.sr_current_match_idx = 0;
+            }
+            let (row, col, _) = self.sr_matches[self.sr_current_match_idx];
+            self.cursor = (row, col);
+            self.current_match = Some(self.cursor);
+        } else {
+            self.current_match = None;
+        }
+    }
+
+    /// Replace all matches with the replacement text
+    fn sr_replace_all(&mut self) -> usize {
+        if self.sr_matches.is_empty() {
+            return 0;
+        }
+
+        // Replace from end to start to maintain correct positions
+        let mut matches = self.sr_matches.clone();
+        matches.reverse();
+
+        let mut count = 0;
+        for (row, col, match_len) in matches {
+            let line = &self.lines[row];
+            let chars: Vec<char> = line.chars().collect();
+
+            let byte_start: usize = chars[..col].iter().map(|c| c.len_utf8()).sum();
+            let byte_end: usize = chars[..col + match_len].iter().map(|c| c.len_utf8()).sum();
+
+            let new_line = format!(
+                "{}{}{}",
+                &line[..byte_start],
+                self.sr_replace_input,
+                &line[byte_end..]
+            );
+            self.lines[row] = new_line;
+            count += 1;
+        }
+
+        self.lines_version += 1;
+        self.sr_replace_count += count;
+        self.sr_matches.clear();
+        self.current_match = None;
+        self.search_highlight = false;
+
+        count
+    }
+
+    /// Enter search/replace mode
+    fn enter_search_replace_mode(&mut self) {
+        self.sr_start_pos = self.cursor;
+        self.sr_search_input.clear();
+        self.sr_replace_input.clear();
+        self.sr_phase = SearchReplacePhase::Search;
+        self.sr_matches.clear();
+        self.sr_current_match_idx = 0;
+        self.sr_replace_count = 0;
+        self.mode = EditorMode::SearchReplace;
+    }
+
+    /// Exit search/replace mode and return to normal mode
+    fn exit_search_replace_mode(&mut self, restore_cursor: bool) {
+        // Save undo state after replacements so redo works correctly
+        if self.sr_replace_count > 0 {
+            self.save_undo_state();
+        }
+        if restore_cursor {
+            self.cursor = self.sr_start_pos;
+        }
+        self.mode = EditorMode::Normal;
+        self.sr_phase = SearchReplacePhase::Search;
+        self.sr_matches.clear();
+        self.search_highlight = false;
+        self.current_match = None;
+    }
+
     fn get_visual_selection(&self) -> ((usize, usize), (usize, usize)) {
         if self.visual_start.0 < self.cursor.0
             || (self.visual_start.0 == self.cursor.0 && self.visual_start.1 <= self.cursor.1)
@@ -6340,6 +6614,13 @@ impl<'a> EditorState<'a> {
                     }) => {
                         self.mode = EditorMode::VisualBlock;
                         self.visual_start = self.cursor;
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('H'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        // Enter search/replace mode
+                        self.enter_search_replace_mode();
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
@@ -8356,6 +8637,193 @@ impl<'a> EditorState<'a> {
                             }
                         }
                         self.perform_incremental_search();
+                    }
+                    _ => {}
+                },
+                EditorMode::SearchReplace => match event {
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Escape,
+                        ..
+                    }) => {
+                        // Cancel search/replace, restore cursor
+                        self.exit_search_replace_mode(true);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Tab, ..
+                    }) => {
+                        // Tab switches between search and replace fields
+                        match self.sr_phase {
+                            SearchReplacePhase::Search => {
+                                if !self.sr_search_input.is_empty() {
+                                    self.sr_find_all_matches();
+                                    self.sr_phase = SearchReplacePhase::Replace;
+                                }
+                            }
+                            SearchReplacePhase::Replace => {
+                                self.sr_phase = SearchReplacePhase::Search;
+                            }
+                            SearchReplacePhase::Confirm => {
+                                // Tab does nothing in confirm phase
+                            }
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Enter,
+                        ..
+                    }) => {
+                        match self.sr_phase {
+                            SearchReplacePhase::Search => {
+                                if !self.sr_search_input.is_empty() {
+                                    self.sr_find_all_matches();
+                                    self.sr_phase = SearchReplacePhase::Replace;
+                                }
+                            }
+                            SearchReplacePhase::Replace => {
+                                // Enter in replace phase goes to confirm mode
+                                if !self.sr_matches.is_empty() {
+                                    self.save_undo_state();
+                                    self.sr_phase = SearchReplacePhase::Confirm;
+                                    // Position on first match
+                                    if !self.sr_matches.is_empty() {
+                                        let (row, col, _) = self.sr_matches[0];
+                                        self.cursor = (row, col);
+                                        self.current_match = Some(self.cursor);
+                                        // Viewport adjustment happens in render()
+                                    }
+                                } else {
+                                    self.exit_search_replace_mode(true);
+                                }
+                            }
+                            SearchReplacePhase::Confirm => {
+                                // Enter in confirm mode replaces current and moves to next
+                                if self.sr_replace_current() {
+                                    if self.sr_matches.is_empty() {
+                                        self.exit_search_replace_mode(false);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Backspace,
+                        ..
+                    }) => {
+                        match self.sr_phase {
+                            SearchReplacePhase::Search => {
+                                self.sr_search_input.pop();
+                                // Update matches as we type
+                                if !self.sr_search_input.is_empty() {
+                                    self.sr_find_all_matches();
+                                } else {
+                                    self.sr_matches.clear();
+                                    self.search_highlight = false;
+                                }
+                            }
+                            SearchReplacePhase::Replace => {
+                                self.sr_replace_input.pop();
+                            }
+                            SearchReplacePhase::Confirm => {
+                                // Backspace does nothing in confirm phase
+                            }
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('n'),
+                        modifiers,
+                    }) if self.sr_phase == SearchReplacePhase::Confirm
+                        && !modifiers.contains(Modifiers::CTRL) =>
+                    {
+                        // Skip current match (don't replace) and go to next
+                        self.sr_skip_current();
+                        if self.sr_matches.is_empty() {
+                            self.exit_search_replace_mode(false);
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('y'),
+                        modifiers,
+                    }) if self.sr_phase == SearchReplacePhase::Confirm
+                        && !modifiers.contains(Modifiers::CTRL) =>
+                    {
+                        // Replace current and go to next
+                        self.sr_replace_current();
+                        if self.sr_matches.is_empty() {
+                            self.exit_search_replace_mode(false);
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('a'),
+                        modifiers,
+                    }) if self.sr_phase == SearchReplacePhase::Confirm
+                        && !modifiers.contains(Modifiers::CTRL) =>
+                    {
+                        // Replace all remaining matches
+                        self.sr_replace_all();
+                        self.exit_search_replace_mode(false);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('q'),
+                        modifiers,
+                    }) if self.sr_phase == SearchReplacePhase::Confirm
+                        && !modifiers.contains(Modifiers::CTRL) =>
+                    {
+                        // Quit without replacing more
+                        self.exit_search_replace_mode(false);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('l'),
+                        modifiers,
+                    }) if self.sr_phase == SearchReplacePhase::Confirm
+                        && !modifiers.contains(Modifiers::CTRL) =>
+                    {
+                        // Replace current match (last) and quit
+                        self.sr_replace_current();
+                        self.exit_search_replace_mode(false);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char(c),
+                        modifiers,
+                    }) => {
+                        if !modifiers.contains(Modifiers::CTRL)
+                            && !modifiers.contains(Modifiers::ALT)
+                        {
+                            match self.sr_phase {
+                                SearchReplacePhase::Search => {
+                                    self.sr_search_input.push(c);
+                                    // Update matches as we type
+                                    self.sr_find_all_matches();
+                                }
+                                SearchReplacePhase::Replace => {
+                                    self.sr_replace_input.push(c);
+                                }
+                                SearchReplacePhase::Confirm => {
+                                    // Other chars ignored in confirm phase
+                                }
+                            }
+                        }
+                    }
+                    InputEvent::Paste(text) => {
+                        // Paste into current input field (skip newlines)
+                        match self.sr_phase {
+                            SearchReplacePhase::Search => {
+                                for c in text.chars() {
+                                    if c != '\n' && c != '\r' {
+                                        self.sr_search_input.push(c);
+                                    }
+                                }
+                                self.sr_find_all_matches();
+                            }
+                            SearchReplacePhase::Replace => {
+                                for c in text.chars() {
+                                    if c != '\n' && c != '\r' {
+                                        self.sr_replace_input.push(c);
+                                    }
+                                }
+                            }
+                            SearchReplacePhase::Confirm => {
+                                // Paste ignored in confirm phase
+                            }
+                        }
                     }
                     _ => {}
                 },

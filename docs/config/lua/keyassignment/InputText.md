@@ -58,6 +58,7 @@ The editor supports Vim-style modal editing:
 | **Visual Line** | Line selection | `V` | `Escape`, `d`, `c`, `y` |
 | **Visual Block** | Column selection | `Ctrl-V` | `Escape`, `d`, `c`, `y` |
 | **Search** | Incremental search | `/`, `?` | `Enter`, `Escape` |
+| **Search/Replace** | Find and replace text | `Ctrl-H` | `q`, `Escape` |
 
 ## Key Assignments
 
@@ -129,6 +130,7 @@ The editor supports Vim-style modal editing:
 | `u` | Undo |
 | `Ctrl-R` | Redo |
 | `.` | Repeat last change |
+| `Ctrl-H` | Enter search/replace mode |
 
 ### Operators (Normal mode)
 
@@ -201,6 +203,34 @@ Used with operators (`d`, `c`, `y`, `gu`, `gU`, `g~`) or in Visual mode:
 | `N` | Previous match |
 | `*` | Search word under cursor (forward) |
 | `#` | Search word under cursor (backward) |
+
+### Search and Replace
+
+Enter search/replace mode with `Ctrl-H` from Normal mode. The mode has three phases:
+
+**Phase 1: Enter search pattern**
+- Type the text to search for
+- Matches are highlighted as you type
+- Press `Tab` or `Enter` to proceed to the replace phase
+- Press `Escape` to cancel
+
+**Phase 2: Enter replacement text**
+- Type the replacement text
+- Press `Tab` to go back to edit the search pattern
+- Press `Enter` to proceed to the confirm phase
+- Press `Escape` to cancel
+
+**Phase 3: Confirm replacements**
+
+| Key | Action |
+|-----|--------|
+| `y` or `Enter` | Replace current match and go to next |
+| `n` | Skip current match and go to next |
+| `a` | Replace all remaining matches |
+| `q` or `Escape` | Quit and keep changes made so far |
+| `l` | Replace current match and quit (last) |
+
+The status bar shows the current match position (e.g., "2/5 matches").
 
 ### Visual Mode Operations
 
