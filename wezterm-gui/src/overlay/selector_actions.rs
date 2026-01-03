@@ -1,14 +1,14 @@
+use crate::overlay::common::{OverlayColors, TrieNode};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
     InputSelectorEntry, KeyAssignment, SelectorActions, TransientArgument, TransientContext,
 };
-use config::{configuration, AnsiColor, ColorAttribute};
+use config::ColorAttribute;
 use luahelper::impl_lua_conversion_dynamic;
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
-use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::surface::{Change, CursorVisibility, Position, Surface};
@@ -18,82 +18,6 @@ use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::{Clipboard, Modifiers, WindowOps};
-
-struct TrieNode<'a> {
-    children: HashMap<char, Box<TrieNode<'a>>>,
-    entry: Option<&'a TransientArgument>,
-}
-
-impl<'a> TrieNode<'a> {
-    fn new() -> Self {
-        Self {
-            children: HashMap::new(),
-            entry: None,
-        }
-    }
-
-    fn add_word(&mut self, word: &str, entry: &'a TransientArgument) {
-        let mut current = self;
-        for ch in word.chars() {
-            current = current
-                .children
-                .entry(ch)
-                .or_insert_with(|| Box::new(TrieNode::new()));
-        }
-        current.entry = Some(entry);
-    }
-
-    fn find_char(&self, c: char) -> Option<&TrieNode<'_>> {
-        self.children.get(&c).map(|child| child.as_ref())
-    }
-}
-
-struct SelectorActionsColors {
-    action_key_fg: ColorAttribute,
-    multiple_marker_bg: ColorAttribute,
-    context_label_fg: ColorAttribute,
-    context_header_fg: ColorAttribute,
-    section_header_fg: ColorAttribute,
-    description_fg: ColorAttribute,
-    separator_fg: ColorAttribute,
-}
-
-impl SelectorActionsColors {
-    fn new() -> Self {
-        let config = configuration();
-        let colors = &config.resolved_palette;
-
-        Self {
-            action_key_fg: colors
-                .transient_entry_key_fg
-                .unwrap_or(AnsiColor::Purple.into())
-                .into(),
-            multiple_marker_bg: colors
-                .selector_multiple_marker_bg
-                .unwrap_or(AnsiColor::Purple.into())
-                .into(),
-            context_label_fg: colors
-                .transient_context_label_fg
-                .unwrap_or(AnsiColor::Olive.into())
-                .into(),
-            context_header_fg: colors
-                .transient_context_header_fg
-                .unwrap_or(AnsiColor::Navy.into())
-                .into(),
-            section_header_fg: colors
-                .transient_section_header_fg
-                .unwrap_or(AnsiColor::Navy.into())
-                .into(),
-            description_fg: colors
-                .transient_description_fg
-                .unwrap_or(AnsiColor::Teal.into())
-                .into(),
-            separator_fg: colors
-                .transient_separator_fg
-                .map_or_else(|| ColorAttribute::Default, |fg_color| fg_color.into()),
-        }
-    }
-}
 
 #[derive(Clone)]
 struct SelectorEntry<'a> {
@@ -119,9 +43,9 @@ struct SelectorState<'a> {
     fuzzy_description: String,
     window: GuiWin,
     pane: MuxPane,
-    traversed_nodes: Vec<&'a TrieNode<'a>>,
+    traversed_nodes: Vec<&'a TrieNode<'a, TransientArgument>>,
     context: Option<&'a TransientContext>,
-    colors: SelectorActionsColors,
+    colors: OverlayColors,
     section: ArgumentSection<'a>,
     cancel: Option<Box<KeyAssignment>>,
     repeat: [u8; 2],
@@ -133,7 +57,7 @@ impl<'a> SelectorState<'a> {
         args: &'a SelectorActions,
         window: GuiWin,
         pane: MuxPane,
-        trie_node: &'a TrieNode<'_>,
+        trie_node: &'a TrieNode<'a, TransientArgument>,
         choices: &'a Vec<SelectorEntry<'_>>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
@@ -177,7 +101,7 @@ impl<'a> SelectorState<'a> {
             pane,
             traversed_nodes: vec![trie_node],
             context: args.context.as_ref(),
-            colors: SelectorActionsColors::new(),
+            colors: OverlayColors::new(),
             section,
             cancel: args.cancel.clone(),
             repeat: [1, 1],
@@ -330,7 +254,7 @@ impl<'a> SelectorState<'a> {
         for positional_arg in &self.section.arguments {
             self.buf.add_changes(vec![
                 Change::Text("\r\n  ".to_string()),
-                Change::Attribute(AttributeChange::Foreground(self.colors.action_key_fg)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.key_fg)),
                 Change::Text(positional_arg.key.clone()),
                 Change::AllAttributes(CellAttributes::default()),
                 Change::Text(format!(" {}", positional_arg.description)),
@@ -693,7 +617,7 @@ struct SelectorActionsResult {
 }
 impl_lua_conversion_dynamic!(SelectorActionsResult);
 
-fn create_trie<'a>(args: &'a SelectorActions, trie_node: &mut TrieNode<'a>) {
+fn create_trie<'a>(args: &'a SelectorActions, trie_node: &mut TrieNode<'a, TransientArgument>) {
     for positional_arg in &args.section.arguments {
         trie_node.add_word(&positional_arg.key, positional_arg);
     }

@@ -1,3 +1,4 @@
+use crate::overlay::common::{OverlayColors, TrieNode};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -6,13 +7,12 @@ use config::keyassignment::{
     TransientMenu as KTransientMenu, TransientOption as KTransientOption,
     TransientSection as KTransientSection, TransientSwitch as KTransientSwitch,
 };
-use config::{configuration, AnsiColor, ColorAttribute};
+use config::ColorAttribute;
 use luahelper::impl_lua_conversion_dynamic;
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::surface::{Change, CursorVisibility, Position, Surface};
@@ -91,91 +91,6 @@ struct PromptState<'a> {
     option: &'a TransientOption<'a>,
 }
 
-struct TrieNode<'a> {
-    children: HashMap<char, Box<TrieNode<'a>>>,
-    entry: Option<&'a RenderableEntity<'a>>,
-}
-
-impl<'a> TrieNode<'a> {
-    fn new() -> Self {
-        Self {
-            children: HashMap::new(),
-            entry: None,
-        }
-    }
-
-    fn add_word(&mut self, word: &str, entry: &'a RenderableEntity<'_>) {
-        let mut current = self;
-        for ch in word.chars() {
-            current = current
-                .children
-                .entry(ch)
-                .or_insert_with(|| Box::new(TrieNode::new()));
-        }
-        current.entry = Some(entry);
-    }
-
-    fn find_char(&self, c: char) -> Option<&TrieNode<'_>> {
-        self.children.get(&c).map(|child| child.as_ref())
-    }
-}
-
-struct TransientColors {
-    key_fg: ColorAttribute,
-    active_flag_fg: ColorAttribute,
-    inactive_flag_fg: ColorAttribute,
-    active_value_fg: ColorAttribute,
-    description_fg: ColorAttribute,
-    context_label_fg: ColorAttribute,
-    context_header_fg: ColorAttribute,
-    section_header_fg: ColorAttribute,
-    separator_fg: ColorAttribute,
-}
-
-impl TransientColors {
-    fn new() -> Self {
-        let config = configuration();
-        let colors = &config.resolved_palette;
-
-        Self {
-            key_fg: colors
-                .transient_entry_key_fg
-                .unwrap_or(AnsiColor::Purple.into())
-                .into(),
-            active_flag_fg: colors
-                .transient_entry_active_flag_fg
-                .unwrap_or(AnsiColor::Red.into())
-                .into(),
-            inactive_flag_fg: colors
-                .transient_entry_inactive_flag_fg
-                .map_or_else(|| ColorAttribute::default(), |fg_color| fg_color.into()),
-            active_value_fg: colors
-                .transient_entry_active_value_fg
-                .unwrap_or(AnsiColor::Green.into())
-                .into(),
-            description_fg: colors
-                .transient_description_fg
-                .unwrap_or(AnsiColor::Teal.into())
-                .into(),
-            context_label_fg: colors
-                .transient_context_label_fg
-                .unwrap_or(AnsiColor::Olive.into())
-                .into(),
-            context_header_fg: colors
-                .transient_context_header_fg
-                .unwrap_or(AnsiColor::Navy.into())
-                .into(),
-            section_header_fg: colors
-                .transient_section_header_fg
-                .unwrap_or(AnsiColor::Navy.into())
-                .into(),
-            separator_fg: colors
-                .transient_separator_fg
-                .map_or_else(|| ColorAttribute::Default, |fg_color| fg_color.into()),
-        }
-    }
-}
-
 struct TransientSwitch<'a> {
     delegate: &'a KTransientSwitch,
     value: Cell<bool>,
@@ -184,7 +99,7 @@ struct TransientSwitch<'a> {
 impl<'a> TransientSwitch<'a> {
     fn render(
         &self,
-        colors: &TransientColors,
+        colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
@@ -226,7 +141,7 @@ struct TransientOption<'a> {
 impl<'a> TransientOption<'a> {
     fn render(
         &self,
-        colors: &TransientColors,
+        colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
@@ -272,7 +187,7 @@ struct TransientCyclicSwitch<'a> {
 impl<'a> TransientCyclicSwitch<'a> {
     fn render(
         &self,
-        colors: &TransientColors,
+        colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
         let delegate = self.delegate;
@@ -354,7 +269,7 @@ struct TransientArgument<'a> {
 impl<'a> TransientArgument<'a> {
     fn render(
         &self,
-        colors: &TransientColors,
+        colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
         buf.add_changes(vec![
@@ -384,7 +299,7 @@ enum RenderableEntity<'a> {
 impl RenderableEntity<'_> {
     fn render(
         &self,
-        colors: &TransientColors,
+        colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> termwiz::Result<()> {
         match self {
@@ -405,8 +320,8 @@ struct TransientState<'a> {
     window: GuiWin,
     pane: MuxPane,
     description: String,
-    colors: TransientColors,
-    traversed_nodes: Vec<&'a TrieNode<'a>>,
+    colors: OverlayColors,
+    traversed_nodes: Vec<&'a TrieNode<'a, RenderableEntity<'a>>>,
     sections: &'a Vec<TransientSection<'a>>,
     cancel: Option<Box<KeyAssignment>>,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
@@ -420,7 +335,7 @@ impl<'a> TransientState<'a> {
         window: GuiWin,
         pane: MuxPane,
         sections: &'a Vec<TransientSection<'_>>,
-        trie_node: &'a TrieNode<'_>,
+        trie_node: &'a TrieNode<'a, RenderableEntity<'a>>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context = args.context.as_ref();
@@ -429,7 +344,7 @@ impl<'a> TransientState<'a> {
             window,
             pane,
             description: args.description.clone(),
-            colors: TransientColors::new(),
+            colors: OverlayColors::new(),
             traversed_nodes: vec![trie_node],
             sections,
             cancel: args.cancel.clone(),
@@ -905,7 +820,10 @@ impl From<&Vec<TransientSection<'_>>> for TransientResult {
     }
 }
 
-fn create_trie<'a>(sections: &'a Vec<TransientSection<'_>>, trie_node: &mut TrieNode<'a>) {
+fn create_trie<'a>(
+    sections: &'a Vec<TransientSection<'a>>,
+    trie_node: &mut TrieNode<'a, RenderableEntity<'a>>,
+) {
     for section in sections {
         for entity in &section.entries {
             match entity {
