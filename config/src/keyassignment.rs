@@ -801,7 +801,7 @@ pub struct TransientContext {
     pub entries: Vec<TransientContextEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, PartialEq, ToDynamic)]
 pub struct TransientMenu {
     pub description: String,
     #[dynamic(default)]
@@ -809,6 +809,83 @@ pub struct TransientMenu {
     pub sections: Vec<TransientSection>,
     #[dynamic(default)]
     pub cancel: Option<Box<KeyAssignment>>,
+}
+
+impl FromDynamic for TransientMenu {
+    fn from_dynamic(
+        value: &Value,
+        options: FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        let obj = match value {
+            Value::Object(obj) => obj,
+            _ => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu must be an object".to_string(),
+                ))
+            }
+        };
+
+        let get_required = |field: &str| {
+            obj.get_by_str(field).ok_or_else(|| {
+                wezterm_dynamic::Error::Message(format!(
+                    "TransientMenu requires a '{}' field",
+                    field
+                ))
+            })
+        };
+
+        let description = String::from_dynamic(get_required("description")?, options)?;
+
+        let context = obj
+            .get_by_str("context")
+            .map(|v| TransientContext::from_dynamic(v, options))
+            .transpose()?;
+
+        let cancel = obj
+            .get_by_str("cancel")
+            .map(|v| Box::<KeyAssignment>::from_dynamic(v, options))
+            .transpose()?;
+
+        let entries_val = obj.get_by_str("entries");
+        let sections_val = obj.get_by_str("sections");
+        let header_val = obj.get_by_str("header");
+
+        let sections = match (entries_val, sections_val, header_val) {
+            (Some(_), Some(_), _) => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu cannot have both 'sections' and 'entries'".to_string(),
+                ));
+            }
+            (None, Some(_), Some(_)) => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu cannot have 'header' with 'sections'".to_string(),
+                ));
+            }
+            (Some(entries_val), None, header_val) => {
+                let entries = Vec::<TransientEntry>::from_dynamic(entries_val, options)?;
+                let header = header_val
+                    .map(|v| String::from_dynamic(v, options))
+                    .transpose()?
+                    .unwrap_or_default();
+                vec![TransientSection { header, entries }]
+            }
+            (None, Some(sections_val), None) => {
+                Vec::<TransientSection>::from_dynamic(sections_val, options)?
+            }
+            (None, None, _) => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu requires 'sections' or 'entries'".to_string(),
+                ));
+            }
+        };
+
+        Ok(Self {
+            description,
+            context,
+            sections,
+            cancel,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

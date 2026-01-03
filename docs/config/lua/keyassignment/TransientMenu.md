@@ -18,14 +18,73 @@ of above-mentioned entities passed as an argument.
 `TransientMenu` accepts the following fields:
 
 * `description` - text to display at the top of the menu
-* `context` - an optional argument that accepts a [TransientContext](../TransientContext.md)
-  object
-* `sections` - list of [TransientSection](#transientsection) objects
-* `cancel` - event callback registered via `wezterm.action_callback`. The
+* `context` - optional, accepts a [TransientContext](../TransientContext.md) object
+* `cancel` - optional event callback registered via `wezterm.action_callback`. The
   callback's function signature is `(window, pane)` where `window` and
   `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
-  This is an optional argument. If present, this callback is called when the
-  user cancels the current overlay
+  Called when the user cancels the overlay
+
+For specifying menu entries, use **one** of the following:
+
+* `sections` - list of [TransientSection](#transientsection) objects (for multi-section menus)
+* `entries` - list of [TransientEntry](#transiententry) objects (for single-section menus)
+  * `header` - optional, section header text (only valid with `entries`)
+
+Note: You cannot combine `sections` with `entries` or `header`.
+
+#### Single-section menus
+
+For menus with a single section, use `entries` directly:
+
+```lua
+act.TransientMenu {
+  description = 'My Menu',
+  header = 'Actions', -- optional, defaults to empty string
+  entries = {
+    {
+      type = 'switch',
+      key = '-v',
+      description = 'Verbose',
+      flag = '--verbose',
+    },
+    { type = 'argument', key = 'r', description = 'Run', action = callback },
+  },
+}
+```
+
+#### Multi-section menus
+
+For menus with multiple sections, use `sections`:
+
+```lua
+act.TransientMenu {
+  description = 'My Menu',
+  sections = {
+    {
+      header = 'Flags',
+      entries = {
+        {
+          type = 'switch',
+          key = '-v',
+          description = 'Verbose',
+          flag = '--verbose',
+        },
+      },
+    },
+    {
+      header = 'Actions',
+      entries = {
+        {
+          type = 'argument',
+          key = 'r',
+          description = 'Run',
+          action = callback,
+        },
+      },
+    },
+  },
+}
+```
 
 
 ### `TransientSection`
