@@ -17,6 +17,7 @@ struct EditorColors {
     line_number_fg: ColorAttribute,
     status_fg: ColorAttribute,
     status_bg: ColorAttribute,
+    last_row_fg: ColorAttribute,
     normal_mode_fg: ColorAttribute,
     normal_mode_bg: ColorAttribute,
     insert_mode_fg: ColorAttribute,
@@ -69,6 +70,14 @@ impl EditorColors {
             ),
             status_bg: colors.input_text_status_bg.map_or(
                 ColorAttribute::PaletteIndex(AnsiColor::Purple.into()),
+                |c| c.into(),
+            ),
+            last_row_fg: colors.input_text_last_row_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
                 |c| c.into(),
             ),
             normal_mode_fg: colors.input_text_normal_mode_fg.map_or_else(
@@ -4314,6 +4323,7 @@ impl<'a> EditorState<'a> {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
                 },
+                Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
                 Change::Text(format!("{:<width$}", search_text, width = cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
@@ -4346,6 +4356,7 @@ impl<'a> EditorState<'a> {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
                 },
+                Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
                 Change::Text(format!("{:<width$}", sr_prompt, width = cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
@@ -4374,6 +4385,7 @@ impl<'a> EditorState<'a> {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
                 },
+                Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
                 Change::Text(format!(
                     "{:<left$}{}",
                     search_display,
