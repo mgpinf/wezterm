@@ -190,6 +190,7 @@ config.colors = {
   input_text_search_match_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
   input_text_search_current_match_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_search_current_match_bg = { AnsiColor = 'Navy' }, -- {{since('nightly', inline=True)}}
+  input_text_last_row_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
 }
 
 return config
