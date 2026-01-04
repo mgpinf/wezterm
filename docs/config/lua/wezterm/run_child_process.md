@@ -27,6 +27,8 @@ You can now pass a table with named fields for more control:
 * `cwd` - the current working directory to set for the command (optional)
 * `set_environment_variables` - a table of environment variables to set for the
   child process (optional)
+* `trim_newline` - if `true`, trims trailing newlines (`\n` and `\r`) from stdout
+  and stderr (optional, defaults to `false`)
 
 ```lua
 local wezterm = require 'wezterm'
@@ -38,6 +40,22 @@ local success, stdout, stderr = wezterm.run_child_process {
     SOMETHING = 'a value',
   },
 }
+```
+
+The `trim_newline` option is useful when you want to use the output directly
+without trailing newlines:
+
+```lua
+local wezterm = require 'wezterm'
+
+-- Without trim_newline, stdout would be "Hello\n"
+-- With trim_newline, stdout is "Hello"
+local success, stdout, stderr = wezterm.run_child_process {
+  args = { 'echo', 'Hello' },
+  trim_newline = true,
+}
+
+wezterm.log_info('Output: [' .. stdout .. ']') -- Output: [Hello]
 ```
 
 See also [background_child_process](background_child_process.md)
