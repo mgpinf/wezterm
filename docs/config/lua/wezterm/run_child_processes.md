@@ -163,3 +163,44 @@ local results = wezterm.run_child_processes {
 }
 -- Total: ~1 second
 ```
+
+## Comparison with action.Multiple and action_callback
+
+You might consider using `wezterm.action.Multiple` with multiple
+`wezterm.action_callback` calls to run child processes. However, there are
+important differences:
+
+| Aspect | `run_child_processes` | `action.Multiple` with callbacks |
+|--------|----------------------|----------------------------------|
+| Execution | Parallel, awaited | Parallel, fire-and-forget |
+| Waits for completion | Yes, returns when all done | No, callbacks are detached |
+| Returns results | Yes, array of results | No, cannot collect results |
+| Use case | Gathering data from multiple commands | Triggering independent side-effects |
+
+When `action.Multiple` executes `action_callback` actions, each callback is
+spawned asynchronously and detached—the loop does not wait for callbacks to
+complete:
+
+```lua
+-- Both callbacks fire immediately and run in background
+-- You CANNOT collect their results
+wezterm.action.Multiple {
+  wezterm.action_callback(function(window, pane)
+    wezterm.run_child_process { 'cmd1' }
+  end),
+  wezterm.action_callback(function(window, pane)
+    wezterm.run_child_process { 'cmd2' }
+  end),
+}
+```
+
+**Use `run_child_processes`** when you need to:
+
+- Run multiple commands and collect their output
+- Make decisions based on command results
+- Build status bar content from multiple data sources
+
+**Use `action.Multiple` with callbacks** when you need to:
+
+- Trigger multiple independent side-effects from a key binding
+- Fire-and-forget operations where results don't matter
