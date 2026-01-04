@@ -80,6 +80,8 @@ The extended syntax supports:
 * `cwd` - the current working directory to set for the command (optional)
 * `set_environment_variables` - a table of environment variables to set for
   the child process (optional)
+* `trim_newline` - if `true`, trims trailing newlines (`\n` and `\r`) from stdout
+  and stderr (optional, defaults to `false`)
 
 ## Example: Status Bar with Multiple Data Sources
 
@@ -88,14 +90,15 @@ local wezterm = require 'wezterm'
 
 wezterm.on('update-status', function(window, pane)
   local results = wezterm.run_child_processes {
-    { 'git', 'branch', '--show-current' },
-    { 'kubectl', 'config', 'current-context' },
+    { args = { 'git', 'branch', '--show-current' }, trim_newline = true },
+    {
+      args = { 'kubectl', 'config', 'current-context' },
+      trim_newline = true,
+    },
   }
 
-  local git_branch = results[1].success and results[1].stdout:gsub('%s+', '')
-    or '?'
-  local k8s_context = results[2].success and results[2].stdout:gsub('%s+', '')
-    or '?'
+  local git_branch = results[1].success and results[1].stdout or '?'
+  local k8s_context = results[2].success and results[2].stdout or '?'
 
   window:set_right_status(git_branch .. ' | ' .. k8s_context)
 end)

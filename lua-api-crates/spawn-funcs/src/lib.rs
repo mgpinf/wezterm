@@ -17,6 +17,8 @@ struct ChildProcessOptions {
     cwd: Option<PathBuf>,
     #[dynamic(default)]
     set_environment_variables: Option<HashMap<String, String>>,
+    #[dynamic(default)]
+    trim_newline: bool,
 }
 
 impl_lua_conversion_dynamic!(ChildProcessOptions);
@@ -74,6 +76,7 @@ fn parse_child_process_args<'lua>(
                     args,
                     cwd: None,
                     set_environment_variables: None,
+                    trim_newline: false,
                 })
             } else {
                 // It's a table with named fields - extended syntax
@@ -124,11 +127,24 @@ async fn run_child_process<'lua>(
 
     let output = cmd.output().await.map_err(mlua::Error::external)?;
 
-    Ok((
-        output.status.success(),
-        output.stdout.into(),
-        output.stderr.into(),
-    ))
+    let (stdout, stderr) = if opts.trim_newline {
+        (
+            trim_trailing_newlines(&output.stdout),
+            trim_trailing_newlines(&output.stderr),
+        )
+    } else {
+        (output.stdout.clone(), output.stderr.clone())
+    };
+
+    Ok((output.status.success(), stdout.into(), stderr.into()))
+}
+
+fn trim_trailing_newlines(data: &[u8]) -> Vec<u8> {
+    let mut result = data.to_vec();
+    while matches!(result.last(), Some(b'\n' | b'\r')) {
+        result.pop();
+    }
+    result
 }
 
 /// Spawn a child process in the background without waiting for it.
@@ -200,11 +216,24 @@ async fn execute_command(opts: &ChildProcessOptions) -> ProcessResult {
     }
 
     match cmd.output().await {
-        Ok(output) => ProcessResult {
-            success: output.status.success(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        },
+        Ok(output) => {
+            let (stdout, stderr) = if opts.trim_newline {
+                (
+                    String::from_utf8_lossy(&trim_trailing_newlines(&output.stdout)).into_owned(),
+                    String::from_utf8_lossy(&trim_trailing_newlines(&output.stderr)).into_owned(),
+                )
+            } else {
+                (
+                    String::from_utf8_lossy(&output.stdout).into_owned(),
+                    String::from_utf8_lossy(&output.stderr).into_owned(),
+                )
+            };
+            ProcessResult {
+                success: output.status.success(),
+                stdout,
+                stderr,
+            }
+        }
         Err(e) => ProcessResult {
             success: false,
             stdout: String::new(),
