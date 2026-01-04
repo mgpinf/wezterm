@@ -5591,6 +5591,7 @@ dependencies = [
  "anyhow",
  "bstr",
  "config",
+ "futures",
  "log",
  "luahelper",
  "smol",

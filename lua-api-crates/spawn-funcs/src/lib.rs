@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use bstr::BString;
 use config::lua::get_or_create_module;
 use config::lua::mlua::{self, Lua, Value as LuaValue};
+use futures::future::join_all;
 use luahelper::impl_lua_conversion_dynamic;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
@@ -20,12 +21,25 @@ struct ChildProcessOptions {
 
 impl_lua_conversion_dynamic!(ChildProcessOptions);
 
+#[derive(Debug, FromDynamic, ToDynamic, Clone)]
+struct ProcessResult {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+impl_lua_conversion_dynamic!(ProcessResult);
+
 pub fn register(lua: &Lua) -> anyhow::Result<()> {
     let wezterm_mod = get_or_create_module(lua, "wezterm")?;
     wezterm_mod.set("open_with", lua.create_function(open_with)?)?;
     wezterm_mod.set(
         "run_child_process",
         lua.create_async_function(run_child_process)?,
+    )?;
+    wezterm_mod.set(
+        "run_child_processes",
+        lua.create_async_function(run_child_processes)?,
     )?;
     wezterm_mod.set(
         "background_child_process",
@@ -154,4 +168,80 @@ async fn background_child_process<'lua>(lua: &'lua Lua, value: LuaValue<'lua>) -
         .map_err(mlua::Error::external)?;
 
     Ok(())
+}
+
+async fn execute_command(opts: &ChildProcessOptions) -> ProcessResult {
+    if opts.args.is_empty() {
+        return ProcessResult {
+            success: false,
+            stdout: String::new(),
+            stderr: "args cannot be empty".to_string(),
+        };
+    }
+
+    let mut cmd = smol::process::Command::new(&opts.args[0]);
+
+    if opts.args.len() > 1 {
+        cmd.args(&opts.args[1..]);
+    }
+
+    if let Some(cwd) = opts.cwd.as_ref() {
+        cmd.current_dir(cwd);
+    }
+
+    if let Some(env_vars) = opts.set_environment_variables.as_ref() {
+        cmd.envs(env_vars);
+    }
+
+    #[cfg(windows)]
+    {
+        use smol::process::windows::CommandExt;
+        cmd.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
+    }
+
+    match cmd.output().await {
+        Ok(output) => ProcessResult {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        },
+        Err(e) => ProcessResult {
+            success: false,
+            stdout: String::new(),
+            stderr: format!("Failed to execute command: {}", e),
+        },
+    }
+}
+
+async fn run_child_processes<'lua>(
+    lua: &'lua Lua,
+    value: LuaValue<'lua>,
+) -> mlua::Result<Vec<ProcessResult>> {
+    let commands = match &value {
+        LuaValue::Table(table) => {
+            let mut cmds = Vec::new();
+            for pair in table.clone().pairs::<i64, LuaValue>() {
+                let (_, cmd_value) = pair?;
+                let opts = parse_child_process_args(lua, cmd_value)?;
+                cmds.push(opts);
+            }
+            cmds
+        }
+        _ => {
+            return Err(mlua::Error::external(
+                "run_child_processes expects an array of command specifications",
+            ));
+        }
+    };
+
+    if commands.is_empty() {
+        return Err(mlua::Error::external(
+            "run_child_processes requires at least one command",
+        ));
+    }
+
+    let futures: Vec<_> = commands.iter().map(|opts| execute_command(opts)).collect();
+    let results = join_all(futures).await;
+
+    Ok(results)
 }
