@@ -21,6 +21,7 @@ struct EditorColors {
     find_label_fg: ColorAttribute,
     replace_label_fg: ColorAttribute,
     find_replace_colon_fg: ColorAttribute,
+    find_replace_separator_fg: ColorAttribute,
     find_value_fg: ColorAttribute,
     replace_value_fg: ColorAttribute,
     normal_mode_fg: ColorAttribute,
@@ -95,6 +96,14 @@ impl EditorColors {
                     c.into()
                 }),
             find_replace_colon_fg: colors.input_text_find_replace_colon_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            find_replace_separator_fg: colors.input_text_find_replace_separator_fg.map_or_else(
                 || {
                     colors.foreground.map_or(ColorAttribute::Default, |c| {
                         ColorAttribute::TrueColorWithDefaultFallback(c.into())
@@ -4398,7 +4407,7 @@ impl<'a> EditorState<'a> {
                         Change::Attribute(AttributeChange::Foreground(self.colors.find_value_fg)),
                         Change::Text(self.sr_search_input.clone()),
                         Change::Attribute(AttributeChange::Foreground(
-                            self.colors.find_replace_colon_fg,
+                            self.colors.find_replace_separator_fg,
                         )),
                         Change::Text(" | ".to_string()),
                         Change::Attribute(AttributeChange::Foreground(
