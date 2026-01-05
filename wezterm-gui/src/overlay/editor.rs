@@ -24,6 +24,8 @@ struct EditorColors {
     find_replace_separator_fg: ColorAttribute,
     find_value_fg: ColorAttribute,
     replace_value_fg: ColorAttribute,
+    replace_prompt_fg: ColorAttribute,
+    replace_prompt_options_fg: ColorAttribute,
     normal_mode_fg: ColorAttribute,
     normal_mode_bg: ColorAttribute,
     insert_mode_fg: ColorAttribute,
@@ -120,6 +122,22 @@ impl EditorColors {
                 |c| c.into(),
             ),
             replace_value_fg: colors.input_text_replace_value_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            replace_prompt_fg: colors.input_text_replace_prompt_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            replace_prompt_options_fg: colors.input_text_replace_prompt_options_fg.map_or_else(
                 || {
                     colors.foreground.map_or(ColorAttribute::Default, |c| {
                         ColorAttribute::TrueColorWithDefaultFallback(c.into())
@@ -4426,20 +4444,35 @@ impl<'a> EditorState<'a> {
                     6 + self.sr_search_input.len() + 3 + 9 + self.sr_replace_input.len()
                 }
                 SearchReplacePhase::Confirm => {
-                    let confirm_text = if self.sr_matches.is_empty() {
-                        "No matches".to_string()
+                    if self.sr_matches.is_empty() {
+                        self.buf.add_changes(vec![
+                            Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
+                            Change::Text("No matches".to_string()),
+                        ]);
+                        10
                     } else {
-                        format!(
-                            "replace with {}? (y)es/(n)o/(a)ll/(q)uit/(l)ast",
-                            self.sr_replace_input
-                        )
-                    };
-                    let len = confirm_text.len();
-                    self.buf.add_changes(vec![
-                        Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
-                        Change::Text(confirm_text),
-                    ]);
-                    len
+                        let options = "(y)es/(n)o/(a)ll/(q)uit/(l)ast";
+                        self.buf.add_changes(vec![
+                            Change::Attribute(AttributeChange::Foreground(
+                                self.colors.replace_prompt_fg,
+                            )),
+                            Change::Text("replace with ".to_string()),
+                            Change::Attribute(AttributeChange::Foreground(
+                                self.colors.replace_value_fg,
+                            )),
+                            Change::Text(self.sr_replace_input.clone()),
+                            Change::Attribute(AttributeChange::Foreground(
+                                self.colors.replace_prompt_fg,
+                            )),
+                            Change::Text("? ".to_string()),
+                            Change::Attribute(AttributeChange::Foreground(
+                                self.colors.replace_prompt_options_fg,
+                            )),
+                            Change::Text(options.to_string()),
+                        ]);
+                        // "replace with " (13) + value + "? " (2) + options (29)
+                        13 + self.sr_replace_input.len() + 2 + options.len()
+                    }
                 }
             };
 
