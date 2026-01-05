@@ -35,8 +35,8 @@ struct EditorColors {
     replace_mode_bg: ColorAttribute,
     command_mode_fg: ColorAttribute,
     command_mode_bg: ColorAttribute,
-    search_replace_mode_fg: ColorAttribute,
-    search_replace_mode_bg: ColorAttribute,
+    find_replace_mode_fg: ColorAttribute,
+    find_replace_mode_bg: ColorAttribute,
     visual_mode_fg: ColorAttribute,
     visual_mode_bg: ColorAttribute,
     selection_bg: ColorAttribute,
@@ -49,7 +49,7 @@ struct EditorColors {
     insert_mode_text: String,
     replace_mode_text: String,
     command_mode_text: String,
-    search_replace_mode_text: String,
+    find_replace_mode_text: String,
     visual_mode_text: String,
     visual_line_mode_text: String,
     visual_block_mode_text: String,
@@ -205,7 +205,7 @@ impl EditorColors {
                 ColorAttribute::PaletteIndex(AnsiColor::Yellow.into()),
                 |c| c.into(),
             ),
-            search_replace_mode_fg: colors.input_text_search_replace_mode_fg.map_or_else(
+            find_replace_mode_fg: colors.input_text_find_replace_mode_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
                         ColorAttribute::TrueColorWithDefaultFallback(c.into())
@@ -213,8 +213,8 @@ impl EditorColors {
                 },
                 |c| c.into(),
             ),
-            search_replace_mode_bg: colors
-                .input_text_search_replace_mode_bg
+            find_replace_mode_bg: colors
+                .input_text_find_replace_mode_bg
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Olive.into()), |c| {
                     c.into()
                 }),
@@ -263,7 +263,7 @@ impl EditorColors {
             insert_mode_text: config.input_text_insert_mode_text.clone(),
             replace_mode_text: config.input_text_replace_mode_text.clone(),
             command_mode_text: config.input_text_command_mode_text.clone(),
-            search_replace_mode_text: config.input_text_search_replace_mode_text.clone(),
+            find_replace_mode_text: config.input_text_find_replace_mode_text.clone(),
             visual_mode_text: config.input_text_visual_mode_text.clone(),
             visual_line_mode_text: config.input_text_visual_line_mode_text.clone(),
             visual_block_mode_text: config.input_text_visual_block_mode_text.clone(),
@@ -4317,7 +4317,7 @@ impl<'a> EditorState<'a> {
             EditorMode::Insert => &self.colors.insert_mode_text,
             EditorMode::Replace => &self.colors.replace_mode_text,
             EditorMode::Search => &self.colors.command_mode_text,
-            EditorMode::SearchReplace => &self.colors.search_replace_mode_text,
+            EditorMode::SearchReplace => &self.colors.find_replace_mode_text,
             EditorMode::Visual => &self.colors.visual_mode_text,
             EditorMode::VisualLine => &self.colors.visual_line_mode_text,
             EditorMode::VisualBlock => &self.colors.visual_block_mode_text,
@@ -4344,8 +4344,8 @@ impl<'a> EditorState<'a> {
             EditorMode::Replace => (self.colors.replace_mode_fg, self.colors.replace_mode_bg),
             EditorMode::Search => (self.colors.command_mode_fg, self.colors.command_mode_bg),
             EditorMode::SearchReplace => (
-                self.colors.search_replace_mode_fg,
-                self.colors.search_replace_mode_bg,
+                self.colors.find_replace_mode_fg,
+                self.colors.find_replace_mode_bg,
             ),
             EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
                 (self.colors.visual_mode_fg, self.colors.visual_mode_bg)

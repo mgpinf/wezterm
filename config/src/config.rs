@@ -182,8 +182,8 @@ pub struct Config {
     #[dynamic(default = "default_input_text_command_mode_text")]
     pub input_text_command_mode_text: String,
 
-    #[dynamic(default = "default_input_text_search_replace_mode_text")]
-    pub input_text_search_replace_mode_text: String,
+    #[dynamic(default = "default_input_text_find_replace_mode_text")]
+    pub input_text_find_replace_mode_text: String,
 
     #[dynamic(default = "default_input_text_visual_mode_text")]
     pub input_text_visual_mode_text: String,
@@ -1696,7 +1696,7 @@ fn default_input_text_command_mode_text() -> String {
     "COMMAND".to_string()
 }
 
-fn default_input_text_search_replace_mode_text() -> String {
+fn default_input_text_find_replace_mode_text() -> String {
     "S/R".to_string()
 }
 
