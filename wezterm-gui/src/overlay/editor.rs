@@ -283,7 +283,7 @@ enum EditorMode {
     VisualBlock,
 }
 
-/// Phase of search/replace operation
+/// Phase of find/replace operation
 #[derive(PartialEq, Clone, Copy, Debug)]
 enum SearchReplacePhase {
     /// Entering search pattern
@@ -457,19 +457,19 @@ struct EditorState<'a> {
     visual_start: (usize, usize),
     replace_originals: Vec<Option<char>>,
     replace_start_pos: (usize, usize),
-    /// Search/Replace mode: search pattern input
+    /// Find/Replace mode: search pattern input
     sr_search_input: String,
-    /// Search/Replace mode: replacement text input
+    /// Find/Replace mode: replacement text input
     sr_replace_input: String,
-    /// Search/Replace mode: current phase
+    /// Find/Replace mode: current phase
     sr_phase: SearchReplacePhase,
-    /// Search/Replace mode: all matches (row, col, length)
+    /// Find/Replace mode: all matches (row, col, length)
     sr_matches: Vec<(usize, usize, usize)>,
-    /// Search/Replace mode: current match index
+    /// Find/Replace mode: current match index
     sr_current_match_idx: usize,
-    /// Search/Replace mode: saved cursor position before entering mode
+    /// Find/Replace mode: saved cursor position before entering mode
     sr_start_pos: (usize, usize),
-    /// Search/Replace mode: count of replacements made
+    /// Find/Replace mode: count of replacements made
     sr_replace_count: usize,
 }
 
@@ -4409,7 +4409,7 @@ impl<'a> EditorState<'a> {
 
             let content_len = match self.sr_phase {
                 SearchReplacePhase::Search => {
-                    // "Find" in find_label_fg, ": " in search_replace_colon_fg, value in find_value_fg
+                    // "Find" in find_label_fg, ": " in find_replace_colon_fg, value in find_value_fg
                     self.buf.add_changes(vec![
                         Change::Attribute(AttributeChange::Foreground(self.colors.find_label_fg)),
                         Change::Text("Find".to_string()),
@@ -6378,8 +6378,8 @@ impl<'a> EditorState<'a> {
         count
     }
 
-    /// Enter search/replace mode
-    fn enter_search_replace_mode(&mut self) {
+    /// Enter find/replace mode
+    fn enter_find_replace_mode(&mut self) {
         self.sr_start_pos = self.cursor;
         self.sr_search_input.clear();
         self.sr_replace_input.clear();
@@ -6390,8 +6390,8 @@ impl<'a> EditorState<'a> {
         self.mode = EditorMode::SearchReplace;
     }
 
-    /// Exit search/replace mode and return to normal mode
-    fn exit_search_replace_mode(&mut self, restore_cursor: bool) {
+    /// Exit find/replace mode and return to normal mode
+    fn exit_find_replace_mode(&mut self, restore_cursor: bool) {
         // Save undo state after replacements so redo works correctly
         if self.sr_replace_count > 0 {
             self.save_undo_state();
@@ -6787,8 +6787,8 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char('H'),
                         modifiers: Modifiers::CTRL,
                     }) => {
-                        // Enter search/replace mode
-                        self.enter_search_replace_mode();
+                        // Enter find/replace mode
+                        self.enter_find_replace_mode();
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
@@ -8829,8 +8829,8 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Escape,
                         ..
                     }) => {
-                        // Cancel search/replace, restore cursor
-                        self.exit_search_replace_mode(true);
+                        // Cancel find/replace, restore cursor
+                        self.exit_find_replace_mode(true);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Tab, ..
@@ -8879,14 +8879,14 @@ impl<'a> EditorState<'a> {
                                         // Viewport adjustment happens in render()
                                     }
                                 } else {
-                                    self.exit_search_replace_mode(true);
+                                    self.exit_find_replace_mode(true);
                                 }
                             }
                             SearchReplacePhase::Confirm => {
                                 // Enter in confirm mode replaces current and moves to next
                                 if self.sr_replace_current() {
                                     if self.sr_matches.is_empty() {
-                                        self.exit_search_replace_mode(false);
+                                        self.exit_find_replace_mode(false);
                                     }
                                 }
                             }
@@ -8924,7 +8924,7 @@ impl<'a> EditorState<'a> {
                         // Skip current match (don't replace) and go to next
                         self.sr_skip_current();
                         if self.sr_matches.is_empty() {
-                            self.exit_search_replace_mode(false);
+                            self.exit_find_replace_mode(false);
                         }
                     }
                     InputEvent::Key(KeyEvent {
@@ -8936,7 +8936,7 @@ impl<'a> EditorState<'a> {
                         // Replace current and go to next
                         self.sr_replace_current();
                         if self.sr_matches.is_empty() {
-                            self.exit_search_replace_mode(false);
+                            self.exit_find_replace_mode(false);
                         }
                     }
                     InputEvent::Key(KeyEvent {
@@ -8947,7 +8947,7 @@ impl<'a> EditorState<'a> {
                     {
                         // Replace all remaining matches
                         self.sr_replace_all();
-                        self.exit_search_replace_mode(false);
+                        self.exit_find_replace_mode(false);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('q'),
@@ -8956,7 +8956,7 @@ impl<'a> EditorState<'a> {
                         && !modifiers.contains(Modifiers::CTRL) =>
                     {
                         // Quit without replacing more
-                        self.exit_search_replace_mode(false);
+                        self.exit_find_replace_mode(false);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('l'),
@@ -8966,7 +8966,7 @@ impl<'a> EditorState<'a> {
                     {
                         // Replace current match (last) and quit
                         self.sr_replace_current();
-                        self.exit_search_replace_mode(false);
+                        self.exit_find_replace_mode(false);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
@@ -9788,7 +9788,7 @@ mod tests {
         viewport_top: usize,
         screen_height: usize,         // Number of visible lines for H/M/L tests
         visual_start: (usize, usize), // Anchor point for visual selection
-        // Search/replace fields
+        // Find/replace fields
         sr_search_input: String,
         sr_replace_input: String,
         sr_matches: Vec<(usize, usize, usize)>, // (row, col, len)
