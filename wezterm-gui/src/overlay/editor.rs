@@ -554,7 +554,7 @@ impl<'a> EditorState<'a> {
         if content_width == 0 || char_count == 0 {
             1
         } else {
-            (char_count + content_width - 1) / content_width
+            char_count.div_ceil(content_width)
         }
     }
 
@@ -2988,23 +2988,18 @@ impl<'a> EditorState<'a> {
     fn find_char_forward(&self, target: char) -> Option<usize> {
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
-        for i in (self.cursor.1 + 1)..chars.len() {
-            if chars[i] == target {
-                return Some(i);
-            }
-        }
-        None
+        chars
+            .iter()
+            .enumerate()
+            .skip(self.cursor.1 + 1)
+            .find(|(_, &c)| c == target)
+            .map(|(i, _)| i)
     }
 
     fn find_char_backward(&self, target: char) -> Option<usize> {
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
-        for i in (0..self.cursor.1).rev() {
-            if chars[i] == target {
-                return Some(i);
-            }
-        }
-        None
+        (0..self.cursor.1).rev().find(|&i| chars[i] == target)
     }
 
     fn move_to_char_forward(&mut self, target: char) {
@@ -4140,9 +4135,9 @@ impl<'a> EditorState<'a> {
             while i > 0 && chars[i - 1].is_ascii_hexdigit() {
                 i -= 1;
             }
-            if i >= 2 && chars[i - 1].to_ascii_lowercase() == 'x' && chars[i - 2] == '0' {
+            if i >= 2 && chars[i - 1].eq_ignore_ascii_case(&'x') && chars[i - 2] == '0' {
                 Some(i - 2)
-            } else if i >= 1 && chars[i].to_ascii_lowercase() == 'x' && chars[i - 1] == '0' {
+            } else if i >= 1 && chars[i].eq_ignore_ascii_case(&'x') && chars[i - 1] == '0' {
                 Some(i - 1)
             } else {
                 None
@@ -4151,7 +4146,7 @@ impl<'a> EditorState<'a> {
 
         let hex_start = if chars[pos].is_ascii_hexdigit() {
             find_hex_start(pos)
-        } else if chars[pos].to_ascii_lowercase() == 'x' && pos > 0 && chars[pos - 1] == '0' {
+        } else if chars[pos].eq_ignore_ascii_case(&'x') && pos > 0 && chars[pos - 1] == '0' {
             Some(pos - 1)
         } else {
             None
@@ -4800,7 +4795,7 @@ impl<'a> EditorState<'a> {
 
         let line = &self.lines[line_idx];
         let pattern = &self.search_pattern;
-        let is_current_line = self.current_match.map_or(false, |(r, _)| r == line_idx);
+        let is_current_line = self.current_match.is_some_and(|(r, _)| r == line_idx);
         let end_col = start_col + segment.chars().count();
 
         let mut matches: Vec<(usize, usize)> = Vec::new();
@@ -4847,7 +4842,7 @@ impl<'a> EditorState<'a> {
             let is_current = is_current_line
                 && self
                     .current_match
-                    .map_or(false, |(_, c)| c >= match_start && c < match_end);
+                    .is_some_and(|(_, c)| c >= match_start && c < match_end);
 
             let actual_start = seg_match_start.max(last_pos);
             if actual_start < seg_match_end {
@@ -5792,8 +5787,7 @@ impl<'a> EditorState<'a> {
             self.cursor.0 += 1;
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else if self.yank_buffer.contains('\n') {
-            let repeated_buffer = std::iter::repeat(self.yank_buffer.as_str())
-                .take(count)
+            let repeated_buffer = std::iter::repeat_n(self.yank_buffer.as_str(), count)
                 .collect::<Vec<_>>()
                 .join("");
             let paste_lines: Vec<&str> = repeated_buffer.split('\n').collect();
@@ -5900,8 +5894,7 @@ impl<'a> EditorState<'a> {
             }
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else if self.yank_buffer.contains('\n') {
-            let repeated_buffer = std::iter::repeat(self.yank_buffer.as_str())
-                .take(count)
+            let repeated_buffer = std::iter::repeat_n(self.yank_buffer.as_str(), count)
                 .collect::<Vec<_>>()
                 .join("");
             let paste_lines: Vec<&str> = repeated_buffer.split('\n').collect();
@@ -6796,7 +6789,7 @@ impl<'a> EditorState<'a> {
                     }) => {
                         // Check if we have a pending key that expects a character argument
                         // (like r, f, F, t, T) - in this case, don't treat digits as count
-                        let has_char_pending = self.pending_keys.first().map_or(false, |k| {
+                        let has_char_pending = self.pending_keys.first().is_some_and(|k| {
                             matches!(
                                 k,
                                 KeyCode::Char('r')
@@ -8884,10 +8877,8 @@ impl<'a> EditorState<'a> {
                             }
                             SearchReplacePhase::Confirm => {
                                 // Enter in confirm mode replaces current and moves to next
-                                if self.sr_replace_current() {
-                                    if self.sr_matches.is_empty() {
-                                        self.exit_find_replace_mode(false);
-                                    }
+                                if self.sr_replace_current() && self.sr_matches.is_empty() {
+                                    self.exit_find_replace_mode(false);
                                 }
                             }
                         }
