@@ -25,6 +25,7 @@ struct EditorColors {
     find_value_fg: ColorAttribute,
     replace_value_fg: ColorAttribute,
     replace_prompt_fg: ColorAttribute,
+    replace_prompt_value_fg: ColorAttribute,
     replace_prompt_options_fg: ColorAttribute,
     normal_mode_fg: ColorAttribute,
     normal_mode_bg: ColorAttribute,
@@ -130,6 +131,14 @@ impl EditorColors {
                 |c| c.into(),
             ),
             replace_prompt_fg: colors.input_text_replace_prompt_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            replace_prompt_value_fg: colors.input_text_replace_prompt_value_fg.map_or_else(
                 || {
                     colors.foreground.map_or(ColorAttribute::Default, |c| {
                         ColorAttribute::TrueColorWithDefaultFallback(c.into())
@@ -4458,7 +4467,7 @@ impl<'a> EditorState<'a> {
                             )),
                             Change::Text("replace with ".to_string()),
                             Change::Attribute(AttributeChange::Foreground(
-                                self.colors.replace_value_fg,
+                                self.colors.replace_prompt_value_fg,
                             )),
                             Change::Text(self.sr_replace_input.clone()),
                             Change::Attribute(AttributeChange::Foreground(

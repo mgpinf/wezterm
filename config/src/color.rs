@@ -205,6 +205,7 @@ pub struct Palette {
     pub input_text_find_value_fg: Option<ColorSpec>,
     pub input_text_replace_value_fg: Option<ColorSpec>,
     pub input_text_replace_prompt_fg: Option<ColorSpec>,
+    pub input_text_replace_prompt_value_fg: Option<ColorSpec>,
     pub input_text_replace_prompt_options_fg: Option<ColorSpec>,
 
     pub launcher_label_fg: Option<ColorSpec>,
@@ -318,6 +319,7 @@ impl Palette {
             input_text_find_value_fg: overlay!(input_text_find_value_fg),
             input_text_replace_value_fg: overlay!(input_text_replace_value_fg),
             input_text_replace_prompt_fg: overlay!(input_text_replace_prompt_fg),
+            input_text_replace_prompt_value_fg: overlay!(input_text_replace_prompt_value_fg),
             input_text_replace_prompt_options_fg: overlay!(input_text_replace_prompt_options_fg),
             launcher_label_fg: overlay!(launcher_label_fg),
             launcher_label_bg: overlay!(launcher_label_bg),

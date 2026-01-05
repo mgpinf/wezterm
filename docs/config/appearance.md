@@ -198,6 +198,7 @@ config.colors = {
   input_text_find_value_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_replace_value_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_replace_prompt_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_replace_prompt_value_fg = { AnsiColor = 'Lime' }, -- {{since('nightly', inline=True)}}
   input_text_replace_prompt_options_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
 }
 
