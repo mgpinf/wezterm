@@ -6253,6 +6253,9 @@ impl<'a> EditorState<'a> {
             self.cursor = (row, col);
             self.search_highlight = true;
             self.search_pattern = self.sr_search_input.clone();
+        } else {
+            self.search_highlight = false;
+            self.search_pattern.clear();
         }
     }
 
@@ -8837,7 +8840,9 @@ impl<'a> EditorState<'a> {
                             SearchReplacePhase::Search => {
                                 if !self.sr_search_input.is_empty() {
                                     self.sr_find_all_matches();
-                                    self.sr_phase = SearchReplacePhase::Replace;
+                                    if !self.sr_matches.is_empty() {
+                                        self.sr_phase = SearchReplacePhase::Replace;
+                                    }
                                 }
                             }
                             SearchReplacePhase::Replace => {
@@ -8856,7 +8861,9 @@ impl<'a> EditorState<'a> {
                             SearchReplacePhase::Search => {
                                 if !self.sr_search_input.is_empty() {
                                     self.sr_find_all_matches();
-                                    self.sr_phase = SearchReplacePhase::Replace;
+                                    if !self.sr_matches.is_empty() {
+                                        self.sr_phase = SearchReplacePhase::Replace;
+                                    }
                                 }
                             }
                             SearchReplacePhase::Replace => {
