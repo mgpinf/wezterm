@@ -4426,16 +4426,14 @@ impl<'a> EditorState<'a> {
                     6 + self.sr_search_input.len() + 3 + 9 + self.sr_replace_input.len()
                 }
                 SearchReplacePhase::Confirm => {
-                    let match_info = if self.sr_matches.is_empty() {
+                    let confirm_text = if self.sr_matches.is_empty() {
                         "No matches".to_string()
                     } else {
                         format!(
-                            "{}/{} matches",
-                            self.sr_current_match_idx + 1,
-                            self.sr_matches.len()
+                            "replace with {}? (y)es/(n)o/(a)ll/(q)uit/(l)ast",
+                            self.sr_replace_input
                         )
                     };
-                    let confirm_text = format!("{} | [y]es [n]o [a]ll [q]uit [l]ast", match_info);
                     let len = confirm_text.len();
                     self.buf.add_changes(vec![
                         Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
