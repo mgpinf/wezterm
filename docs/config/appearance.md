@@ -191,6 +191,11 @@ config.colors = {
   input_text_search_current_match_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_search_current_match_bg = { AnsiColor = 'Navy' }, -- {{since('nightly', inline=True)}}
   input_text_last_row_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_find_label_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  input_text_replace_label_fg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
+  input_text_find_replace_colon_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_find_value_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_replace_value_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
 }
 
 return config

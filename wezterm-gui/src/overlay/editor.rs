@@ -18,6 +18,11 @@ struct EditorColors {
     status_fg: ColorAttribute,
     status_bg: ColorAttribute,
     last_row_fg: ColorAttribute,
+    find_label_fg: ColorAttribute,
+    replace_label_fg: ColorAttribute,
+    find_replace_colon_fg: ColorAttribute,
+    find_value_fg: ColorAttribute,
+    replace_value_fg: ColorAttribute,
     normal_mode_fg: ColorAttribute,
     normal_mode_bg: ColorAttribute,
     insert_mode_fg: ColorAttribute,
@@ -73,6 +78,39 @@ impl EditorColors {
                 |c| c.into(),
             ),
             last_row_fg: colors.input_text_last_row_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            find_label_fg: colors.input_text_find_label_fg.map_or(
+                ColorAttribute::PaletteIndex(AnsiColor::Yellow.into()),
+                |c| c.into(),
+            ),
+            replace_label_fg: colors
+                .input_text_replace_label_fg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Green.into()), |c| {
+                    c.into()
+                }),
+            find_replace_colon_fg: colors.input_text_find_replace_colon_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            find_value_fg: colors.input_text_find_value_fg.map_or_else(
+                || {
+                    colors.foreground.map_or(ColorAttribute::Default, |c| {
+                        ColorAttribute::TrueColorWithDefaultFallback(c.into())
+                    })
+                },
+                |c| c.into(),
+            ),
+            replace_value_fg: colors.input_text_replace_value_fg.map_or_else(
                 || {
                     colors.foreground.map_or(ColorAttribute::Default, |c| {
                         ColorAttribute::TrueColorWithDefaultFallback(c.into())
@@ -4328,15 +4366,55 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if self.mode == EditorMode::SearchReplace {
-            let sr_prompt = match self.sr_phase {
+            self.buf.add_changes(vec![Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(rows - 1),
+            }]);
+
+            let content_len = match self.sr_phase {
                 SearchReplacePhase::Search => {
-                    format!("Find: {}", self.sr_search_input)
+                    // "Find" in find_label_fg, ": " in search_replace_colon_fg, value in find_value_fg
+                    self.buf.add_changes(vec![
+                        Change::Attribute(AttributeChange::Foreground(self.colors.find_label_fg)),
+                        Change::Text("Find".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.find_replace_colon_fg,
+                        )),
+                        Change::Text(": ".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(self.colors.find_value_fg)),
+                        Change::Text(self.sr_search_input.clone()),
+                    ]);
+                    6 + self.sr_search_input.len()
                 }
                 SearchReplacePhase::Replace => {
-                    format!(
-                        "Find: {} | Replace: {}",
-                        self.sr_search_input, self.sr_replace_input
-                    )
+                    // "Find" label, ": ", value, " | ", "Replace" label, ": ", value
+                    self.buf.add_changes(vec![
+                        Change::Attribute(AttributeChange::Foreground(self.colors.find_label_fg)),
+                        Change::Text("Find".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.find_replace_colon_fg,
+                        )),
+                        Change::Text(": ".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(self.colors.find_value_fg)),
+                        Change::Text(self.sr_search_input.clone()),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.find_replace_colon_fg,
+                        )),
+                        Change::Text(" | ".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.replace_label_fg,
+                        )),
+                        Change::Text("Replace".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.find_replace_colon_fg,
+                        )),
+                        Change::Text(": ".to_string()),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.replace_value_fg,
+                        )),
+                        Change::Text(self.sr_replace_input.clone()),
+                    ]);
+                    6 + self.sr_search_input.len() + 3 + 9 + self.sr_replace_input.len()
                 }
                 SearchReplacePhase::Confirm => {
                     let match_info = if self.sr_matches.is_empty() {
@@ -4348,18 +4426,27 @@ impl<'a> EditorState<'a> {
                             self.sr_matches.len()
                         )
                     };
-                    format!("{} | [y]es [n]o [a]ll [q]uit [l]ast", match_info)
+                    let confirm_text = format!("{} | [y]es [n]o [a]ll [q]uit [l]ast", match_info);
+                    let len = confirm_text.len();
+                    self.buf.add_changes(vec![
+                        Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
+                        Change::Text(confirm_text),
+                    ]);
+                    len
                 }
             };
-            self.buf.add_changes(vec![
-                Change::CursorPosition {
-                    x: Position::Absolute(0),
-                    y: Position::Absolute(rows - 1),
-                },
-                Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
-                Change::Text(format!("{:<width$}", sr_prompt, width = cols)),
-                Change::AllAttributes(CellAttributes::default()),
-            ]);
+
+            // Pad the rest of the line
+            let padding = cols.saturating_sub(content_len);
+            if padding > 0 {
+                self.buf.add_changes(vec![
+                    Change::Text(format!("{:width$}", "", width = padding)),
+                    Change::AllAttributes(CellAttributes::default()),
+                ]);
+            } else {
+                self.buf
+                    .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
+            }
         } else {
             let search_display = if self.search_pattern.is_empty() {
                 String::new()
