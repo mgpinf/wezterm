@@ -4,10 +4,12 @@ use config::keyassignment::{ImageSelector, ImageSelectorEntry, KeyAssignment};
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use termwiz::cell::{AttributeChange, CellAttributes, Intensity};
 use termwiz::color::ColorAttribute;
 use termwiz::image::{ImageData, ImageDataType, TextureCoordinate};
@@ -23,6 +25,8 @@ use super::selector::{matcher_pattern, matcher_score};
 const ROW_OVERHEAD: usize = 3;
 const SEPARATOR: &str = "│";
 const IMAGE_CACHE_CAPACITY: usize = 10;
+const DEBOUNCE_MS: u64 = 50;
+const POLL_TIMEOUT_MS: u64 = 16;
 
 fn format_file_size(bytes: u64) -> String {
     const KB: u64 = 1024;
@@ -40,6 +44,7 @@ fn format_file_size(bytes: u64) -> String {
     }
 }
 
+#[derive(Clone)]
 enum ImageLoadError {
     NotFound,
     PermissionDenied,
@@ -56,6 +61,22 @@ impl ImageLoadError {
             Self::IoError(msg) => format!("I/O error: {}", msg),
         }
     }
+}
+
+struct ImageLoadResult {
+    path: String,
+    result: Result<(Arc<ImageData>, (u32, u32)), ImageLoadError>,
+}
+
+enum PreviewState {
+    None,
+    Pending,
+    Loading,
+    Loaded {
+        image_data: Arc<ImageData>,
+        dims: (u32, u32),
+    },
+    Error(ImageLoadError),
 }
 
 struct CachedImage {
@@ -88,6 +109,10 @@ impl ImageCache {
         } else {
             None
         }
+    }
+
+    fn contains(&self, path: &str) -> bool {
+        self.entries.contains_key(path)
     }
 
     fn put(&mut self, path: String, data: Arc<ImageData>, dims: (u32, u32)) {
@@ -128,8 +153,15 @@ struct ImageSelectorState<'a> {
     separator_fg: ColorAttribute,
     metadata_fg: ColorAttribute,
     filename_fg: ColorAttribute,
-    image_cache: ImageCache,
+    loading_fg: ColorAttribute,
+    image_cache: Arc<Mutex<ImageCache>>,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
+    preview_state: PreviewState,
+    current_preview_path: Option<String>,
+    last_selection_change: Instant,
+    load_receiver: Receiver<ImageLoadResult>,
+    load_sender: Sender<ImageLoadResult>,
+    in_flight_loads: Arc<Mutex<HashSet<String>>>,
 }
 
 fn get_entry_label(entry: &ImageSelectorEntry) -> String {
@@ -139,6 +171,22 @@ fn get_entry_label(entry: &ImageSelectorEntry) -> String {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| entry.path.clone())
     })
+}
+
+fn load_image_sync(path: &str) -> Result<(Arc<ImageData>, (u32, u32)), ImageLoadError> {
+    let data = std::fs::read(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => ImageLoadError::NotFound,
+        std::io::ErrorKind::PermissionDenied => ImageLoadError::PermissionDenied,
+        _ => ImageLoadError::IoError(e.to_string()),
+    })?;
+
+    let image_data = Arc::new(ImageData::with_data(ImageDataType::EncodedFile(data)));
+    let dims = image_data
+        .data()
+        .dimensions()
+        .map_err(|_| ImageLoadError::InvalidFormat)?;
+
+    Ok((image_data, dims))
 }
 
 impl<'a> ImageSelectorState<'a> {
@@ -176,27 +224,128 @@ impl<'a> ImageSelectorState<'a> {
         self.top_row = 0;
     }
 
-    fn load_image(&mut self, path: &str) -> Result<(Arc<ImageData>, (u32, u32)), ImageLoadError> {
-        if let Some(result) = self.image_cache.get(path) {
-            return Ok(result);
+    fn get_path_at(&self, idx: usize) -> Option<&str> {
+        self.filtered_indices
+            .get(idx)
+            .and_then(|&i| self.args.choices.get(i))
+            .map(|e| e.path.as_str())
+    }
+
+    fn is_cached(&self, path: &str) -> bool {
+        self.image_cache
+            .lock()
+            .expect("image_cache mutex poisoned")
+            .contains(path)
+    }
+
+    fn on_selection_changed(&mut self) {
+        self.last_selection_change = Instant::now();
+        let new_path = self.get_path_at(self.active_idx).map(String::from);
+
+        if new_path != self.current_preview_path {
+            self.current_preview_path = new_path;
+            self.preview_state = PreviewState::Pending;
+        }
+    }
+
+    fn check_and_start_loading(&mut self) -> bool {
+        if !matches!(self.preview_state, PreviewState::Pending) {
+            return false;
         }
 
-        let data = std::fs::read(path).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => ImageLoadError::NotFound,
-            std::io::ErrorKind::PermissionDenied => ImageLoadError::PermissionDenied,
-            _ => ImageLoadError::IoError(e.to_string()),
-        })?;
+        if self.last_selection_change.elapsed() < Duration::from_millis(DEBOUNCE_MS) {
+            return false;
+        }
 
-        let image_data = Arc::new(ImageData::with_data(ImageDataType::EncodedFile(data)));
-        let dims = image_data
-            .data()
-            .dimensions()
-            .map_err(|_| ImageLoadError::InvalidFormat)?;
+        let Some(ref path) = self.current_preview_path else {
+            self.preview_state = PreviewState::None;
+            return false;
+        };
 
-        self.image_cache
-            .put(path.to_string(), Arc::clone(&image_data), dims);
+        if let Some((data, dims)) = self
+            .image_cache
+            .lock()
+            .expect("image_cache mutex poisoned")
+            .get(path)
+        {
+            self.preview_state = PreviewState::Loaded {
+                image_data: data,
+                dims,
+            };
+            return true;
+        }
 
-        Ok((image_data, dims))
+        let started = self.start_background_load(path.clone());
+        self.preview_state = PreviewState::Loading;
+        started
+    }
+
+    fn start_background_load(&self, path: String) -> bool {
+        {
+            let mut in_flight = self
+                .in_flight_loads
+                .lock()
+                .expect("in_flight_loads mutex poisoned");
+            if !in_flight.insert(path.clone()) {
+                return false;
+            }
+        }
+
+        let sender = self.load_sender.clone();
+        let cache = Arc::clone(&self.image_cache);
+        let in_flight = Arc::clone(&self.in_flight_loads);
+
+        std::thread::spawn(move || {
+            let result = load_image_sync(&path);
+
+            if let Ok((ref data, dims)) = result {
+                cache.lock().expect("image_cache mutex poisoned").put(
+                    path.clone(),
+                    Arc::clone(data),
+                    dims,
+                );
+            }
+
+            in_flight
+                .lock()
+                .expect("in_flight_loads mutex poisoned")
+                .remove(&path);
+
+            let _ = sender.send(ImageLoadResult { path, result });
+        });
+
+        true
+    }
+
+    fn process_load_results(&mut self) {
+        while let Ok(result) = self.load_receiver.try_recv() {
+            if Some(&result.path) == self.current_preview_path.as_ref() {
+                match result.result {
+                    Ok((image_data, dims)) => {
+                        self.preview_state = PreviewState::Loaded { image_data, dims };
+                    }
+                    Err(err) => {
+                        self.preview_state = PreviewState::Error(err);
+                    }
+                }
+                break;
+            }
+        }
+
+        while self.load_receiver.try_recv().is_ok() {}
+    }
+
+    fn prefetch_adjacent(&self) {
+        for offset in [-1isize, 1] {
+            if let Some(path) = self
+                .active_idx
+                .checked_add_signed(offset)
+                .and_then(|idx| self.get_path_at(idx))
+                .filter(|p| !self.is_cached(p))
+            {
+                self.start_background_load(path.to_string());
+            }
+        }
     }
 
     fn calculate_display_size(
@@ -218,8 +367,8 @@ impl<'a> ImageSelectorState<'a> {
             .min(max_px_h as f64 / img_h as f64)
             .min(1.0);
 
-        let disp_w = ((img_w as f64 * scale) as usize + cell_w - 1) / cell_w;
-        let disp_h = ((img_h as f64 * scale) as usize + cell_h - 1) / cell_h;
+        let disp_w = ((img_w as f64 * scale) as usize).div_ceil(cell_w);
+        let disp_h = ((img_h as f64 * scale) as usize).div_ceil(cell_h);
 
         (disp_w.max(1), disp_h.max(1))
     }
@@ -318,19 +467,13 @@ impl<'a> ImageSelectorState<'a> {
         self.buf
             .add_change(Change::AllAttributes(CellAttributes::default()));
 
-        let preview_path = self
-            .filtered_indices
-            .get(self.active_idx)
-            .and_then(|&i| self.args.choices.get(i))
-            .map(|e| e.path.clone());
-
-        if let Some(path) = preview_path {
+        if let Some(ref path) = self.current_preview_path {
             self.buf.add_change(Change::CursorPosition {
                 x: Position::Absolute(preview_col),
                 y: Position::Absolute(0),
             });
 
-            let filepath = Path::new(&path);
+            let filepath = Path::new(path);
             let filename = filepath
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -341,13 +484,26 @@ impl<'a> ImageSelectorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
 
-            match self.load_image(&path) {
-                Ok((image_data, (img_w, img_h))) => {
+            match &self.preview_state {
+                PreviewState::None => {}
+                PreviewState::Pending | PreviewState::Loading => {
+                    self.buf.add_changes(vec![
+                        Change::CursorPosition {
+                            x: Position::Absolute(preview_col),
+                            y: Position::Absolute(2),
+                        },
+                        AttributeChange::Foreground(self.loading_fg).into(),
+                        Change::Text("Loading...".into()),
+                        Change::AllAttributes(CellAttributes::default()),
+                    ]);
+                }
+                PreviewState::Loaded { image_data, dims } => {
+                    let (img_w, img_h) = *dims;
                     let format = filepath
                         .extension()
                         .map(|e| e.to_string_lossy().to_uppercase())
                         .unwrap_or_else(|| "?".to_string());
-                    let file_size = std::fs::metadata(&path)
+                    let file_size = std::fs::metadata(path)
                         .map(|m| format_file_size(m.len()))
                         .unwrap_or_else(|_| "?".to_string());
                     let dimensions = format!("{}×{}", img_w, img_h);
@@ -394,12 +550,12 @@ impl<'a> ImageSelectorState<'a> {
                                 height: disp_h,
                                 top_left: TextureCoordinate::new_f32(0.0, 0.0),
                                 bottom_right: TextureCoordinate::new_f32(1.0, 1.0),
-                                image: image_data,
+                                image: Arc::clone(image_data),
                             }),
                         ]);
                     }
                 }
-                Err(err) => {
+                PreviewState::Error(err) => {
                     self.buf.add_changes(vec![
                         Change::CursorPosition {
                             x: Position::Absolute(preview_col),
@@ -431,7 +587,7 @@ impl<'a> ImageSelectorState<'a> {
     fn trigger_event(&self, entry: Option<&ImageSelectorEntry>) {
         let name = self.event_name.clone();
         let window = self.window.clone();
-        let pane = self.pane.clone();
+        let pane = self.pane;
         let entry = entry.cloned();
 
         promise::spawn::spawn_into_main_thread(async move {
@@ -456,9 +612,13 @@ impl<'a> ImageSelectorState<'a> {
     }
 
     fn move_up(&mut self) {
+        let old_idx = self.active_idx;
         self.active_idx = self.active_idx.saturating_sub(1);
         if self.active_idx < self.top_row {
             self.top_row = self.active_idx;
+        }
+        if old_idx != self.active_idx {
+            self.on_selection_changed();
         }
     }
 
@@ -466,136 +626,176 @@ impl<'a> ImageSelectorState<'a> {
         if self.filtered_indices.is_empty() {
             return;
         }
+        let old_idx = self.active_idx;
         self.active_idx = (self.active_idx + 1).min(self.filtered_indices.len() - 1);
         if self.active_idx > self.top_row + self.max_items {
             self.top_row = self.active_idx.saturating_sub(self.max_items);
         }
+        if old_idx != self.active_idx {
+            self.on_selection_changed();
+        }
     }
 
     fn move_to_first(&mut self) {
+        let old_idx = self.active_idx;
         self.active_idx = 0;
         self.top_row = 0;
+        if old_idx != self.active_idx {
+            self.on_selection_changed();
+        }
     }
 
     fn move_to_last(&mut self) {
         if self.filtered_indices.is_empty() {
             return;
         }
+        let old_idx = self.active_idx;
         self.active_idx = self.filtered_indices.len() - 1;
         self.top_row = self.active_idx.saturating_sub(self.max_items);
+        if old_idx != self.active_idx {
+            self.on_selection_changed();
+        }
     }
 
     fn run_loop(&mut self) -> anyhow::Result<()> {
-        while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
-            match event {
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('j'),
-                    ..
-                }) if !self.filtering => self.move_down(),
+        let poll_timeout = Some(Duration::from_millis(POLL_TIMEOUT_MS));
 
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('k'),
-                    ..
-                }) if !self.filtering => self.move_up(),
+        loop {
+            self.process_load_results();
 
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('g'),
-                    ..
-                }) if !self.filtering => self.move_to_first(),
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('G'),
-                    ..
-                }) if !self.filtering => self.move_to_last(),
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('P' | 'K'),
-                    modifiers: Modifiers::CTRL,
-                }) => self.move_up(),
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('N' | 'J'),
-                    modifiers: Modifiers::CTRL,
-                }) => self.move_down(),
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('/'),
-                    modifiers: Modifiers::CTRL,
-                }) => self.filtering ^= true,
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('/'),
-                    ..
-                }) if !self.filtering => self.filtering = true,
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Backspace,
-                    ..
-                }) if self.filtering => {
-                    if self.filter_term.pop().is_some() {
-                        self.update_filter();
-                    }
-                }
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char('G' | 'C'),
-                    modifiers: Modifiers::CTRL,
-                })
-                | InputEvent::Key(KeyEvent {
-                    key: KeyCode::Escape,
-                    ..
-                }) => {
-                    self.trigger_event(None);
-                    break;
-                }
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Char(c),
-                    ..
-                }) if self.filtering => {
-                    self.filter_term.push(c);
-                    self.update_filter();
-                }
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::UpArrow,
-                    ..
-                }) => self.move_up(),
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::DownArrow,
-                    ..
-                }) => self.move_down(),
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Enter,
-                    modifiers: Modifiers::CTRL,
-                }) => {
-                    if self.launch() {
-                        break;
-                    }
-                    continue;
-                }
-
-                InputEvent::Key(KeyEvent {
-                    key: KeyCode::Enter,
-                    ..
-                }) => {
-                    if self.filtering {
-                        self.filtering = false;
-                    } else {
-                        continue;
-                    }
-                }
-
-                InputEvent::Resized { cols, rows } => {
-                    self.max_items = rows.saturating_sub(ROW_OVERHEAD);
-                    self.buf.resize(cols, rows);
-                }
-
-                _ => continue,
+            if self.check_and_start_loading() {
+                self.prefetch_adjacent();
             }
-            self.render()?;
+
+            match self.buf.terminal().poll_input(poll_timeout) {
+                Ok(Some(event)) => {
+                    let mut should_render = true;
+
+                    match event {
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('j'),
+                            ..
+                        }) if !self.filtering => self.move_down(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('k'),
+                            ..
+                        }) if !self.filtering => self.move_up(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('g'),
+                            ..
+                        }) if !self.filtering => self.move_to_first(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('G'),
+                            ..
+                        }) if !self.filtering => self.move_to_last(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('P' | 'K'),
+                            modifiers: Modifiers::CTRL,
+                        }) => self.move_up(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('N' | 'J'),
+                            modifiers: Modifiers::CTRL,
+                        }) => self.move_down(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('/'),
+                            modifiers: Modifiers::CTRL,
+                        }) => self.filtering ^= true,
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('/'),
+                            ..
+                        }) if !self.filtering => self.filtering = true,
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Backspace,
+                            ..
+                        }) if self.filtering => {
+                            if self.filter_term.pop().is_some() {
+                                self.update_filter();
+                                self.on_selection_changed();
+                            }
+                        }
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('G' | 'C'),
+                            modifiers: Modifiers::CTRL,
+                        })
+                        | InputEvent::Key(KeyEvent {
+                            key: KeyCode::Escape,
+                            ..
+                        }) => {
+                            self.trigger_event(None);
+                            break;
+                        }
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char(c),
+                            ..
+                        }) if self.filtering => {
+                            self.filter_term.push(c);
+                            self.update_filter();
+                            self.on_selection_changed();
+                        }
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::UpArrow,
+                            ..
+                        }) => self.move_up(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::DownArrow,
+                            ..
+                        }) => self.move_down(),
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Enter,
+                            modifiers: Modifiers::CTRL,
+                        }) => {
+                            if self.launch() {
+                                break;
+                            }
+                            should_render = false;
+                        }
+
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Enter,
+                            ..
+                        }) => {
+                            if self.filtering {
+                                self.filtering = false;
+                            } else {
+                                should_render = false;
+                            }
+                        }
+
+                        InputEvent::Resized { cols, rows } => {
+                            self.max_items = rows.saturating_sub(ROW_OVERHEAD);
+                            self.buf.resize(cols, rows);
+                        }
+
+                        _ => should_render = false,
+                    }
+
+                    if should_render {
+                        self.render()?;
+                    }
+                }
+                Ok(None) => {
+                    if matches!(
+                        self.preview_state,
+                        PreviewState::Loaded { .. } | PreviewState::Error(_)
+                    ) {
+                        self.render()?;
+                    }
+                }
+                Err(_) => break,
+            }
         }
 
         Ok(())
@@ -653,6 +853,8 @@ pub fn image_selector(
     let config = configuration();
     let colors = &config.resolved_palette;
 
+    let (load_sender, load_receiver) = mpsc::channel();
+
     let mut state = ImageSelectorState {
         active_idx: 0,
         max_items: 0,
@@ -685,8 +887,18 @@ pub fn image_selector(
             .image_selector_filename_fg
             .map(Into::into)
             .unwrap_or(ColorAttribute::Default),
-        image_cache: ImageCache::new(IMAGE_CACHE_CAPACITY),
+        loading_fg: colors
+            .image_selector_metadata_fg
+            .map(Into::into)
+            .unwrap_or(ColorAttribute::Default),
+        image_cache: Arc::new(Mutex::new(ImageCache::new(IMAGE_CACHE_CAPACITY))),
         buf: &mut buf,
+        preview_state: PreviewState::Pending,
+        current_preview_path: None,
+        last_selection_change: Instant::now(),
+        load_receiver,
+        load_sender,
+        in_flight_loads: Arc::new(Mutex::new(HashSet::new())),
     };
 
     state
@@ -694,6 +906,7 @@ pub fn image_selector(
         .add_change(Change::Title(state.args.title.to_string()));
     state.buf.flush()?;
     state.update_filter();
+    state.on_selection_changed();
     state.render()?;
     state.run_loop()
 }
