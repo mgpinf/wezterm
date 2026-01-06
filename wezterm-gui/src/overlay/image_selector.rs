@@ -317,7 +317,9 @@ impl<'a> ImageSelectorState<'a> {
         true
     }
 
-    fn process_load_results(&mut self) {
+    fn process_load_results(&mut self) -> bool {
+        let mut state_changed = false;
+
         while let Ok(result) = self.load_receiver.try_recv() {
             if Some(&result.path) == self.current_preview_path.as_ref() {
                 match result.result {
@@ -328,11 +330,14 @@ impl<'a> ImageSelectorState<'a> {
                         self.preview_state = PreviewState::Error(err);
                     }
                 }
+                state_changed = true;
                 break;
             }
         }
 
         while self.load_receiver.try_recv().is_ok() {}
+
+        state_changed
     }
 
     fn prefetch_adjacent(&self) {
@@ -661,7 +666,7 @@ impl<'a> ImageSelectorState<'a> {
         let poll_timeout = Some(Duration::from_millis(POLL_TIMEOUT_MS));
 
         loop {
-            self.process_load_results();
+            let load_completed = self.process_load_results();
 
             if self.check_and_start_loading() {
                 self.prefetch_adjacent();
@@ -795,10 +800,7 @@ impl<'a> ImageSelectorState<'a> {
                     }
                 }
                 Ok(None) => {
-                    if matches!(
-                        self.preview_state,
-                        PreviewState::Loaded { .. } | PreviewState::Error(_)
-                    ) {
+                    if load_completed {
                         self.render()?;
                     }
                 }
