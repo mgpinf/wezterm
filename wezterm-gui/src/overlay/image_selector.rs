@@ -490,7 +490,7 @@ impl<'a> ImageSelectorState<'a> {
                     self.buf.add_changes(vec![
                         Change::CursorPosition {
                             x: Position::Absolute(preview_col),
-                            y: Position::Absolute(2),
+                            y: Position::Absolute(1),
                         },
                         AttributeChange::Foreground(self.loading_fg).into(),
                         Change::Text("Loading...".into()),
