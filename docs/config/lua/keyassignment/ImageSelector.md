@@ -40,12 +40,16 @@ palette colors in your configuration:
 * `image_selector_description_fg` - foreground color for the description text
 * `image_selector_error_fg` - foreground color for error messages (e.g., when an image fails to load)
 * `image_selector_separator_fg` - foreground color for the vertical separator between list and preview
+* `image_selector_metadata_fg` - foreground color for image metadata (dimensions, file size, format)
+* `image_selector_filename_fg` - foreground color for the filename in the preview pane
 
 ```lua
 config.colors = {
   image_selector_description_fg = '#89b4fa',
   image_selector_error_fg = '#f38ba8',
   image_selector_separator_fg = '#6c7086',
+  image_selector_metadata_fg = '#a6adc8',
+  image_selector_filename_fg = '#cdd6f4',
 }
 ```
 
@@ -69,7 +73,10 @@ The default key assignments in the ImageSelector are as follows:
 |           | <kbd>Ctrl</kbd> + <kbd>P</kbd> |
 |           | <kbd>Ctrl</kbd> + <kbd>K</kbd> |
 |           | <kbd>k</kbd> (if not in filter mode) |
-| Cancel    | <kbd>Ctrl</kbd> + <kbd>G</kbd> |
+| Move to first | <kbd>g</kbd> (if not in filter mode) |
+| Move to last  | <kbd>G</kbd> (if not in filter mode) |
+| Cancel    | <kbd>q</kbd> (if not in filter mode) |
+|           | <kbd>Ctrl</kbd> + <kbd>G</kbd> |
 |           | <kbd>Ctrl</kbd> + <kbd>C</kbd> |
 |           | <kbd>Escape</kbd> |
 
@@ -174,5 +181,8 @@ The ImageSelector supports common image formats including:
 - WebP
 - BMP
 
-If an image fails to load (unsupported format, corrupted file, or missing file),
-the preview pane will display `[Unable to load image]`.
+If an image fails to load, the preview pane will display an appropriate error message:
+- `File not found` - the image file doesn't exist
+- `Permission denied` - insufficient permissions to read the file
+- `Invalid or unsupported image format` - the file is corrupted or not a supported format
+- `I/O error: ...` - other file system errors
