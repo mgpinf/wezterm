@@ -723,6 +723,14 @@ impl<'a> ImageSelectorState<'a> {
                         }
 
                         InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char('q'),
+                            ..
+                        }) if !self.filtering => {
+                            self.trigger_event(None);
+                            break;
+                        }
+
+                        InputEvent::Key(KeyEvent {
                             key: KeyCode::Char('G' | 'C'),
                             modifiers: Modifiers::CTRL,
                         })
