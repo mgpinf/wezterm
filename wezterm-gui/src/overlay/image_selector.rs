@@ -668,7 +668,10 @@ impl<'a> ImageSelectorState<'a> {
         loop {
             let load_completed = self.process_load_results();
 
-            if self.check_and_start_loading() {
+            let cache_hit = self.check_and_start_loading()
+                && matches!(self.preview_state, PreviewState::Loaded { .. });
+
+            if cache_hit {
                 self.prefetch_adjacent();
             }
 
@@ -800,7 +803,7 @@ impl<'a> ImageSelectorState<'a> {
                     }
                 }
                 Ok(None) => {
-                    if load_completed {
+                    if load_completed || cache_hit {
                         self.render()?;
                     }
                 }
