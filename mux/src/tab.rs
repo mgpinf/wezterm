@@ -938,6 +938,12 @@ impl TabInner {
     }
 
     fn contains_pane(&self, pane: PaneId) -> bool {
+        if let Some(floating) = &self.floating {
+            if floating.pane_id() == pane {
+                return true;
+            }
+        }
+
         fn contains(tree: &Tree, pane: PaneId) -> bool {
             match tree {
                 Tree::Empty => false,
