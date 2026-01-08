@@ -541,7 +541,7 @@ impl crate::TermWindow {
                     (params.bg_color, params.fg_color)
                 } else {
                     let colors = &params.config.resolved_palette;
-                    let (cursor_fg, cursor_bg) = if self.copy_mode_enabled() {
+                    let (cursor_fg, cursor_bg) = if Self::pane_in_copy_mode(params.pane) {
                         (
                             colors.copy_mode_cursor_fg.map(|c| c.to_linear()),
                             colors.copy_mode_cursor_bg.map(|c| c.to_linear()),
@@ -587,7 +587,7 @@ impl crate::TermWindow {
                     (params.bg_color, params.fg_color)
                 } else {
                     let colors = &params.config.resolved_palette;
-                    let (cursor_fg, cursor_bg) = if self.copy_mode_enabled() {
+                    let (cursor_fg, cursor_bg) = if Self::pane_in_copy_mode(params.pane) {
                         (
                             colors.copy_mode_cursor_fg.map(|c| c.to_linear()),
                             colors.copy_mode_cursor_bg.map(|c| c.to_linear()),
@@ -661,7 +661,7 @@ impl crate::TermWindow {
                     (params.bg_color, params.fg_color, params.fg_color)
                 } else {
                     let colors = &params.config.resolved_palette;
-                    let (fg_color, bg_color, cursor_bg) = if self.copy_mode_enabled() {
+                    let (fg_color, bg_color, cursor_bg) = if Self::pane_in_copy_mode(params.pane) {
                         (
                             colors.copy_mode_cursor_fg.map(|c| c.to_linear()),
                             colors.copy_mode_cursor_bg.map(|c| c.to_linear()),
@@ -691,7 +691,7 @@ impl crate::TermWindow {
                 if self.use_reverse_video_cursor(&params) {
                     (params.fg_color, params.bg_color, params.fg_color)
                 } else {
-                    let cursor_bg = if self.copy_mode_enabled() {
+                    let cursor_bg = if Self::pane_in_copy_mode(params.pane) {
                         params
                             .config
                             .resolved_palette
@@ -708,7 +708,19 @@ impl crate::TermWindow {
                 }
             }
             // Normally, render the cell as configured (or if the window is unfocused)
-            _ => (params.fg_color, params.bg_color, params.cursor_border_color),
+            _ => {
+                let cursor_bg = if Self::pane_in_copy_mode(params.pane) {
+                    params
+                        .config
+                        .resolved_palette
+                        .copy_mode_cursor_bg
+                        .map(|c| c.to_linear())
+                        .unwrap_or(params.cursor_border_color)
+                } else {
+                    params.cursor_border_color
+                };
+                (params.fg_color, params.bg_color, cursor_bg)
+            }
         };
 
         let fg_color = self.ensure_min_contrast(fg_color, bg_color);
@@ -778,9 +790,15 @@ impl crate::TermWindow {
                 >= self.config.reverse_video_cursor_min_contrast
     }
 
+    #[allow(dead_code)]
+    #[allow(unused)]
     fn copy_mode_enabled(&self) -> bool {
         self.get_active_pane_or_overlay()
             .is_some_and(|pane| pane.downcast_ref::<CopyOverlay>().is_some())
+    }
+
+    fn pane_in_copy_mode(pane: Option<&Arc<dyn Pane>>) -> bool {
+        pane.is_some_and(|p| p.downcast_ref::<CopyOverlay>().is_some())
     }
 
     fn glyph_infos_to_glyphs(
