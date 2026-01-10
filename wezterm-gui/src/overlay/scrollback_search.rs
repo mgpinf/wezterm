@@ -211,7 +211,7 @@ fn wrapped_row_count(col_width: usize, max_width: usize) -> usize {
     if col_width == 0 {
         return 1;
     }
-    (col_width + max_width - 1) / max_width
+    col_width.div_ceil(max_width)
 }
 
 /// Wrap a line into segments that fit within max_width, preserving highlight information.
@@ -1384,12 +1384,12 @@ impl ScrollbackSearchState {
             // so that $ matches end of visible content, not padding
             if matches!(self.options.mode, SearchMode::Regex) {
                 let pattern_str = self.search_input.get_line();
-                self.compiled_regex = Regex::new(&pattern_str).ok();
+                self.compiled_regex = Regex::new(pattern_str).ok();
                 self.search_trimmed_content(&pane, range);
             } else {
                 let results = smol::block_on(pane.search(pattern, range, None)).unwrap_or_default();
                 for result in &results {
-                    let m = self.build_match_with_context(&pane, &result);
+                    let m = self.build_match_with_context(&pane, result);
                     self.matches.push(m);
                 }
             }
