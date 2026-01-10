@@ -105,49 +105,34 @@ fn char_column_width(c: char) -> usize {
     unicode_column_width(s, None)
 }
 
-/// Convert a cell/column index to a byte index in a string.
-/// Terminal cells can contain multi-byte UTF-8 characters.
-fn cell_to_byte_index(s: &str, cell_idx: usize) -> usize {
-    let mut byte_idx = 0;
-    let mut cell_count = 0;
+/// Calculate byte indices for start and end cell positions in a single pass.
+/// Returns (start_byte_idx, end_byte_idx).
+fn get_segment_split_indices(s: &str, start_cell: usize, end_cell: usize) -> (usize, usize) {
+    let mut current_byte = 0;
+    let mut current_cell = 0;
+    let mut start_byte = None;
+    let mut end_byte = None;
+
+    if start_cell == 0 {
+        start_byte = Some(0);
+    }
 
     for ch in s.chars() {
-        if cell_count >= cell_idx {
+        if start_byte.is_none() && current_cell >= start_cell {
+            start_byte = Some(current_byte);
+        }
+        if end_byte.is_none() && current_cell >= end_cell {
+            end_byte = Some(current_byte);
             break;
         }
-        byte_idx += ch.len_utf8();
-        cell_count += char_column_width(ch);
+
+        current_byte += ch.len_utf8();
+        current_cell += char_column_width(ch);
     }
 
-    byte_idx
-}
-
-/// Split string at cell index (not byte index)
-fn split_at_cell(s: &str, cell_idx: usize) -> (&str, &str) {
-    let byte_idx = cell_to_byte_index(s, cell_idx);
-    if byte_idx >= s.len() {
-        (s, "")
-    } else {
-        s.split_at(byte_idx)
-    }
-}
-
-/// Slice string between cell indices (not byte indices)
-fn slice_by_cells(s: &str, start_cell: usize, end_cell: usize) -> &str {
-    // Handle case where start_cell >= end_cell (can happen with wrapped lines)
-    if start_cell >= end_cell {
-        return "";
-    }
-
-    let start_byte = cell_to_byte_index(s, start_cell);
-    let end_byte = cell_to_byte_index(s, end_cell);
-    if start_byte >= s.len() {
-        ""
-    } else if end_byte >= s.len() {
-        &s[start_byte..]
-    } else {
-        &s[start_byte..end_byte]
-    }
+    let start = start_byte.unwrap_or(current_byte);
+    let end = end_byte.unwrap_or(current_byte);
+    (start, std::cmp::max(start, end))
 }
 
 /// A segment of a wrapped line with optional highlight information
@@ -666,9 +651,11 @@ impl ScrollbackSearchState {
             }
 
             if let Some((hl_start, hl_end)) = segment.highlight {
-                let (before, _) = split_at_cell(&segment.text, hl_start);
-                let matched = slice_by_cells(&segment.text, hl_start, hl_end);
-                let (_, after) = split_at_cell(&segment.text, hl_end);
+                let (start_byte, end_byte) =
+                    get_segment_split_indices(&segment.text, hl_start, hl_end);
+                let before = &segment.text[..start_byte];
+                let matched = &segment.text[start_byte..end_byte];
+                let after = &segment.text[end_byte..];
 
                 changes.push(Change::Text(before.to_string()));
                 changes.extend([
@@ -863,9 +850,11 @@ impl ScrollbackSearchState {
             }
 
             if let Some((hl_start, hl_end)) = segment.highlight {
-                let (before, _) = split_at_cell(&segment.text, hl_start);
-                let matched = slice_by_cells(&segment.text, hl_start, hl_end);
-                let (_, after) = split_at_cell(&segment.text, hl_end);
+                let (start_byte, end_byte) =
+                    get_segment_split_indices(&segment.text, hl_start, hl_end);
+                let before = &segment.text[..start_byte];
+                let matched = &segment.text[start_byte..end_byte];
+                let after = &segment.text[end_byte..];
 
                 changes.push(Change::Text(before.to_string()));
                 changes.extend([
