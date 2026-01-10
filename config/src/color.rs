@@ -238,6 +238,16 @@ pub struct Palette {
     pub form_required_fg: Option<ColorSpec>,
     pub form_border_fg: Option<ColorSpec>,
     pub form_separator_fg: Option<ColorSpec>,
+
+    pub scrollback_search_match_fg: Option<ColorSpec>,
+    pub scrollback_search_match_bg: Option<ColorSpec>,
+    pub scrollback_search_line_number_fg: Option<ColorSpec>,
+    pub scrollback_search_header_fg: Option<ColorSpec>,
+    pub scrollback_search_compact_border_fg: Option<ColorSpec>,
+    pub scrollback_search_card_border_fg: Option<ColorSpec>,
+    pub scrollback_search_card_selected_border_fg: Option<ColorSpec>,
+    pub scrollback_search_arrow_fg: Option<ColorSpec>,
+    pub scrollback_search_error_fg: Option<ColorSpec>,
 }
 impl_lua_conversion_dynamic!(Palette);
 
@@ -345,6 +355,17 @@ impl Palette {
             form_required_fg: overlay!(form_required_fg),
             form_border_fg: overlay!(form_border_fg),
             form_separator_fg: overlay!(form_separator_fg),
+            scrollback_search_match_fg: overlay!(scrollback_search_match_fg),
+            scrollback_search_match_bg: overlay!(scrollback_search_match_bg),
+            scrollback_search_line_number_fg: overlay!(scrollback_search_line_number_fg),
+            scrollback_search_header_fg: overlay!(scrollback_search_header_fg),
+            scrollback_search_compact_border_fg: overlay!(scrollback_search_compact_border_fg),
+            scrollback_search_card_border_fg: overlay!(scrollback_search_card_border_fg),
+            scrollback_search_card_selected_border_fg: overlay!(
+                scrollback_search_card_selected_border_fg
+            ),
+            scrollback_search_arrow_fg: overlay!(scrollback_search_arrow_fg),
+            scrollback_search_error_fg: overlay!(scrollback_search_error_fg),
         }
     }
 }

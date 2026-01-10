@@ -200,6 +200,16 @@ config.colors = {
   input_text_replace_prompt_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_replace_prompt_value_fg = { AnsiColor = 'Lime' }, -- {{since('nightly', inline=True)}}
   input_text_replace_prompt_options_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+
+  scrollback_search_match_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_match_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_header_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_compact_border_fg = { AnsiColor = 'Teal' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_card_border_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_card_selected_border_fg = { AnsiColor = 'Blue' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_arrow_fg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_error_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
 }
 
 return config

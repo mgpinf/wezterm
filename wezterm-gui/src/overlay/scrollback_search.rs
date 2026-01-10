@@ -4,6 +4,7 @@
 //! showing search results with surrounding context lines.
 
 use crate::termwindow::TermWindowNotif;
+use config::configuration;
 use config::keyassignment::{ClipboardCopyDestination, KeyAssignment};
 use mux::pane::{Pane, PaneId, Pattern, SearchResult};
 use mux::termwiztermtab::TermWizTerminal;
@@ -40,6 +41,65 @@ const CONTINUATION_PADDING: usize = 9;
 const CARD_OVERHEAD: usize = 2;
 /// Box borders height in compact view (top + bottom)
 const BOX_BORDERS: usize = 2;
+
+#[derive(Debug, Clone, Copy)]
+struct ScrollbackSearchColors {
+    match_fg: ColorAttribute,
+    match_bg: ColorAttribute,
+    line_number_fg: ColorAttribute,
+    header_fg: ColorAttribute,
+    compact_border_fg: ColorAttribute,
+    card_border_fg: ColorAttribute,
+    card_selected_border_fg: ColorAttribute,
+    arrow_fg: ColorAttribute,
+    error_fg: ColorAttribute,
+}
+
+impl ScrollbackSearchColors {
+    fn new() -> Self {
+        let config = configuration();
+        let colors = &config.resolved_palette;
+
+        Self {
+            match_fg: colors
+                .scrollback_search_match_fg
+                .unwrap_or(AnsiColor::Black.into())
+                .into(),
+            match_bg: colors
+                .scrollback_search_match_bg
+                .unwrap_or(AnsiColor::Yellow.into())
+                .into(),
+            line_number_fg: colors
+                .scrollback_search_line_number_fg
+                .unwrap_or(AnsiColor::Grey.into())
+                .into(),
+            header_fg: colors
+                .scrollback_search_header_fg
+                .unwrap_or(AnsiColor::Grey.into())
+                .into(),
+            compact_border_fg: colors
+                .scrollback_search_compact_border_fg
+                .unwrap_or(AnsiColor::Teal.into())
+                .into(),
+            card_border_fg: colors
+                .scrollback_search_card_border_fg
+                .unwrap_or(AnsiColor::Grey.into())
+                .into(),
+            card_selected_border_fg: colors
+                .scrollback_search_card_selected_border_fg
+                .unwrap_or(AnsiColor::Blue.into())
+                .into(),
+            arrow_fg: colors
+                .scrollback_search_arrow_fg
+                .unwrap_or(AnsiColor::Green.into())
+                .into(),
+            error_fg: colors
+                .scrollback_search_error_fg
+                .unwrap_or(AnsiColor::Red.into())
+                .into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct ContextLine {
@@ -114,6 +174,7 @@ struct ScrollbackSearchState {
     last_search_trigger: Option<Instant>,
     count_buffer: String,
     compiled_regex: Option<Regex>,
+    colors: ScrollbackSearchColors,
 }
 
 /// Get the column width of a single character
@@ -218,7 +279,11 @@ fn calc_segment_highlight(
 }
 
 /// Push segment text to changes vector, with optional highlight formatting.
-fn push_segment_with_highlight(changes: &mut Vec<Change>, segment: &WrappedSegment) {
+fn push_segment_with_highlight(
+    changes: &mut Vec<Change>,
+    segment: &WrappedSegment,
+    colors: &ScrollbackSearchColors,
+) {
     if let Some((hl_start, hl_end)) = segment.highlight {
         let (start_byte, end_byte) = get_segment_split_indices(segment.text, hl_start, hl_end);
         let before = &segment.text[..start_byte];
@@ -227,8 +292,8 @@ fn push_segment_with_highlight(changes: &mut Vec<Change>, segment: &WrappedSegme
 
         changes.push(Change::Text(before.to_string()));
         changes.extend([
-            AttributeChange::Background(AnsiColor::Yellow.into()).into(),
-            AttributeChange::Foreground(AnsiColor::Black.into()).into(),
+            AttributeChange::Background(colors.match_bg).into(),
+            AttributeChange::Foreground(colors.match_fg).into(),
             Change::Text(matched.to_string()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
@@ -318,6 +383,7 @@ impl ScrollbackSearchState {
             last_search_trigger: None,
             count_buffer: String::new(),
             compiled_regex: None,
+            colors: ScrollbackSearchColors::new(),
         }
     }
 
@@ -593,7 +659,7 @@ impl ScrollbackSearchState {
         ];
 
         if is_invalid_regex {
-            changes.push(AttributeChange::Foreground(AnsiColor::Red.into()).into());
+            changes.push(AttributeChange::Foreground(self.colors.error_fg).into());
         }
         changes.push(Change::Text(search_text.to_string()));
         if is_invalid_regex {
@@ -602,14 +668,14 @@ impl ScrollbackSearchState {
 
         changes.extend([
             Change::Text(" ".repeat(padding)),
-            AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
+            AttributeChange::Foreground(self.colors.header_fg).into(),
             Change::Text(count_text),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
         ]);
 
         changes.extend([
-            AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
+            AttributeChange::Foreground(self.colors.header_fg).into(),
             Change::Text(format!(
                 "Context: ±{} │ Mode: {}",
                 self.context_lines,
@@ -620,7 +686,7 @@ impl ScrollbackSearchState {
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
-            AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
+            AttributeChange::Foreground(self.colors.header_fg).into(),
             Change::Text("─".repeat(self.width)),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
@@ -634,11 +700,11 @@ impl ScrollbackSearchState {
         let visible_height = self
             .height
             .saturating_sub(HEADER_ROWS + CARD_OVERHEAD + BOX_BORDERS);
-        let border_color = AnsiColor::Teal;
+        let border_color = self.colors.compact_border_fg;
 
         let header = format!("┌{}", "─".repeat(self.width.saturating_sub(1)));
         buf.add_changes(vec![
-            AttributeChange::Foreground(border_color.into()).into(),
+            AttributeChange::Foreground(border_color).into(),
             Change::Text(header),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
@@ -669,7 +735,7 @@ impl ScrollbackSearchState {
 
         let footer = format!("└{}", "─".repeat(self.width.saturating_sub(1)));
         buf.add_changes(vec![
-            AttributeChange::Foreground(border_color.into()).into(),
+            AttributeChange::Foreground(border_color).into(),
             Change::Text(footer),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
@@ -681,7 +747,7 @@ impl ScrollbackSearchState {
         buf: &mut BufferedTerminal<TermWizTerminal>,
         m: &SearchMatchWithContext,
         selected: bool,
-        border_color: AnsiColor,
+        border_color: ColorAttribute,
     ) {
         let line = &m.line_content;
         // Account for left border (1) + arrow (1) + line number (5) + " │ " (3) = 10 chars
@@ -694,7 +760,7 @@ impl ScrollbackSearchState {
             let mut changes: Vec<Change> = Vec::new();
 
             changes.extend([
-                AttributeChange::Foreground(border_color.into()).into(),
+                AttributeChange::Foreground(border_color).into(),
                 Change::Text("│".to_string()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
@@ -703,7 +769,7 @@ impl ScrollbackSearchState {
                 // First line: show selection indicator and line number
                 if selected {
                     changes.extend([
-                        AttributeChange::Foreground(AnsiColor::Yellow.into()).into(),
+                        AttributeChange::Foreground(self.colors.match_bg).into(),
                         AttributeChange::Intensity(Intensity::Bold).into(),
                         Change::Text("▶".to_string()),
                         Change::AllAttributes(CellAttributes::default()),
@@ -713,7 +779,7 @@ impl ScrollbackSearchState {
                 }
 
                 changes.extend([
-                    AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
+                    AttributeChange::Foreground(self.colors.line_number_fg).into(),
                     Change::Text(format!("{:>5} │ ", m.line + 1)),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
@@ -723,7 +789,7 @@ impl ScrollbackSearchState {
                 changes.push(Change::Text(" ".repeat(CONTINUATION_PADDING)));
             }
 
-            push_segment_with_highlight(&mut changes, segment);
+            push_segment_with_highlight(&mut changes, segment, &self.colors);
 
             changes.extend([
                 Change::AllAttributes(CellAttributes::default()),
@@ -776,9 +842,9 @@ impl ScrollbackSearchState {
         max_context: usize,
     ) {
         let border_color = if selected {
-            AnsiColor::Blue
+            self.colors.card_selected_border_fg
         } else {
-            AnsiColor::Grey
+            self.colors.card_border_fg
         };
 
         // Use actual match index (1-based for display)
@@ -793,7 +859,7 @@ impl ScrollbackSearchState {
         let header = format!("{}{}{}", left_label, "─".repeat(fill_width), right_label);
 
         buf.add_changes(vec![
-            AttributeChange::Foreground(border_color.into()).into(),
+            AttributeChange::Foreground(border_color).into(),
             Change::Text(header),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
@@ -826,7 +892,7 @@ impl ScrollbackSearchState {
         &self,
         buf: &mut BufferedTerminal<TermWizTerminal>,
         ctx: &ContextLine,
-        border_color: AnsiColor,
+        border_color: ColorAttribute,
         _is_match: bool,
     ) {
         let max_content = self.width.saturating_sub(CARD_LEFT_MARGIN);
@@ -837,14 +903,14 @@ impl ScrollbackSearchState {
             let mut changes: Vec<Change> = Vec::new();
 
             changes.extend([
-                AttributeChange::Foreground(border_color.into()).into(),
+                AttributeChange::Foreground(border_color).into(),
                 Change::Text("│".to_string()),
             ]);
 
             if seg_idx == 0 {
                 // First line: show line number (1-indexed for display)
                 changes.extend([
-                    AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
+                    AttributeChange::Foreground(self.colors.line_number_fg).into(),
                     Change::Text(format!(" {:>5} │ ", ctx.line_number + 1)),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
@@ -869,7 +935,7 @@ impl ScrollbackSearchState {
         &self,
         buf: &mut BufferedTerminal<TermWizTerminal>,
         m: &SearchMatchWithContext,
-        border_color: AnsiColor,
+        border_color: ColorAttribute,
     ) {
         let line = &m.line_content;
         // Account for border (1) + arrow (1) + line number (5) + " │ " (3) = 10, plus extra border margin
@@ -881,18 +947,18 @@ impl ScrollbackSearchState {
             let mut changes: Vec<Change> = Vec::new();
 
             changes.extend([
-                AttributeChange::Foreground(border_color.into()).into(),
+                AttributeChange::Foreground(border_color).into(),
                 Change::Text("│".to_string()),
             ]);
 
             if seg_idx == 0 {
                 // First line: show arrow and line number
                 changes.extend([
-                    AttributeChange::Foreground(AnsiColor::Green.into()).into(),
+                    AttributeChange::Foreground(self.colors.arrow_fg).into(),
                     AttributeChange::Intensity(Intensity::Bold).into(),
                     Change::Text("▶".to_string()),
                     Change::AllAttributes(CellAttributes::default()),
-                    AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
+                    AttributeChange::Foreground(self.colors.line_number_fg).into(),
                     Change::Text(format!("{:>5} │ ", m.line + 1)),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
@@ -905,7 +971,7 @@ impl ScrollbackSearchState {
                 ]);
             }
 
-            push_segment_with_highlight(&mut changes, segment);
+            push_segment_with_highlight(&mut changes, segment, &self.colors);
 
             changes.push(Change::Text("\r\n".to_string()));
             buf.add_changes(changes);
@@ -921,7 +987,7 @@ impl ScrollbackSearchState {
                 x: Position::Absolute(0),
                 y: Position::Absolute(HEADER_ROWS + middle_row),
             },
-            AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
+            AttributeChange::Foreground(self.colors.header_fg).into(),
         ]);
 
         let message = "No matches found";
