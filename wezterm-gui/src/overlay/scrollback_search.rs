@@ -107,6 +107,42 @@ fn char_column_width(c: char) -> usize {
     unicode_column_width(s, None)
 }
 
+/// Calculate the column width of a string
+fn str_column_width(s: &str) -> usize {
+    s.chars().map(char_column_width).sum()
+}
+
+/// Calculate column widths at specific byte positions in a single pass.
+/// Returns (width_at_start, width_at_end, total_width).
+fn column_widths_at_byte_positions(
+    s: &str,
+    start_byte: usize,
+    end_byte: usize,
+) -> (usize, usize, usize) {
+    let mut current_byte = 0;
+    let mut current_width = 0;
+    let mut start_width = None;
+    let mut end_width = None;
+
+    for ch in s.chars() {
+        if start_width.is_none() && current_byte >= start_byte {
+            start_width = Some(current_width);
+        }
+        if end_width.is_none() && current_byte >= end_byte {
+            end_width = Some(current_width);
+        }
+
+        current_byte += ch.len_utf8();
+        current_width += char_column_width(ch);
+    }
+
+    (
+        start_width.unwrap_or(current_width),
+        end_width.unwrap_or(current_width),
+        current_width,
+    )
+}
+
 /// Calculate byte indices for start and end cell positions in a single pass.
 /// Returns (start_byte_idx, end_byte_idx).
 fn get_segment_split_indices(s: &str, start_cell: usize, end_cell: usize) -> (usize, usize) {
@@ -418,7 +454,7 @@ impl ScrollbackSearchState {
             .filter(|ctx| ctx.line_number > last_row)
             .collect();
 
-        let content_col_width = line_content.chars().map(char_column_width).sum();
+        let content_col_width = str_column_width(&line_content);
 
         SearchMatchWithContext {
             line: first_row,
@@ -446,7 +482,7 @@ impl ScrollbackSearchState {
             .into_iter()
             .map(|logical| {
                 let content = logical.logical.as_str().trim_end().to_string();
-                let col_width = content.chars().map(char_column_width).sum();
+                let col_width = str_column_width(&content);
                 ContextLine {
                     line_number: logical.first_row,
                     content,
@@ -1394,8 +1430,9 @@ impl ScrollbackSearchState {
             let last_row = first_row + logical.physical_lines.len() as StableRowIndex - 1;
 
             for m in regex.find_iter(trimmed) {
-                let start_cell = trimmed[..m.start()].chars().map(char_column_width).sum();
-                let end_cell = trimmed[..m.end()].chars().map(char_column_width).sum();
+                // Calculate all column widths in a single pass
+                let (start_cell, end_cell, content_col_width) =
+                    column_widths_at_byte_positions(trimmed, m.start(), m.end());
 
                 // Filter out any lines that overlap with the match line
                 let context_before: Vec<_> = self
@@ -1417,8 +1454,6 @@ impl ScrollbackSearchState {
                     .into_iter()
                     .filter(|ctx| ctx.line_number > last_row)
                     .collect();
-
-                let content_col_width = trimmed.chars().map(char_column_width).sum();
 
                 self.matches.push(SearchMatchWithContext {
                     line: first_row,
