@@ -139,9 +139,9 @@ fn get_segment_split_indices(s: &str, start_cell: usize, end_cell: usize) -> (us
 
 /// A segment of a wrapped line with optional highlight information
 #[derive(Debug, Clone)]
-struct WrappedSegment {
+struct WrappedSegment<'a> {
     /// The text content for this row
-    text: String,
+    text: &'a str,
     /// If there's a highlight in this segment: (start_cell, end_cell) relative to this segment
     highlight: Option<(usize, usize)>,
 }
@@ -159,23 +159,24 @@ fn wrapped_row_count(col_width: usize, max_width: usize) -> usize {
 
 /// Wrap a line into segments that fit within max_width, preserving highlight information.
 /// match_range is in cell units (not byte units) relative to the full line.
-fn wrap_line_with_highlight(
-    line: &str,
+fn wrap_line_with_highlight<'a>(
+    line: &'a str,
     match_range: Option<Range<usize>>,
     max_width: usize,
-) -> Vec<WrappedSegment> {
+) -> Vec<WrappedSegment<'a>> {
     if max_width == 0 {
         return vec![WrappedSegment {
-            text: String::new(),
+            text: "",
             highlight: None,
         }];
     }
 
     let mut segments = Vec::new();
-    let mut current_text = String::new();
     let mut current_width = 0;
     let mut current_start_cell = 0; // Cell index where current segment starts in the original line
     let mut cell_idx = 0;
+    let mut segment_start_byte = 0;
+    let mut current_byte = 0;
 
     for ch in line.chars() {
         let ch_width = char_column_width(ch);
@@ -198,20 +199,22 @@ fn wrap_line_with_highlight(
             });
 
             segments.push(WrappedSegment {
-                text: std::mem::take(&mut current_text),
+                text: &line[segment_start_byte..current_byte],
                 highlight,
             });
 
             current_start_cell = cell_idx;
             current_width = 0;
+            segment_start_byte = current_byte;
         }
 
-        current_text.push(ch);
+        current_byte += ch.len_utf8();
         current_width += ch_width;
         cell_idx += ch_width;
     }
 
-    if !current_text.is_empty() || segments.is_empty() {
+    // Don't forget the last segment
+    if current_byte > segment_start_byte || segments.is_empty() {
         let highlight = match_range.as_ref().and_then(|r| {
             let seg_end_cell = current_start_cell + current_width;
             if r.start < seg_end_cell && r.end > current_start_cell {
@@ -228,7 +231,7 @@ fn wrap_line_with_highlight(
         });
 
         segments.push(WrappedSegment {
-            text: current_text,
+            text: &line[segment_start_byte..current_byte],
             highlight,
         });
     }
@@ -661,7 +664,7 @@ impl ScrollbackSearchState {
 
             if let Some((hl_start, hl_end)) = segment.highlight {
                 let (start_byte, end_byte) =
-                    get_segment_split_indices(&segment.text, hl_start, hl_end);
+                    get_segment_split_indices(segment.text, hl_start, hl_end);
                 let before = &segment.text[..start_byte];
                 let matched = &segment.text[start_byte..end_byte];
                 let after = &segment.text[end_byte..];
@@ -675,7 +678,7 @@ impl ScrollbackSearchState {
                 ]);
                 changes.push(Change::Text(after.to_string()));
             } else {
-                changes.push(Change::Text(segment.text.clone()));
+                changes.push(Change::Text(segment.text.to_string()));
             }
 
             changes.extend([
@@ -810,7 +813,7 @@ impl ScrollbackSearchState {
             }
 
             changes.extend([
-                Change::Text(segment.text.clone()),
+                Change::Text(segment.text.to_string()),
                 Change::Text("\r\n".to_string()),
             ]);
 
@@ -860,7 +863,7 @@ impl ScrollbackSearchState {
 
             if let Some((hl_start, hl_end)) = segment.highlight {
                 let (start_byte, end_byte) =
-                    get_segment_split_indices(&segment.text, hl_start, hl_end);
+                    get_segment_split_indices(segment.text, hl_start, hl_end);
                 let before = &segment.text[..start_byte];
                 let matched = &segment.text[start_byte..end_byte];
                 let after = &segment.text[end_byte..];
@@ -874,7 +877,7 @@ impl ScrollbackSearchState {
                 ]);
                 changes.push(Change::Text(after.to_string()));
             } else {
-                changes.push(Change::Text(segment.text.clone()));
+                changes.push(Change::Text(segment.text.to_string()));
             }
 
             changes.push(Change::Text("\r\n".to_string()));
