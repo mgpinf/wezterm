@@ -1166,6 +1166,7 @@ pub enum KeyAssignment {
     SelectorActions(SelectorActions),
     DisplayText(DisplayText),
     TypingTest(TypingTest),
+    ScrollbackSearchWithContext,
 }
 impl_lua_conversion_dynamic!(KeyAssignment);
 

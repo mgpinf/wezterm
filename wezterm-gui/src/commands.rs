@@ -881,6 +881,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: Some("md_keyboard"),
         },
+        ScrollbackSearchWithContext => CommandDef {
+            brief: "Search scrollback with context".into(),
+            doc: "Search the scrollback buffer and show results with surrounding context lines".into(),
+            keys: vec![],
+            args: &[ArgType::ActivePane],
+            menubar: &["View"],
+            icon: Some("md_search"),
+        },
         QuickSelect => CommandDef {
             brief: "Enter QuickSelect mode".into(),
             doc: "Activates the quick selection UI for the current pane".into(),

@@ -2531,6 +2531,28 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
+    fn show_scrollback_search(&mut self) {
+        let pane = match self.get_active_pane_or_overlay() {
+            Some(pane) => pane,
+            None => return,
+        };
+
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let pane_id = pane.pane_id();
+        let window = self.window.clone().expect("window to be set");
+
+        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::scrollback_search::scrollback_search(pane_id, term, window)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
     fn show_tab_navigator(&mut self) {
         let mux = Mux::get();
         let active_tab_idx = match mux.get_window(self.mux_window_id) {
@@ -3365,6 +3387,7 @@ impl TermWindow {
             SelectorActions(args) => self.show_selector_actions(args),
             DisplayText(args) => self.show_display_text(args),
             TypingTest(args) => self.show_typing_test(args),
+            ScrollbackSearchWithContext => self.show_scrollback_search(),
         };
         Ok(PerformAssignmentResult::Handled)
     }
