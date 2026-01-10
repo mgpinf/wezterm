@@ -521,10 +521,10 @@ impl ScrollbackSearchState {
         let count_text = format!("[{} of {} matches]", selected, match_count);
         let padding = remaining_width.saturating_sub(count_text.len());
 
-        // Check if regex is invalid
+        // Check if regex is invalid using the already-compiled regex field
         let is_invalid_regex = matches!(self.options.mode, SearchMode::Regex)
             && !search_text.is_empty()
-            && Regex::new(search_text).is_err();
+            && self.compiled_regex.is_none();
 
         let mut changes: Vec<Change> = vec![
             AttributeChange::Intensity(Intensity::Bold).into(),
