@@ -887,7 +887,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             keys: vec![],
             args: &[ArgType::ActivePane],
             menubar: &["View"],
-            icon: Some("md_search"),
+            icon: Some("oct_search"),
         },
         QuickSelect => CommandDef {
             brief: "Enter QuickSelect mode".into(),
@@ -2159,6 +2159,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ScrollByPage(NotNan::new(1.0).unwrap()),
         ScrollToTop,
         ScrollToBottom,
+        ScrollbackSearchWithContext,
         // ----------------- Window
         ToggleFullScreen,
         ToggleAlwaysOnTop,
