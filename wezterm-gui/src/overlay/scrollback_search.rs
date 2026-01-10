@@ -95,6 +95,7 @@ struct ScrollbackSearchState {
     pending_search: bool,
     last_search_trigger: Option<Instant>,
     count_buffer: String,
+    compiled_regex: Option<Regex>,
 }
 
 /// Get the column width of a single character
@@ -269,6 +270,7 @@ impl ScrollbackSearchState {
             pending_search: false,
             last_search_trigger: None,
             count_buffer: String::new(),
+            compiled_regex: None,
         }
     }
 
@@ -1356,6 +1358,8 @@ impl ScrollbackSearchState {
             // For regex mode, perform our own search on trimmed content
             // so that $ matches end of visible content, not padding
             if matches!(self.options.mode, SearchMode::Regex) {
+                let pattern_str = self.search_input.get_line();
+                self.compiled_regex = Regex::new(&pattern_str).ok();
                 self.search_trimmed_content(&pane, range);
             } else {
                 let results = smol::block_on(pane.search(pattern, range, None)).unwrap_or_default();
@@ -1374,10 +1378,9 @@ impl ScrollbackSearchState {
         pane: &Arc<dyn Pane>,
         range: std::ops::Range<StableRowIndex>,
     ) {
-        let pattern_str = self.search_input.get_line();
-        let regex = match Regex::new(&pattern_str) {
-            Ok(r) => r,
-            Err(_) => return, // Invalid regex
+        let regex = match self.compiled_regex.as_ref() {
+            Some(r) => r,
+            None => return,
         };
 
         let logical_lines = pane.get_logical_lines(range);
