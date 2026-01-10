@@ -240,10 +240,7 @@ fn push_segment_with_highlight(changes: &mut Vec<Change>, segment: &WrappedSegme
 
 /// Calculate how many rows a content with given column width will take when wrapped
 fn wrapped_row_count(col_width: usize, max_width: usize) -> usize {
-    if max_width == 0 {
-        return 1;
-    }
-    if col_width == 0 {
+    if max_width == 0 || col_width == 0 {
         return 1;
     }
     col_width.div_ceil(max_width)
@@ -1199,9 +1196,7 @@ impl ScrollbackSearchState {
     }
 
     fn decrease_context(&mut self) {
-        if self.context_lines > 0 {
-            self.context_lines -= 1;
-        }
+        self.context_lines = self.context_lines.saturating_sub(1);
     }
 
     fn toggle_view_mode(&mut self) {
@@ -1226,11 +1221,10 @@ impl ScrollbackSearchState {
     }
 
     fn history_next(&mut self) {
-        if self.search_history.is_empty() || self.history_index.is_none() {
+        let Some(current) = self.history_index else {
             return;
-        }
-        let current = self.history_index.unwrap();
-        if current >= self.search_history.len() - 1 {
+        };
+        if current >= self.search_history.len().saturating_sub(1) {
             self.history_index = None;
             self.search_input = LineEditBuffer::new("", 0);
         } else {
@@ -1255,11 +1249,7 @@ impl ScrollbackSearchState {
     fn take_count(&mut self) -> usize {
         let count = self.count_buffer.parse::<usize>().unwrap_or(0);
         self.count_buffer.clear();
-        if count == 0 {
-            1
-        } else {
-            count
-        }
+        count.max(1)
     }
 
     fn reset_count(&mut self) {
