@@ -1046,6 +1046,12 @@ impl ScrollbackSearchState {
                     self.reset_count();
                     return Some(ScrollbackSearchAction::YankMatch(self.selected_match));
                 }
+                (KeyCode::Char('Y'), Modifiers::NONE) | (KeyCode::Char('Y'), Modifiers::SHIFT) => {
+                    self.reset_count();
+                    return Some(ScrollbackSearchAction::YankMatchWithContext(
+                        self.selected_match,
+                    ));
+                }
                 (KeyCode::Char('v'), Modifiers::NONE) => {
                     self.reset_count();
                     self.toggle_view_mode();
@@ -1334,6 +1340,9 @@ impl ScrollbackSearchState {
                             ScrollbackSearchAction::YankMatch(idx) => {
                                 self.yank_match(idx);
                             }
+                            ScrollbackSearchAction::YankMatchWithContext(idx) => {
+                                self.yank_match_with_context(idx);
+                            }
                         }
                     }
 
@@ -1465,6 +1474,32 @@ impl ScrollbackSearchState {
             });
         }
     }
+
+    fn yank_match_with_context(&self, idx: usize) {
+        let Some(m) = self.matches.get(idx) else {
+            return;
+        };
+
+        let mut lines = Vec::new();
+        for ctx in &m.context_before {
+            lines.push(ctx.content.as_str());
+        }
+        lines.push(&m.line_content);
+        for ctx in &m.context_after {
+            lines.push(ctx.content.as_str());
+        }
+
+        let content = lines.join("\n");
+
+        self.window.notify(TermWindowNotif::PerformAssignment {
+            pane_id: self.pane_id,
+            assignment: KeyAssignment::CopyTextTo {
+                text: content,
+                destination: ClipboardCopyDestination::Clipboard,
+            },
+            tx: None,
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1474,6 +1509,7 @@ enum ScrollbackSearchAction {
     RefreshContext, // Immediate re-search (no debounce) for context changes
     JumpToMatch(usize),
     YankMatch(usize),
+    YankMatchWithContext(usize),
 }
 
 pub fn scrollback_search(
