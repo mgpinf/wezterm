@@ -182,6 +182,27 @@ struct WrappedSegment<'a> {
     highlight: Option<(usize, usize)>,
 }
 
+/// Push segment text to changes vector, with optional highlight formatting.
+fn push_segment_with_highlight(changes: &mut Vec<Change>, segment: &WrappedSegment) {
+    if let Some((hl_start, hl_end)) = segment.highlight {
+        let (start_byte, end_byte) = get_segment_split_indices(segment.text, hl_start, hl_end);
+        let before = &segment.text[..start_byte];
+        let matched = &segment.text[start_byte..end_byte];
+        let after = &segment.text[end_byte..];
+
+        changes.push(Change::Text(before.to_string()));
+        changes.extend([
+            AttributeChange::Background(AnsiColor::Yellow.into()).into(),
+            AttributeChange::Foreground(AnsiColor::Black.into()).into(),
+            Change::Text(matched.to_string()),
+            Change::AllAttributes(CellAttributes::default()),
+        ]);
+        changes.push(Change::Text(after.to_string()));
+    } else {
+        changes.push(Change::Text(segment.text.to_string()));
+    }
+}
+
 /// Calculate how many rows a content with given column width will take when wrapped
 fn wrapped_row_count(col_width: usize, max_width: usize) -> usize {
     if max_width == 0 {
@@ -698,24 +719,7 @@ impl ScrollbackSearchState {
                 changes.push(Change::Text(" ".repeat(9)));
             }
 
-            if let Some((hl_start, hl_end)) = segment.highlight {
-                let (start_byte, end_byte) =
-                    get_segment_split_indices(segment.text, hl_start, hl_end);
-                let before = &segment.text[..start_byte];
-                let matched = &segment.text[start_byte..end_byte];
-                let after = &segment.text[end_byte..];
-
-                changes.push(Change::Text(before.to_string()));
-                changes.extend([
-                    AttributeChange::Background(AnsiColor::Yellow.into()).into(),
-                    AttributeChange::Foreground(AnsiColor::Black.into()).into(),
-                    Change::Text(matched.to_string()),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
-                changes.push(Change::Text(after.to_string()));
-            } else {
-                changes.push(Change::Text(segment.text.to_string()));
-            }
+            push_segment_with_highlight(&mut changes, segment);
 
             changes.extend([
                 Change::AllAttributes(CellAttributes::default()),
@@ -897,29 +901,13 @@ impl ScrollbackSearchState {
                 ]);
             }
 
-            if let Some((hl_start, hl_end)) = segment.highlight {
-                let (start_byte, end_byte) =
-                    get_segment_split_indices(segment.text, hl_start, hl_end);
-                let before = &segment.text[..start_byte];
-                let matched = &segment.text[start_byte..end_byte];
-                let after = &segment.text[end_byte..];
-
-                changes.push(Change::Text(before.to_string()));
-                changes.extend([
-                    AttributeChange::Background(AnsiColor::Yellow.into()).into(),
-                    AttributeChange::Foreground(AnsiColor::Black.into()).into(),
-                    Change::Text(matched.to_string()),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
-                changes.push(Change::Text(after.to_string()));
-            } else {
-                changes.push(Change::Text(segment.text.to_string()));
-            }
+            push_segment_with_highlight(&mut changes, segment);
 
             changes.push(Change::Text("\r\n".to_string()));
             buf.add_changes(changes);
         }
     }
+
     fn render_no_matches(&self, buf: &mut BufferedTerminal<TermWizTerminal>) {
         let visible_height = self.height.saturating_sub(5);
         let middle_row = visible_height / 2;
