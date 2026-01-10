@@ -29,6 +29,7 @@ const SEARCH_DEBOUNCE_MS: u64 = 350;
 struct ContextLine {
     line_number: StableRowIndex,
     content: String,
+    col_width: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,7 @@ struct SearchMatchWithContext {
     line: StableRowIndex,
     match_range: Range<usize>,
     line_content: String,
+    content_col_width: usize,
     context_before: Vec<ContextLine>,
     context_after: Vec<ContextLine>,
 }
@@ -144,16 +146,15 @@ struct WrappedSegment {
     highlight: Option<(usize, usize)>,
 }
 
-/// Calculate how many rows a line will take when wrapped
-fn calculate_wrapped_line_count(line: &str, max_width: usize) -> usize {
+/// Calculate how many rows a content with given column width will take when wrapped
+fn wrapped_row_count(col_width: usize, max_width: usize) -> usize {
     if max_width == 0 {
         return 1;
     }
-    let total_width: usize = line.chars().map(char_column_width).sum();
-    if total_width == 0 {
+    if col_width == 0 {
         return 1;
     }
-    (total_width + max_width - 1) / max_width
+    (col_width + max_width - 1) / max_width
 }
 
 /// Wrap a line into segments that fit within max_width, preserving highlight information.
@@ -262,13 +263,13 @@ impl ScrollbackSearchState {
     /// Calculate how many terminal rows a match will take in compact view
     fn match_height_compact(&self, m: &SearchMatchWithContext) -> usize {
         let max_content_width = self.width.saturating_sub(10);
-        calculate_wrapped_line_count(&m.line_content, max_content_width)
+        wrapped_row_count(m.content_col_width, max_content_width)
     }
 
     /// Calculate how many terminal rows a match will take in context (card) view
     fn match_height_card(&self, m: &SearchMatchWithContext, effective_context: usize) -> usize {
         let max_content = self.width.saturating_sub(12);
-        let match_line_rows = calculate_wrapped_line_count(&m.line_content, max_content);
+        let match_line_rows = wrapped_row_count(m.content_col_width, max_content);
 
         // Calculate wrapped height for context lines
         let context_before_rows: usize = m
@@ -276,13 +277,13 @@ impl ScrollbackSearchState {
             .iter()
             .rev()
             .take(effective_context)
-            .map(|ctx| calculate_wrapped_line_count(&ctx.content, max_content))
+            .map(|ctx| wrapped_row_count(ctx.col_width, max_content))
             .sum();
         let context_after_rows: usize = m
             .context_after
             .iter()
             .take(effective_context)
-            .map(|ctx| calculate_wrapped_line_count(&ctx.content, max_content))
+            .map(|ctx| wrapped_row_count(ctx.col_width, max_content))
             .sum();
 
         // header(1) + context_before + match_lines + context_after + footer(1)
@@ -414,10 +415,13 @@ impl ScrollbackSearchState {
             .filter(|ctx| ctx.line_number > last_row)
             .collect();
 
+        let content_col_width = line_content.chars().map(char_column_width).sum();
+
         SearchMatchWithContext {
             line: first_row,
             match_range,
             line_content,
+            content_col_width,
             context_before,
             context_after,
         }
@@ -437,9 +441,14 @@ impl ScrollbackSearchState {
         let logical_lines = pane.get_logical_lines(start..end);
         logical_lines
             .into_iter()
-            .map(|logical| ContextLine {
-                line_number: logical.first_row,
-                content: logical.logical.as_str().trim_end().to_string(),
+            .map(|logical| {
+                let content = logical.logical.as_str().trim_end().to_string();
+                let col_width = content.chars().map(char_column_width).sum();
+                ContextLine {
+                    line_number: logical.first_row,
+                    content,
+                    col_width,
+                }
             })
             .collect()
     }
@@ -1406,10 +1415,13 @@ impl ScrollbackSearchState {
                     .filter(|ctx| ctx.line_number > last_row)
                     .collect();
 
+                let content_col_width = trimmed.chars().map(char_column_width).sum();
+
                 self.matches.push(SearchMatchWithContext {
                     line: first_row,
                     match_range: start_cell..end_cell,
                     line_content: trimmed.to_string(),
+                    content_col_width,
                     context_before,
                     context_after,
                 });
