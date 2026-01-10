@@ -25,6 +25,22 @@ use window::WindowOps;
 const DEFAULT_CONTEXT_LINES: usize = 2;
 const SEARCH_DEBOUNCE_MS: u64 = 350;
 
+// Layout constants
+/// Width of the "Search: " prompt
+const SEARCH_PROMPT_WIDTH: usize = 8;
+/// Number of header rows (search line, options line, separator)
+const HEADER_ROWS: usize = 3;
+/// Left margin for compact view: border(1) + arrow(1) + line_num(5) + separator(3)
+const COMPACT_LEFT_MARGIN: usize = 10;
+/// Left margin for card view: border(1) + arrow(1) + line_num(5) + separator(3) + border_margin(2)
+const CARD_LEFT_MARGIN: usize = 12;
+/// Padding for continuation lines: arrow(1) + line_num(5) + separator(3)
+const CONTINUATION_PADDING: usize = 9;
+/// Card header and footer height combined
+const CARD_OVERHEAD: usize = 2;
+/// Box borders height in compact view (top + bottom)
+const BOX_BORDERS: usize = 2;
+
 #[derive(Debug, Clone)]
 struct ContextLine {
     line_number: StableRowIndex,
@@ -322,13 +338,13 @@ impl ScrollbackSearchState {
 
     /// Calculate how many terminal rows a match will take in compact view
     fn match_height_compact(&self, m: &SearchMatchWithContext) -> usize {
-        let max_content_width = self.width.saturating_sub(10);
+        let max_content_width = self.width.saturating_sub(COMPACT_LEFT_MARGIN);
         wrapped_row_count(m.content_col_width, max_content_width)
     }
 
     /// Calculate how many terminal rows a match will take in context (card) view
     fn match_height_card(&self, m: &SearchMatchWithContext, effective_context: usize) -> usize {
-        let max_content = self.width.saturating_sub(12);
+        let max_content = self.width.saturating_sub(CARD_LEFT_MARGIN);
         let match_line_rows = wrapped_row_count(m.content_col_width, max_content);
 
         // Calculate wrapped height for context lines
@@ -547,8 +563,7 @@ impl ScrollbackSearchState {
         // Position cursor and set visibility based on mode
         if self.editing_search {
             let search_text = self.search_input.get_line();
-            // "Search: " is 8 chars
-            let cursor_x = 8 + search_text.chars().count();
+            let cursor_x = SEARCH_PROMPT_WIDTH + search_text.chars().count();
             buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(cursor_x),
@@ -574,7 +589,9 @@ impl ScrollbackSearchState {
         } else {
             0
         };
-        let remaining_width = self.width.saturating_sub(10 + search_text.len());
+        let remaining_width = self
+            .width
+            .saturating_sub(COMPACT_LEFT_MARGIN + search_text.len());
         let count_text = format!("[{} of {} matches]", selected, match_count);
         let padding = remaining_width.saturating_sub(count_text.len());
 
@@ -629,7 +646,9 @@ impl ScrollbackSearchState {
 
     fn render_compact_list(&self, buf: &mut BufferedTerminal<TermWizTerminal>) {
         // Account for box borders (top + bottom = 2 lines)
-        let visible_height = self.height.saturating_sub(5 + 2);
+        let visible_height = self
+            .height
+            .saturating_sub(HEADER_ROWS + CARD_OVERHEAD + BOX_BORDERS);
         let border_color = AnsiColor::Teal;
 
         let header = format!("┌{}", "─".repeat(self.width.saturating_sub(1)));
@@ -681,7 +700,7 @@ impl ScrollbackSearchState {
     ) {
         let line = &m.line_content;
         // Account for left border (1) + arrow (1) + line number (5) + " │ " (3) = 10 chars
-        let max_content_width = self.width.saturating_sub(10);
+        let max_content_width = self.width.saturating_sub(COMPACT_LEFT_MARGIN);
 
         let segments =
             wrap_line_with_highlight(line, Some(m.match_range.clone()), max_content_width);
@@ -716,7 +735,7 @@ impl ScrollbackSearchState {
             } else {
                 // Continuation lines: use spaces for alignment
                 // Space for arrow (1) + line number (5) + " │ " (3) = 9 chars
-                changes.push(Change::Text(" ".repeat(9)));
+                changes.push(Change::Text(" ".repeat(CONTINUATION_PADDING)));
             }
 
             push_segment_with_highlight(&mut changes, segment);
@@ -731,9 +750,9 @@ impl ScrollbackSearchState {
     }
 
     fn render_context_list(&self, buf: &mut BufferedTerminal<TermWizTerminal>) {
-        let visible_height = self.height.saturating_sub(5);
+        let visible_height = self.height.saturating_sub(HEADER_ROWS + CARD_OVERHEAD);
         // Card overhead: header(1) + footer(1) = 2 (match lines calculated separately)
-        let card_overhead = 2;
+        let card_overhead = CARD_OVERHEAD;
         // Max context that fits: (visible_height - overhead) / 2
         let effective_context =
             ((visible_height.saturating_sub(card_overhead)) / 2).min(self.context_lines);
@@ -825,7 +844,7 @@ impl ScrollbackSearchState {
         border_color: AnsiColor,
         _is_match: bool,
     ) {
-        let max_content = self.width.saturating_sub(12);
+        let max_content = self.width.saturating_sub(CARD_LEFT_MARGIN);
 
         let segments = wrap_line_with_highlight(&ctx.content, None, max_content);
 
@@ -848,7 +867,7 @@ impl ScrollbackSearchState {
                 // Continuation lines: use spaces for alignment
                 changes.extend([
                     Change::AllAttributes(CellAttributes::default()),
-                    Change::Text(" ".repeat(9)),
+                    Change::Text(" ".repeat(CONTINUATION_PADDING)),
                 ]);
             }
 
@@ -869,7 +888,7 @@ impl ScrollbackSearchState {
     ) {
         let line = &m.line_content;
         // Account for border (1) + arrow (1) + line number (5) + " │ " (3) = 10, plus extra border margin
-        let max_content = self.width.saturating_sub(12);
+        let max_content = self.width.saturating_sub(CARD_LEFT_MARGIN);
 
         let segments = wrap_line_with_highlight(line, Some(m.match_range.clone()), max_content);
 
@@ -897,7 +916,7 @@ impl ScrollbackSearchState {
                 // Space for arrow (1) + line number (5) + " │ " (3) = 9 chars
                 changes.extend([
                     Change::AllAttributes(CellAttributes::default()),
-                    Change::Text(" ".repeat(9)),
+                    Change::Text(" ".repeat(CONTINUATION_PADDING)),
                 ]);
             }
 
@@ -909,13 +928,13 @@ impl ScrollbackSearchState {
     }
 
     fn render_no_matches(&self, buf: &mut BufferedTerminal<TermWizTerminal>) {
-        let visible_height = self.height.saturating_sub(5);
+        let visible_height = self.height.saturating_sub(HEADER_ROWS + CARD_OVERHEAD);
         let middle_row = visible_height / 2;
 
         buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(0),
-                y: Position::Absolute(3 + middle_row),
+                y: Position::Absolute(HEADER_ROWS + middle_row),
             },
             AttributeChange::Foreground(AnsiColor::Grey.into()).into(),
         ]);
@@ -1104,9 +1123,10 @@ impl ScrollbackSearchState {
         }
 
         let visible_height = if self.view_mode == ViewMode::Compact {
-            self.height.saturating_sub(5 + 2) // Account for box borders
+            self.height
+                .saturating_sub(HEADER_ROWS + CARD_OVERHEAD + BOX_BORDERS) // Account for box borders
         } else {
-            self.height.saturating_sub(5)
+            self.height.saturating_sub(HEADER_ROWS + CARD_OVERHEAD)
         };
 
         if self.selected_match < self.scroll_offset {
@@ -1119,7 +1139,7 @@ impl ScrollbackSearchState {
         let effective_context = if self.view_mode == ViewMode::Compact {
             0
         } else {
-            let card_overhead = 2;
+            let card_overhead = CARD_OVERHEAD;
             ((visible_height.saturating_sub(card_overhead)) / 2).min(self.context_lines)
         };
 
@@ -1180,8 +1200,8 @@ impl ScrollbackSearchState {
     }
 
     fn max_context_lines(&self) -> usize {
-        // header(3) + card_overhead(3) = 6
-        self.height.saturating_sub(6) / 2
+        // header rows + card overhead + 1 for match line
+        self.height.saturating_sub(HEADER_ROWS + CARD_OVERHEAD + 1) / 2
     }
 
     fn increase_context(&mut self) {
