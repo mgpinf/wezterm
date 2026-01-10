@@ -984,7 +984,8 @@ impl ScrollbackSearchState {
                 }
                 (KeyCode::Enter, _) => {
                     self.reset_count();
-                    return Some(ScrollbackSearchAction::JumpToMatch(self.selected_match));
+                    self.yank_match(self.selected_match);
+                    return Some(ScrollbackSearchAction::Cancel);
                 }
                 (KeyCode::Char('/'), Modifiers::NONE) => {
                     self.reset_count();
@@ -1332,11 +1333,6 @@ impl ScrollbackSearchState {
                             ScrollbackSearchAction::RefreshContext => {
                                 self.execute_search();
                             }
-                            ScrollbackSearchAction::JumpToMatch(idx) => {
-                                if let Some(m) = self.matches.get(idx) {
-                                    return Ok(Some(m.line));
-                                }
-                            }
                             ScrollbackSearchAction::YankMatch(idx) => {
                                 self.yank_match(idx);
                             }
@@ -1507,7 +1503,6 @@ enum ScrollbackSearchAction {
     Cancel,
     Search,
     RefreshContext, // Immediate re-search (no debounce) for context changes
-    JumpToMatch(usize),
     YankMatch(usize),
     YankMatchWithContext(usize),
 }
