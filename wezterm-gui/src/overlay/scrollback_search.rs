@@ -198,6 +198,25 @@ struct WrappedSegment<'a> {
     highlight: Option<(usize, usize)>,
 }
 
+/// Calculate highlight range relative to a segment.
+/// Returns (local_start, local_end) if the match_range overlaps with the segment.
+fn calc_segment_highlight(
+    match_range: &Option<Range<usize>>,
+    start_cell: usize,
+    width: usize,
+) -> Option<(usize, usize)> {
+    match_range.as_ref().and_then(|r| {
+        let seg_end_cell = start_cell + width;
+        if r.start < seg_end_cell && r.end > start_cell {
+            let local_start = r.start.saturating_sub(start_cell);
+            let local_end = (r.end - start_cell).min(width);
+            (local_start < local_end).then_some((local_start, local_end))
+        } else {
+            None
+        }
+    })
+}
+
 /// Push segment text to changes vector, with optional highlight formatting.
 fn push_segment_with_highlight(changes: &mut Vec<Change>, segment: &WrappedSegment) {
     if let Some((hl_start, hl_end)) = segment.highlight {
@@ -255,25 +274,9 @@ fn wrap_line_with_highlight<'a>(
         let ch_width = char_column_width(ch);
 
         if current_width + ch_width > max_width && current_width > 0 {
-            let highlight = match_range.as_ref().and_then(|r| {
-                // Calculate highlight range relative to this segment
-                let seg_end_cell = current_start_cell + current_width;
-                if r.start < seg_end_cell && r.end > current_start_cell {
-                    let local_start = r.start.saturating_sub(current_start_cell);
-                    let local_end = (r.end - current_start_cell).min(current_width);
-                    if local_start < local_end {
-                        Some((local_start, local_end))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            });
-
             segments.push(WrappedSegment {
                 text: &line[segment_start_byte..current_byte],
-                highlight,
+                highlight: calc_segment_highlight(&match_range, current_start_cell, current_width),
             });
 
             current_start_cell = cell_idx;
@@ -288,24 +291,9 @@ fn wrap_line_with_highlight<'a>(
 
     // Don't forget the last segment
     if current_byte > segment_start_byte || segments.is_empty() {
-        let highlight = match_range.as_ref().and_then(|r| {
-            let seg_end_cell = current_start_cell + current_width;
-            if r.start < seg_end_cell && r.end > current_start_cell {
-                let local_start = r.start.saturating_sub(current_start_cell);
-                let local_end = (r.end - current_start_cell).min(current_width);
-                if local_start < local_end {
-                    Some((local_start, local_end))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        });
-
         segments.push(WrappedSegment {
             text: &line[segment_start_byte..current_byte],
-            highlight,
+            highlight: calc_segment_highlight(&match_range, current_start_cell, current_width),
         });
     }
 
