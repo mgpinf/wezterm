@@ -56,7 +56,7 @@ impl SelectorState<'_> {
             .par_iter()
             .enumerate()
             .filter_map(|(row_idx, entry)| {
-                let score = matcher_score(&pattern, &entry)?;
+                let score = matcher_score(&pattern, entry)?;
                 Some(MatchResult { row_idx, score })
             })
             .collect();
@@ -107,7 +107,7 @@ impl<'a> TransientSwitch<'a> {
         buf.add_changes(vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(format!("{}", delegate.key)),
+            Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(" {} (", delegate.description)),
         ]);
@@ -149,7 +149,7 @@ impl<'a> TransientOption<'a> {
         buf.add_changes(vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(format!("{}", delegate.key)),
+            Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(" {} (", delegate.description)),
         ]);
@@ -166,7 +166,7 @@ impl<'a> TransientOption<'a> {
         } else {
             buf.add_changes(vec![
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
-                Change::Text(format!("{}", delegate.flag)),
+                Change::Text(delegate.flag.to_string()),
             ]);
         }
 
@@ -195,7 +195,7 @@ impl<'a> TransientCyclicSwitch<'a> {
         buf.add_changes(vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(format!("{}", delegate.key)),
+            Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(format!(" {} (", delegate.description)),
         ]);
@@ -852,35 +852,31 @@ fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSec
             let transient_entry = match k_transient_entry {
                 KTransientEntry::TransientSwitch(switch) => {
                     RenderableEntity::TransientSwitch(TransientSwitch {
-                        delegate: &switch,
+                        delegate: switch,
                         value: Cell::new(switch.default),
                     })
                 }
                 KTransientEntry::TransientOption(option) => {
                     RenderableEntity::TransientOption(TransientOption {
-                        delegate: &option,
+                        delegate: option,
                         value: RefCell::new(option.default.clone()),
                     })
                 }
                 KTransientEntry::TransientCyclicSwitch(cyclic_switch) => {
-                    let active_idx = cyclic_switch
-                        .default
-                        .as_ref()
-                        .map(|default| {
-                            cyclic_switch
-                                .choices
-                                .iter()
-                                .position(|choice| choice == default)
-                        })
-                        .flatten();
+                    let active_idx = cyclic_switch.default.as_ref().and_then(|default| {
+                        cyclic_switch
+                            .choices
+                            .iter()
+                            .position(|choice| choice == default)
+                    });
                     RenderableEntity::TransientCyclicSwitch(TransientCyclicSwitch {
-                        delegate: &cyclic_switch,
+                        delegate: cyclic_switch,
                         active_idx: Cell::new(active_idx),
                     })
                 }
                 KTransientEntry::TransientArgument(positional_arg) => {
                     RenderableEntity::TransientArgument(TransientArgument {
-                        delegate: &positional_arg,
+                        delegate: positional_arg,
                     })
                 }
             };
