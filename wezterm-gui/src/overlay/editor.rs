@@ -9540,8 +9540,34 @@ impl<'a> EditorState<'a> {
                                                     .collect();
                                                 self.lines[row] = toggled;
                                             }
+                                        } else if self.mode == EditorMode::VisualBlock {
+                                            // Block-wise toggle: use same column bounds for all rows
+                                            let (min_row, max_row, min_col, max_col) =
+                                                self.get_visual_block_bounds();
+                                            for row in min_row..=max_row {
+                                                let chars: Vec<char> =
+                                                    self.lines[row].chars().collect();
+                                                let col_start = min_col;
+                                                let col_end = (max_col + 1).min(chars.len());
+                                                let toggled: String = chars
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(i, &c)| {
+                                                        if i >= col_start && i < col_end {
+                                                            if c.is_uppercase() {
+                                                                c.to_lowercase().next().unwrap_or(c)
+                                                            } else {
+                                                                c.to_uppercase().next().unwrap_or(c)
+                                                            }
+                                                        } else {
+                                                            c
+                                                        }
+                                                    })
+                                                    .collect();
+                                                self.lines[row] = toggled;
+                                            }
                                         } else {
-                                            // Character-wise toggle
+                                            // Character-wise toggle (Visual mode)
                                             for row in start.0..=end.0 {
                                                 let chars: Vec<char> =
                                                     self.lines[row].chars().collect();
