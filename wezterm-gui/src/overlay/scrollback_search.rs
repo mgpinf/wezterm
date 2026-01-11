@@ -53,6 +53,8 @@ struct ScrollbackSearchColors {
     card_selected_border_fg: ColorAttribute,
     arrow_fg: ColorAttribute,
     error_fg: ColorAttribute,
+    selected_line_fg: ColorAttribute,
+    fg: ColorAttribute,
 }
 
 impl ScrollbackSearchColors {
@@ -97,6 +99,12 @@ impl ScrollbackSearchColors {
                 .scrollback_search_error_fg
                 .unwrap_or(AnsiColor::Red.into())
                 .into(),
+            selected_line_fg: colors
+                .scrollback_search_selected_line_fg
+                .map_or_else(|| ColorAttribute::Default, |c| c.into()),
+            fg: colors
+                .scrollback_search_fg
+                .map_or_else(|| ColorAttribute::Default, |c| c.into()),
         }
     }
 }
@@ -283,6 +291,7 @@ fn push_segment_with_highlight(
     changes: &mut Vec<Change>,
     segment: &WrappedSegment,
     colors: &ScrollbackSearchColors,
+    line_attrs: CellAttributes,
 ) {
     if let Some((hl_start, hl_end)) = segment.highlight {
         let (start_byte, end_byte) = get_segment_split_indices(segment.text, hl_start, hl_end);
@@ -290,15 +299,17 @@ fn push_segment_with_highlight(
         let matched = &segment.text[start_byte..end_byte];
         let after = &segment.text[end_byte..];
 
+        changes.push(Change::AllAttributes(line_attrs.clone()));
         changes.push(Change::Text(before.to_string()));
         changes.extend([
             AttributeChange::Background(colors.match_bg).into(),
             AttributeChange::Foreground(colors.match_fg).into(),
             Change::Text(matched.to_string()),
-            Change::AllAttributes(CellAttributes::default()),
+            Change::AllAttributes(line_attrs),
         ]);
         changes.push(Change::Text(after.to_string()));
     } else {
+        changes.push(Change::AllAttributes(line_attrs));
         changes.push(Change::Text(segment.text.to_string()));
     }
 }
@@ -756,13 +767,23 @@ impl ScrollbackSearchState {
         let segments =
             wrap_line_with_highlight(line, Some(m.match_range.clone()), max_content_width);
 
+        let line_fg = if selected {
+            self.colors.selected_line_fg
+        } else {
+            self.colors.fg
+        };
+
+        let mut line_attrs = CellAttributes::default();
+        line_attrs.set_foreground(line_fg);
+
         for (seg_idx, segment) in segments.iter().enumerate() {
             let mut changes: Vec<Change> = Vec::new();
 
             changes.extend([
+                Change::AllAttributes(line_attrs.clone()),
                 AttributeChange::Foreground(border_color).into(),
                 Change::Text("│".to_string()),
-                Change::AllAttributes(CellAttributes::default()),
+                Change::AllAttributes(line_attrs.clone()),
             ]);
 
             if seg_idx == 0 {
@@ -772,7 +793,7 @@ impl ScrollbackSearchState {
                         AttributeChange::Foreground(self.colors.match_bg).into(),
                         AttributeChange::Intensity(Intensity::Bold).into(),
                         Change::Text("▶".to_string()),
-                        Change::AllAttributes(CellAttributes::default()),
+                        Change::AllAttributes(line_attrs.clone()),
                     ]);
                 } else {
                     changes.push(Change::Text(" ".to_string()));
@@ -781,7 +802,7 @@ impl ScrollbackSearchState {
                 changes.extend([
                     AttributeChange::Foreground(self.colors.line_number_fg).into(),
                     Change::Text(format!("{:>5} │ ", m.line + 1)),
-                    Change::AllAttributes(CellAttributes::default()),
+                    Change::AllAttributes(line_attrs.clone()),
                 ]);
             } else {
                 // Continuation lines: use spaces for alignment
@@ -789,7 +810,7 @@ impl ScrollbackSearchState {
                 changes.push(Change::Text(" ".repeat(CONTINUATION_PADDING)));
             }
 
-            push_segment_with_highlight(&mut changes, segment, &self.colors);
+            push_segment_with_highlight(&mut changes, segment, &self.colors, line_attrs.clone());
 
             changes.extend([
                 Change::AllAttributes(CellAttributes::default()),
@@ -871,7 +892,7 @@ impl ScrollbackSearchState {
             self.render_context_line(buf, ctx, border_color, false);
         }
 
-        self.render_match_line_in_card(buf, m, border_color);
+        self.render_match_line_in_card(buf, m, border_color, selected);
 
         for ctx in m.context_after.iter().take(max_context) {
             self.render_context_line(buf, ctx, border_color, false);
@@ -899,12 +920,17 @@ impl ScrollbackSearchState {
 
         let segments = wrap_line_with_highlight(&ctx.content, None, max_content);
 
+        let mut line_attrs = CellAttributes::default();
+        line_attrs.set_foreground(self.colors.fg);
+
         for (seg_idx, segment) in segments.iter().enumerate() {
             let mut changes: Vec<Change> = Vec::new();
 
             changes.extend([
+                Change::AllAttributes(line_attrs.clone()),
                 AttributeChange::Foreground(border_color).into(),
                 Change::Text("│".to_string()),
+                Change::AllAttributes(line_attrs.clone()),
             ]);
 
             if seg_idx == 0 {
@@ -912,12 +938,12 @@ impl ScrollbackSearchState {
                 changes.extend([
                     AttributeChange::Foreground(self.colors.line_number_fg).into(),
                     Change::Text(format!(" {:>5} │ ", ctx.line_number + 1)),
-                    Change::AllAttributes(CellAttributes::default()),
+                    Change::AllAttributes(line_attrs.clone()),
                 ]);
             } else {
                 // Continuation lines: use spaces for alignment
                 changes.extend([
-                    Change::AllAttributes(CellAttributes::default()),
+                    Change::AllAttributes(line_attrs.clone()),
                     Change::Text(" ".repeat(CONTINUATION_PADDING)),
                 ]);
             }
@@ -936,6 +962,7 @@ impl ScrollbackSearchState {
         buf: &mut BufferedTerminal<TermWizTerminal>,
         m: &SearchMatchWithContext,
         border_color: ColorAttribute,
+        selected: bool,
     ) {
         let line = &m.line_content;
         // Account for border (1) + arrow (1) + line number (5) + " │ " (3) = 10, plus extra border margin
@@ -943,12 +970,23 @@ impl ScrollbackSearchState {
 
         let segments = wrap_line_with_highlight(line, Some(m.match_range.clone()), max_content);
 
+        let line_fg = if selected {
+            self.colors.selected_line_fg
+        } else {
+            self.colors.fg
+        };
+
+        let mut line_attrs = CellAttributes::default();
+        line_attrs.set_foreground(line_fg);
+
         for (seg_idx, segment) in segments.iter().enumerate() {
             let mut changes: Vec<Change> = Vec::new();
 
             changes.extend([
+                Change::AllAttributes(line_attrs.clone()),
                 AttributeChange::Foreground(border_color).into(),
                 Change::Text("│".to_string()),
+                Change::AllAttributes(line_attrs.clone()),
             ]);
 
             if seg_idx == 0 {
@@ -957,21 +995,21 @@ impl ScrollbackSearchState {
                     AttributeChange::Foreground(self.colors.arrow_fg).into(),
                     AttributeChange::Intensity(Intensity::Bold).into(),
                     Change::Text("▶".to_string()),
-                    Change::AllAttributes(CellAttributes::default()),
+                    Change::AllAttributes(line_attrs.clone()),
                     AttributeChange::Foreground(self.colors.line_number_fg).into(),
                     Change::Text(format!("{:>5} │ ", m.line + 1)),
-                    Change::AllAttributes(CellAttributes::default()),
+                    Change::AllAttributes(line_attrs.clone()),
                 ]);
             } else {
                 // Continuation lines: use spaces for alignment
                 // Space for arrow (1) + line number (5) + " │ " (3) = 9 chars
                 changes.extend([
-                    Change::AllAttributes(CellAttributes::default()),
+                    Change::AllAttributes(line_attrs.clone()),
                     Change::Text(" ".repeat(CONTINUATION_PADDING)),
                 ]);
             }
 
-            push_segment_with_highlight(&mut changes, segment, &self.colors);
+            push_segment_with_highlight(&mut changes, segment, &self.colors, line_attrs.clone());
 
             changes.push(Change::Text("\r\n".to_string()));
             buf.add_changes(changes);

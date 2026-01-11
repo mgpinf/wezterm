@@ -210,6 +210,8 @@ config.colors = {
   scrollback_search_card_selected_border_fg = { AnsiColor = 'Blue' }, -- {{since('nightly', inline=True)}}
   scrollback_search_arrow_fg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
   scrollback_search_error_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_selected_line_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  scrollback_search_fg = { AnsiColor = 'Silver' }, -- {{since('nightly', inline=True)}}
 }
 
 return config
