@@ -4033,13 +4033,29 @@ impl<'a> EditorState<'a> {
                     if inclusive {
                         (start, end)
                     } else {
-                        (start, (end.0, end.1.saturating_sub(1)))
+                        // For exclusive motions, go back one character
+                        // If at column 0, go to end of previous line
+                        let adj_end = if end.1 == 0 && end.0 > start.0 {
+                            let prev_line_len = self.lines[end.0 - 1].chars().count();
+                            (end.0 - 1, prev_line_len.saturating_sub(1))
+                        } else {
+                            (end.0, end.1.saturating_sub(1))
+                        };
+                        (start, adj_end)
                     }
                 } else {
                     if inclusive {
                         (end, start)
                     } else {
-                        ((end.0, end.1), (start.0, start.1.saturating_sub(1)))
+                        // For exclusive backward motions, go back one character
+                        // If at column 0, go to end of previous line
+                        let adj_start = if start.1 == 0 && start.0 > end.0 {
+                            let prev_line_len = self.lines[start.0 - 1].chars().count();
+                            (start.0 - 1, prev_line_len.saturating_sub(1))
+                        } else {
+                            (start.0, start.1.saturating_sub(1))
+                        };
+                        ((end.0, end.1), adj_start)
                     }
                 };
 
@@ -4083,13 +4099,29 @@ impl<'a> EditorState<'a> {
                 if inclusive {
                     (start, end)
                 } else {
-                    (start, (end.0, end.1.saturating_sub(1)))
+                    // For exclusive motions, go back one character
+                    // If at column 0, go to end of previous line
+                    let adj_end = if end.1 == 0 && end.0 > start.0 {
+                        let prev_line_len = self.lines[end.0 - 1].chars().count();
+                        (end.0 - 1, prev_line_len.saturating_sub(1))
+                    } else {
+                        (end.0, end.1.saturating_sub(1))
+                    };
+                    (start, adj_end)
                 }
             } else {
                 if inclusive {
                     (end, start)
                 } else {
-                    ((end.0, end.1), (start.0, start.1.saturating_sub(1)))
+                    // For exclusive backward motions, go back one character
+                    // If at column 0, go to end of previous line
+                    let adj_start = if start.1 == 0 && start.0 > end.0 {
+                        let prev_line_len = self.lines[start.0 - 1].chars().count();
+                        (start.0 - 1, prev_line_len.saturating_sub(1))
+                    } else {
+                        (start.0, start.1.saturating_sub(1))
+                    };
+                    ((end.0, end.1), adj_start)
                 }
             };
 
