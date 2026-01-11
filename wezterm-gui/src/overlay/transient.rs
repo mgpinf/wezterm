@@ -101,7 +101,7 @@ impl<'a> TransientSwitch<'a> {
         &self,
         colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
-    ) -> termwiz::Result<()> {
+    ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
         buf.add_changes(vec![
@@ -143,7 +143,7 @@ impl<'a> TransientOption<'a> {
         &self,
         colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
-    ) -> termwiz::Result<()> {
+    ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
         buf.add_changes(vec![
@@ -189,7 +189,7 @@ impl<'a> TransientCyclicSwitch<'a> {
         &self,
         colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
-    ) -> termwiz::Result<()> {
+    ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
         buf.add_changes(vec![
@@ -271,7 +271,7 @@ impl<'a> TransientArgument<'a> {
         &self,
         colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
-    ) -> termwiz::Result<()> {
+    ) -> anyhow::Result<()> {
         buf.add_changes(vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
@@ -301,7 +301,7 @@ impl RenderableEntity<'_> {
         &self,
         colors: &OverlayColors,
         buf: &mut BufferedTerminal<TermWizTerminal>,
-    ) -> termwiz::Result<()> {
+    ) -> anyhow::Result<()> {
         match self {
             Self::TransientOption(option) => option.render(colors, buf),
             Self::TransientSwitch(switch) => switch.render(colors, buf),
@@ -354,7 +354,7 @@ impl<'a> TransientState<'a> {
         }
     }
 
-    fn render(&mut self) -> termwiz::Result<()> {
+    fn render(&mut self) -> anyhow::Result<()> {
         let description_len =
             crate::tabbar::parse_status_text(&self.description, CellAttributes::blank()).len();
 
