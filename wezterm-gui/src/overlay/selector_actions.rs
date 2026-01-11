@@ -495,7 +495,7 @@ impl<'a> SelectorState<'a> {
                         .contains_key(&c) =>
                 {
                     if c >= '2' {
-                        self.repeat[1] = c as u8 - '0' as u8;
+                        self.repeat[1] = c as u8 - b'0';
                     }
                     continue;
                 }
