@@ -17,11 +17,13 @@ use termwiz::cell::{AttributeChange, CellAttributes, Intensity};
 use termwiz::color::{AnsiColor, ColorAttribute};
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers};
 use termwiz::lineedit::LineEditBuffer;
-use termwiz::surface::{Change, Position};
+use termwiz::surface::{Change, Position, SequenceNo};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use wezterm_term::{unicode_column_width, StableRowIndex};
 use window::WindowOps;
+
+const AUTO_REFRESH_CHECK_MS: u64 = 100;
 
 const DEFAULT_CONTEXT_LINES: usize = 2;
 const SEARCH_DEBOUNCE_MS: u64 = 350;
@@ -183,6 +185,12 @@ struct ScrollbackSearchState {
     count_buffer: String,
     compiled_regex: Option<Regex>,
     colors: ScrollbackSearchColors,
+    /// Whether auto-refresh is enabled (tracks buffer changes)
+    auto_refresh: bool,
+    /// Last known sequence number from the pane (for change detection)
+    last_seqno: SequenceNo,
+    /// Time of last auto-refresh check to debounce
+    last_auto_refresh: Option<Instant>,
 }
 
 /// Get the column width of a single character
@@ -374,7 +382,19 @@ fn wrap_line_with_highlight<'a>(
 }
 
 impl ScrollbackSearchState {
-    fn new(pane_id: PaneId, window: ::window::Window, width: usize, height: usize) -> Self {
+    fn new(
+        pane_id: PaneId,
+        window: ::window::Window,
+        width: usize,
+        height: usize,
+        auto_refresh: bool,
+    ) -> Self {
+        // Get initial seqno from pane
+        let initial_seqno = Mux::get()
+            .get_pane(pane_id)
+            .map(|pane| pane.get_current_seqno())
+            .unwrap_or(0);
+
         Self {
             pane_id,
             window,
@@ -395,6 +415,9 @@ impl ScrollbackSearchState {
             count_buffer: String::new(),
             compiled_regex: None,
             colors: ScrollbackSearchColors::new(),
+            auto_refresh,
+            last_seqno: initial_seqno,
+            last_auto_refresh: None,
         }
     }
 
@@ -693,6 +716,15 @@ impl ScrollbackSearchState {
                 self.options.mode.label(),
             )),
         ]);
+
+        if self.auto_refresh {
+            changes.extend([
+                Change::Text(" │ ".to_string()),
+                AttributeChange::Foreground(AnsiColor::Green.into()).into(),
+                Change::Text("[Live]".to_string()),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        }
 
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
@@ -1161,6 +1193,10 @@ impl ScrollbackSearchState {
                     self.reset_count();
                     self.toggle_view_mode();
                 }
+                (KeyCode::Char('a'), Modifiers::NONE) => {
+                    self.reset_count();
+                    return Some(ScrollbackSearchAction::ToggleAutoRefresh);
+                }
                 _ => {
                     self.reset_count();
                 }
@@ -1398,7 +1434,8 @@ impl ScrollbackSearchState {
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<Option<StableRowIndex>> {
         loop {
-            let timeout = if self.pending_search {
+            // Calculate timeout based on pending search and auto-refresh
+            let search_timeout = if self.pending_search {
                 if let Some(trigger_time) = self.last_search_trigger {
                     let elapsed = trigger_time.elapsed();
                     let debounce = Duration::from_millis(SEARCH_DEBOUNCE_MS);
@@ -1416,6 +1453,17 @@ impl ScrollbackSearchState {
                 }
             } else {
                 None
+            };
+
+            // If auto-refresh is enabled, use a shorter timeout to check for buffer changes
+            let timeout = if self.auto_refresh {
+                let auto_refresh_timeout = Duration::from_millis(AUTO_REFRESH_CHECK_MS);
+                match search_timeout {
+                    Some(st) => Some(st.min(auto_refresh_timeout)),
+                    None => Some(auto_refresh_timeout),
+                }
+            } else {
+                search_timeout
             };
 
             match buf.terminal().poll_input(timeout) {
@@ -1443,21 +1491,60 @@ impl ScrollbackSearchState {
                             ScrollbackSearchAction::YankMatchWithContext(idx) => {
                                 self.yank_match_with_context(idx);
                             }
+                            ScrollbackSearchAction::ToggleAutoRefresh => {
+                                self.auto_refresh = !self.auto_refresh;
+                                if self.auto_refresh {
+                                    // When enabling, capture current seqno
+                                    if let Some(pane) = Mux::get().get_pane(self.pane_id) {
+                                        self.last_seqno = pane.get_current_seqno();
+                                    }
+                                }
+                            }
                         }
                     }
 
                     self.render(buf)?;
                 }
                 Ok(None) => {
+                    let mut needs_render = false;
+
+                    // Handle pending search debounce
                     if self.pending_search {
                         if let Some(trigger_time) = self.last_search_trigger {
                             if trigger_time.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS) {
                                 self.pending_search = false;
                                 self.last_search_trigger = None;
                                 self.execute_search();
-                                self.render(buf)?;
+                                needs_render = true;
                             }
                         }
+                    }
+
+                    // Check for buffer changes if auto-refresh is enabled
+                    if self.auto_refresh {
+                        if let Some(pane) = Mux::get().get_pane(self.pane_id) {
+                            let current_seqno = pane.get_current_seqno();
+                            if current_seqno != self.last_seqno {
+                                // Buffer has changed, debounce the refresh
+                                let should_refresh = match self.last_auto_refresh {
+                                    Some(last) => {
+                                        last.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
+                                    }
+                                    None => true,
+                                };
+
+                                if should_refresh && !self.search_input.get_line().is_empty() {
+                                    self.last_seqno = current_seqno;
+                                    self.last_auto_refresh = Some(Instant::now());
+                                    self.execute_search_preserving_selection();
+                                    needs_render = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if needs_render {
+                        self.render(buf)?;
                     }
                 }
                 Err(e) => {
@@ -1502,6 +1589,80 @@ impl ScrollbackSearchState {
             }
             self.selected_match = 0;
             self.scroll_offset = 0;
+        }
+    }
+
+    /// Execute search while trying to preserve the currently selected match.
+    /// Used by auto-refresh to avoid jarring selection changes.
+    fn execute_search_preserving_selection(&mut self) {
+        // Remember the currently selected match's line number and content
+        let prev_selection = self
+            .matches
+            .get(self.selected_match)
+            .map(|m| (m.line, m.line_content.clone()));
+
+        let pattern = match self.build_pattern() {
+            Some(p) => p,
+            None => {
+                self.matches.clear();
+                self.selected_match = 0;
+                self.scroll_offset = 0;
+                return;
+            }
+        };
+
+        let mux = Mux::get();
+        if let Some(pane) = mux.get_pane(self.pane_id) {
+            let dims = pane.get_dimensions();
+            let range =
+                dims.scrollback_top..dims.scrollback_top + dims.scrollback_rows as StableRowIndex;
+
+            self.matches.clear();
+
+            if matches!(self.options.mode, SearchMode::Regex) {
+                let pattern_str = self.search_input.get_line();
+                self.compiled_regex = Regex::new(pattern_str).ok();
+                self.search_trimmed_content(&pane, range);
+            } else {
+                let results = smol::block_on(pane.search(pattern, range, None)).unwrap_or_default();
+                for result in &results {
+                    let m = self.build_match_with_context(&pane, result);
+                    self.matches.push(m);
+                }
+            }
+
+            // Try to restore selection
+            if let Some((prev_line, prev_content)) = prev_selection {
+                // First, try to find a match with the same line number and content
+                let exact_match = self
+                    .matches
+                    .iter()
+                    .position(|m| m.line == prev_line && m.line_content == prev_content);
+
+                // If not found, try to find by line number alone
+                let line_match =
+                    exact_match.or_else(|| self.matches.iter().position(|m| m.line == prev_line));
+
+                // If still not found, try to find the closest line number
+                let closest_match = line_match.or_else(|| {
+                    if self.matches.is_empty() {
+                        None
+                    } else {
+                        // Find the match with the closest line number
+                        self.matches
+                            .iter()
+                            .enumerate()
+                            .min_by_key(|(_, m)| (m.line as i64 - prev_line as i64).abs())
+                            .map(|(idx, _)| idx)
+                    }
+                });
+
+                self.selected_match = closest_match.unwrap_or(0);
+            } else {
+                self.selected_match = 0;
+            }
+
+            self.adjust_scroll_for_selection();
         }
     }
 
@@ -1609,18 +1770,20 @@ enum ScrollbackSearchAction {
     RefreshContext, // Immediate re-search (no debounce) for context changes
     YankMatch(usize),
     YankMatchWithContext(usize),
+    ToggleAutoRefresh,
 }
 
 pub fn scrollback_search(
     pane_id: PaneId,
     term: TermWizTerminal,
     window: ::window::Window,
+    auto_refresh: bool,
 ) -> anyhow::Result<Option<StableRowIndex>> {
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
 
     let size = buf.terminal().get_screen_size()?;
-    let mut state = ScrollbackSearchState::new(pane_id, window, size.cols, size.rows);
+    let mut state = ScrollbackSearchState::new(pane_id, window, size.cols, size.rows, auto_refresh);
 
     state.render(&mut buf)?;
     state.run_loop(&mut buf)

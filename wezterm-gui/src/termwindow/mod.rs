@@ -32,7 +32,8 @@ use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
     Confirmation, DisplayText, InnerPattern, InputForm, InputText, KeyAssignment,
     LauncherActionArgs, PaneDirection, Pattern, PromptInputLine, QuickSelectArguments,
-    RotationDirection, SelectorActions, SpawnCommand, SplitSize, TransientMenu, TypingTest,
+    RotationDirection, ScrollbackSearchWithContextArgs, SelectorActions, SpawnCommand, SplitSize,
+    TransientMenu, TypingTest,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2531,7 +2532,7 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
-    fn show_scrollback_search(&mut self) {
+    fn show_scrollback_search(&mut self, args: &ScrollbackSearchWithContextArgs) {
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
             None => return,
@@ -2545,9 +2546,15 @@ impl TermWindow {
 
         let pane_id = pane.pane_id();
         let window = self.window.clone().expect("window to be set");
+        let auto_refresh = args.auto_refresh;
 
         let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::scrollback_search::scrollback_search(pane_id, term, window)
+            crate::overlay::scrollback_search::scrollback_search(
+                pane_id,
+                term,
+                window,
+                auto_refresh,
+            )
         });
         self.assign_overlay(tab.tab_id(), overlay);
         promise::spawn::spawn(future).detach();
@@ -3387,7 +3394,7 @@ impl TermWindow {
             SelectorActions(args) => self.show_selector_actions(args),
             DisplayText(args) => self.show_display_text(args),
             TypingTest(args) => self.show_typing_test(args),
-            ScrollbackSearchWithContext => self.show_scrollback_search(),
+            ScrollbackSearchWithContext(args) => self.show_scrollback_search(args),
         };
         Ok(PerformAssignmentResult::Handled)
     }
