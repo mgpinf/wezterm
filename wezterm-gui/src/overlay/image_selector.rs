@@ -378,7 +378,7 @@ impl<'a> ImageSelectorState<'a> {
         (disp_w.max(1), disp_h.max(1))
     }
 
-    fn render(&mut self) -> termwiz::Result<()> {
+    fn render(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
         let size = self.buf.terminal().get_screen_size()?;
 
