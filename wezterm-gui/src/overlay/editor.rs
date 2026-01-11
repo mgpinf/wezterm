@@ -4065,6 +4065,9 @@ impl<'a> EditorState<'a> {
                 '~' => self.toggle_case_range(actual_start, actual_end),
                 _ => {}
             }
+
+            // Move cursor to start of affected range
+            self.cursor = actual_start;
         }
     }
 
@@ -4131,6 +4134,9 @@ impl<'a> EditorState<'a> {
             '~' => self.toggle_case_range(actual_start, actual_end),
             _ => {}
         }
+
+        // Move cursor to start of affected range
+        self.cursor = actual_start;
     }
 
     fn case_change_line(&mut self, op: char) {
