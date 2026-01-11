@@ -3983,11 +3983,11 @@ impl<'a> EditorState<'a> {
                     .iter()
                     .enumerate()
                     .map(|(i, &c)| {
-                        if row == start_row && i >= start_col {
-                            transform(c)
-                        } else if row == end_row && i <= end_col {
-                            transform(c)
-                        } else if row > start_row && row < end_row {
+                        let is_in_range = (row == start_row && i >= start_col)
+                            || (row == end_row && i <= end_col)
+                            || (row > start_row && row < end_row);
+
+                        if is_in_range {
                             transform(c)
                         } else {
                             c
