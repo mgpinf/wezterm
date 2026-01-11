@@ -4018,6 +4018,69 @@ impl<'a> EditorState<'a> {
         });
     }
 
+    /// Apply a case change transformation to the current visual selection
+    fn apply_visual_case_change<F>(&mut self, transform: F)
+    where
+        F: Fn(char) -> char,
+    {
+        let (start, end) = self.get_visual_selection();
+        self.save_undo_state_with_cursor(start);
+        self.lines_version += 1;
+
+        if self.mode == EditorMode::VisualLine {
+            for row in start.0..=end.0 {
+                let transformed: String = self.lines[row].chars().map(|c| transform(c)).collect();
+                self.lines[row] = transformed;
+            }
+        } else if self.mode == EditorMode::VisualBlock {
+            let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
+            for row in min_row..=max_row {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let col_start = min_col;
+                let col_end = (max_col + 1).min(chars.len());
+                let transformed: String = chars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &c)| {
+                        if i >= col_start && i < col_end {
+                            transform(c)
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                self.lines[row] = transformed;
+            }
+        } else {
+            // Character-wise (Visual mode)
+            for row in start.0..=end.0 {
+                let chars: Vec<char> = self.lines[row].chars().collect();
+                let col_start = if row == start.0 { start.1 } else { 0 };
+                let col_end = if row == end.0 {
+                    (end.1 + 1).min(chars.len())
+                } else {
+                    chars.len()
+                };
+                let transformed: String = chars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &c)| {
+                        if i >= col_start && i < col_end {
+                            transform(c)
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                self.lines[row] = transformed;
+            }
+        }
+
+        self.cursor = start;
+        self.record_change();
+        self.mode = EditorMode::Normal;
+    }
+
     /// Perform a case change operation with a motion
     fn perform_case_change_motion<F>(&mut self, get_target: F, op: char, inclusive: bool)
     where
@@ -9637,6 +9700,18 @@ impl<'a> EditorState<'a> {
                                         self.cursor = start;
                                         self.record_change();
                                         self.mode = EditorMode::Normal;
+                                    }
+                                    // Uppercase
+                                    'U' => {
+                                        self.apply_visual_case_change(|c| {
+                                            c.to_uppercase().next().unwrap_or(c)
+                                        });
+                                    }
+                                    // Lowercase
+                                    'u' => {
+                                        self.apply_visual_case_change(|c| {
+                                            c.to_lowercase().next().unwrap_or(c)
+                                        });
                                     }
                                     // Switch visual modes
                                     'v' => {
