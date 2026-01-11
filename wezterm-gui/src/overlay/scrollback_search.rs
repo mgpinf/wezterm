@@ -184,6 +184,7 @@ struct ScrollbackSearchState {
     last_search_trigger: Option<Instant>,
     count_buffer: String,
     compiled_regex: Option<Regex>,
+    last_regex_pattern: String,
     colors: ScrollbackSearchColors,
     /// Whether auto-refresh is enabled (tracks buffer changes)
     auto_refresh: bool,
@@ -414,6 +415,7 @@ impl ScrollbackSearchState {
             last_search_trigger: None,
             count_buffer: String::new(),
             compiled_regex: None,
+            last_regex_pattern: String::new(),
             colors: ScrollbackSearchColors::new(),
             auto_refresh,
             last_seqno: initial_seqno,
@@ -1442,7 +1444,7 @@ impl ScrollbackSearchState {
                     if elapsed >= debounce {
                         self.pending_search = false;
                         self.last_search_trigger = None;
-                        self.execute_search();
+                        self.execute_search(false);
                         self.render(buf)?;
                         None
                     } else {
@@ -1483,7 +1485,7 @@ impl ScrollbackSearchState {
                                 self.last_search_trigger = Some(Instant::now());
                             }
                             ScrollbackSearchAction::RefreshContext => {
-                                self.execute_search();
+                                self.execute_search(true);
                             }
                             ScrollbackSearchAction::YankMatch(idx) => {
                                 self.yank_match(idx);
@@ -1514,7 +1516,7 @@ impl ScrollbackSearchState {
                             if trigger_time.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS) {
                                 self.pending_search = false;
                                 self.last_search_trigger = None;
-                                self.execute_search();
+                                self.execute_search(false);
                                 needs_render = true;
                             }
                         }
@@ -1536,7 +1538,7 @@ impl ScrollbackSearchState {
                                 if should_refresh && !self.search_input.get_line().is_empty() {
                                     self.last_seqno = current_seqno;
                                     self.last_auto_refresh = Some(Instant::now());
-                                    self.execute_search_preserving_selection();
+                                    self.execute_search(true);
                                     needs_render = true;
                                 }
                             }
@@ -1555,14 +1557,12 @@ impl ScrollbackSearchState {
         }
     }
 
-    fn execute_search(&mut self) {
+    fn update_matches(&mut self) -> bool {
         let pattern = match self.build_pattern() {
             Some(p) => p,
             None => {
                 self.matches.clear();
-                self.selected_match = 0;
-                self.scroll_offset = 0;
-                return;
+                return false;
             }
         };
 
@@ -1578,7 +1578,10 @@ impl ScrollbackSearchState {
             // so that $ matches end of visible content, not padding
             if matches!(self.options.mode, SearchMode::Regex) {
                 let pattern_str = self.search_input.get_line();
-                self.compiled_regex = Regex::new(pattern_str).ok();
+                if self.last_regex_pattern != pattern_str {
+                    self.compiled_regex = Regex::new(pattern_str).ok();
+                    self.last_regex_pattern = pattern_str.to_string();
+                }
                 self.search_trimmed_content(&pane, range);
             } else {
                 let results = smol::block_on(pane.search(pattern, range, None)).unwrap_or_default();
@@ -1587,82 +1590,59 @@ impl ScrollbackSearchState {
                     self.matches.push(m);
                 }
             }
-            self.selected_match = 0;
-            self.scroll_offset = 0;
+            return true;
         }
+        false
     }
 
-    /// Execute search while trying to preserve the currently selected match.
-    /// Used by auto-refresh to avoid jarring selection changes.
-    fn execute_search_preserving_selection(&mut self) {
-        // Remember the currently selected match's line number and content
-        let prev_selection = self
-            .matches
-            .get(self.selected_match)
-            .map(|m| (m.line, m.line_content.clone()));
-
-        let pattern = match self.build_pattern() {
-            Some(p) => p,
-            None => {
-                self.matches.clear();
-                self.selected_match = 0;
-                self.scroll_offset = 0;
-                return;
-            }
+    fn execute_search(&mut self, preserve_selection: bool) {
+        // Remember the currently selected match's line number and content if preserving
+        let prev_selection = if preserve_selection {
+            self.matches
+                .get(self.selected_match)
+                .map(|m| (m.line, m.line_content.clone()))
+        } else {
+            None
         };
 
-        let mux = Mux::get();
-        if let Some(pane) = mux.get_pane(self.pane_id) {
-            let dims = pane.get_dimensions();
-            let range =
-                dims.scrollback_top..dims.scrollback_top + dims.scrollback_rows as StableRowIndex;
-
-            self.matches.clear();
-
-            if matches!(self.options.mode, SearchMode::Regex) {
-                let pattern_str = self.search_input.get_line();
-                self.compiled_regex = Regex::new(pattern_str).ok();
-                self.search_trimmed_content(&pane, range);
-            } else {
-                let results = smol::block_on(pane.search(pattern, range, None)).unwrap_or_default();
-                for result in &results {
-                    let m = self.build_match_with_context(&pane, result);
-                    self.matches.push(m);
-                }
-            }
-
-            // Try to restore selection
-            if let Some((prev_line, prev_content)) = prev_selection {
-                // First, try to find a match with the same line number and content
-                let exact_match = self
-                    .matches
-                    .iter()
-                    .position(|m| m.line == prev_line && m.line_content == prev_content);
-
-                // If not found, try to find by line number alone
-                let line_match =
-                    exact_match.or_else(|| self.matches.iter().position(|m| m.line == prev_line));
-
-                // If still not found, try to find the closest line number
-                let closest_match = line_match.or_else(|| {
-                    if self.matches.is_empty() {
-                        None
-                    } else {
-                        // Find the match with the closest line number
-                        self.matches
-                            .iter()
-                            .enumerate()
-                            .min_by_key(|(_, m)| (m.line as i64 - prev_line as i64).abs())
-                            .map(|(idx, _)| idx)
-                    }
-                });
-
-                self.selected_match = closest_match.unwrap_or(0);
-            } else {
+        if !self.update_matches() {
+            if self.matches.is_empty() {
                 self.selected_match = 0;
+                self.scroll_offset = 0;
             }
+            return;
+        }
 
+        if let Some((prev_line, prev_content)) = prev_selection {
+            // First, try to find a match with the same line number and content
+            let exact_match = self
+                .matches
+                .iter()
+                .position(|m| m.line == prev_line && m.line_content == prev_content);
+
+            // If not found, try to find by line number alone
+            let line_match =
+                exact_match.or_else(|| self.matches.iter().position(|m| m.line == prev_line));
+
+            // If still not found, try to find the closest line number
+            let closest_match = line_match.or_else(|| {
+                if self.matches.is_empty() {
+                    None
+                } else {
+                    // Find the match with the closest line number
+                    self.matches
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, m)| (m.line as i64 - prev_line as i64).abs())
+                        .map(|(idx, _)| idx)
+                }
+            });
+
+            self.selected_match = closest_match.unwrap_or(0);
             self.adjust_scroll_for_selection();
+        } else {
+            self.selected_match = 0;
+            self.scroll_offset = 0;
         }
     }
 
