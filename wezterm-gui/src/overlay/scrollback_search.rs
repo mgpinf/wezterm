@@ -936,7 +936,7 @@ impl ScrollbackSearchState {
         let footer = format!("└{}", "─".repeat(self.width.saturating_sub(1)));
 
         buf.add_changes(vec![
-            AttributeChange::Foreground(border_color.into()).into(),
+            AttributeChange::Foreground(border_color).into(),
             Change::Text(footer),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
