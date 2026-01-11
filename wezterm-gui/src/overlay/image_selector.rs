@@ -586,7 +586,8 @@ impl<'a> ImageSelectorState<'a> {
             }
         }
 
-        self.buf.flush()
+        self.buf.flush()?;
+        Ok(())
     }
 
     fn trigger_event(&self, entry: Option<&ImageSelectorEntry>) {
