@@ -4300,7 +4300,7 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn render(&mut self) -> termwiz::Result<()> {
+    fn render(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
         self.buf.add_changes(vec![
             Change::ClearScreen(ColorAttribute::Default),
