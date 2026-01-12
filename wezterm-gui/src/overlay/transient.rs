@@ -1,4 +1,4 @@
-use crate::overlay::common::{OverlayColors, TrieNode};
+use crate::overlay::common::{KeyLookup, KeyMap, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -321,7 +321,8 @@ struct TransientState<'a> {
     pane: MuxPane,
     description: String,
     colors: OverlayColors,
-    traversed_nodes: Vec<&'a TrieNode<'a, RenderableEntity<'a>>>,
+    keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
+    typed: String,
     sections: &'a Vec<TransientSection<'a>>,
     cancel: Option<Box<KeyAssignment>>,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
@@ -335,7 +336,7 @@ impl<'a> TransientState<'a> {
         window: GuiWin,
         pane: MuxPane,
         sections: &'a Vec<TransientSection<'_>>,
-        trie_node: &'a TrieNode<'a, RenderableEntity<'a>>,
+        keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context = args.context.as_ref();
@@ -345,7 +346,8 @@ impl<'a> TransientState<'a> {
             pane,
             description: args.description.clone(),
             colors: OverlayColors::new(),
-            traversed_nodes: vec![trie_node],
+            keymap,
+            typed: String::new(),
             sections,
             cancel: args.cancel.clone(),
             buf,
@@ -560,96 +562,90 @@ impl<'a> TransientState<'a> {
                         key: KeyCode::Char(c),
                         ..
                     }) => {
-                        let cur_node = self.traversed_nodes[self.traversed_nodes.len() - 1];
+                        self.typed.push(c);
 
-                        let cur_node = match cur_node.find_char(c) {
-                            Some(cur_node) => cur_node,
-                            None => {
-                                self.traversed_nodes.truncate(1);
-                                continue;
-                            }
-                        };
-
-                        let transient_entry = match cur_node.entry.as_ref() {
-                            Some(entry) => entry,
-                            None => {
-                                self.traversed_nodes.push(cur_node);
-                                continue;
-                            }
-                        };
-
-                        match transient_entry {
-                            RenderableEntity::Switch(switch) => {
-                                switch.value.update(|val| !val);
-                            }
-                            RenderableEntity::Opt(option) => {
-                                if option.value.borrow().is_none() || !option.delegate.allow_nil {
-                                    self.mode = if let Some(choices) =
-                                        option.delegate.choices.as_ref()
-                                    {
-                                        let (_, rows) = self.buf.dimensions();
-                                        let max_items = rows.saturating_sub(ROW_OVERHEAD);
-                                        let filtered_entries =
-                                            choices.iter().map(|choice| choice.as_str()).collect();
-
-                                        Some(InputMode::Selector(SelectorState {
-                                            active_idx: 0,
-                                            max_items,
-                                            top_row: 0,
-                                            filter_term: String::new(),
-                                            filtered_entries,
-                                            choices,
-                                            option,
-                                        }))
-                                    } else {
-                                        Some(InputMode::Prompt(PromptState {
-                                            line: String::new(),
-                                            option,
-                                        }))
+                        match self.keymap.lookup(&self.typed) {
+                            KeyLookup::Found(transient_entry) => {
+                                match transient_entry {
+                                    RenderableEntity::Switch(switch) => {
+                                        switch.value.update(|val| !val);
                                     }
-                                } else {
-                                    option.value.replace(None);
-                                }
-                            }
-                            RenderableEntity::CyclicSwitch(cyclic_switch) => {
-                                if !cyclic_switch.delegate.choices.is_empty() {
-                                    cyclic_switch.active_idx.update(|idx| {
-                                        if let Some(idx) = idx {
-                                            if idx == cyclic_switch.delegate.choices.len() - 1 {
-                                                if cyclic_switch.delegate.allow_nil {
-                                                    None
+                                    RenderableEntity::Opt(option) => {
+                                        if option.value.borrow().is_none()
+                                            || !option.delegate.allow_nil
+                                        {
+                                            self.mode = if let Some(choices) =
+                                                option.delegate.choices.as_ref()
+                                            {
+                                                let (_, rows) = self.buf.dimensions();
+                                                let max_items = rows.saturating_sub(ROW_OVERHEAD);
+                                                let filtered_entries = choices
+                                                    .iter()
+                                                    .map(|choice| choice.as_str())
+                                                    .collect();
+
+                                                Some(InputMode::Selector(SelectorState {
+                                                    active_idx: 0,
+                                                    max_items,
+                                                    top_row: 0,
+                                                    filter_term: String::new(),
+                                                    filtered_entries,
+                                                    choices,
+                                                    option,
+                                                }))
+                                            } else {
+                                                Some(InputMode::Prompt(PromptState {
+                                                    line: String::new(),
+                                                    option,
+                                                }))
+                                            }
+                                        } else {
+                                            option.value.replace(None);
+                                        }
+                                    }
+                                    RenderableEntity::CyclicSwitch(cyclic_switch) => {
+                                        if !cyclic_switch.delegate.choices.is_empty() {
+                                            cyclic_switch.active_idx.update(|idx| {
+                                                if let Some(idx) = idx {
+                                                    if idx
+                                                        == cyclic_switch.delegate.choices.len() - 1
+                                                    {
+                                                        if cyclic_switch.delegate.allow_nil {
+                                                            None
+                                                        } else {
+                                                            Some(0)
+                                                        }
+                                                    } else {
+                                                        Some(idx + 1)
+                                                    }
                                                 } else {
                                                     Some(0)
                                                 }
-                                            } else {
-                                                Some(idx + 1)
-                                            }
-                                        } else {
-                                            Some(0)
+                                            });
                                         }
-                                    });
-                                }
-                            }
-                            RenderableEntity::Argument(positional_arg) => {
-                                let name = match *positional_arg.delegate.action {
-                                KeyAssignment::EmitEvent(ref id) => id,
-                                _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
-                            };
+                                    }
+                                    RenderableEntity::Argument(positional_arg) => {
+                                        let name = match *positional_arg.delegate.action {
+                                            KeyAssignment::EmitEvent(ref id) => id,
+                                            _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
+                                        };
 
-                                let result = TransientResult::from(self.sections);
-                                self.trigger_event(name, Some(result));
-                                break;
+                                        let result = TransientResult::from(self.sections);
+                                        self.trigger_event(name, Some(result));
+                                        break;
+                                    }
+                                }
+                                self.typed.clear();
                             }
+                            KeyLookup::Prefix => {}
+                            KeyLookup::NotFound => self.typed.clear(),
                         }
-                        self.traversed_nodes.truncate(1);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Backspace,
                         ..
                     }) => {
-                        if self.traversed_nodes.len() >= 2 {
-                            self.traversed_nodes.pop();
-                        }
+                        self.typed.pop();
                     }
                     _ => {}
                 },
@@ -820,24 +816,24 @@ impl From<&Vec<TransientSection<'_>>> for TransientResult {
     }
 }
 
-fn create_trie<'a>(
+fn create_keymap<'a>(
     sections: &'a Vec<TransientSection<'a>>,
-    trie_node: &mut TrieNode<'a, RenderableEntity<'a>>,
+    keymap: &mut KeyMap<'a, RenderableEntity<'a>>,
 ) {
     for section in sections {
         for entity in &section.entries {
             match entity {
                 RenderableEntity::Switch(switch) => {
-                    trie_node.add_word(&switch.delegate.key, entity);
+                    keymap.insert(&switch.delegate.key, entity);
                 }
                 RenderableEntity::Opt(option) => {
-                    trie_node.add_word(&option.delegate.key, entity);
+                    keymap.insert(&option.delegate.key, entity);
                 }
                 RenderableEntity::CyclicSwitch(cyclic_switch) => {
-                    trie_node.add_word(&cyclic_switch.delegate.key, entity);
+                    keymap.insert(&cyclic_switch.delegate.key, entity);
                 }
                 RenderableEntity::Argument(positional_arg) => {
-                    trie_node.add_word(&positional_arg.delegate.key, entity);
+                    keymap.insert(&positional_arg.delegate.key, entity);
                 }
             }
         }
@@ -932,10 +928,10 @@ pub fn show_transient_menu_overlay(
     let mut sections = vec![];
     create_sections(&args, &mut sections);
 
-    let mut trie_node = TrieNode::new();
-    create_trie(&sections, &mut trie_node);
+    let mut keymap = KeyMap::new();
+    create_keymap(&sections, &mut keymap);
 
-    let mut state = TransientState::new(&args, window, pane, &sections, &trie_node, &mut buf);
+    let mut state = TransientState::new(&args, window, pane, &sections, &keymap, &mut buf);
 
     state.render()?;
     state.run_loop()

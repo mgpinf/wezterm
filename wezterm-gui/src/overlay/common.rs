@@ -1,37 +1,47 @@
 use config::{configuration, AnsiColor, ColorAttribute};
 use std::collections::HashMap;
 
-/// Generic trie node for keyboard-driven menu navigation
-pub struct TrieNode<'a, T> {
-    pub children: HashMap<char, Box<TrieNode<'a, T>>>,
-    pub entry: Option<&'a T>,
+pub struct KeyMap<'a, T> {
+    entries: HashMap<&'a str, &'a T>,
 }
 
-impl<'a, T> TrieNode<'a, T> {
+pub enum KeyLookup<'a, T> {
+    Found(&'a T),
+    Prefix,
+    NotFound,
+}
+
+impl<'a, T> KeyMap<'a, T> {
     pub fn new() -> Self {
         Self {
-            children: HashMap::new(),
-            entry: None,
+            entries: HashMap::new(),
         }
     }
 
-    pub fn add_word(&mut self, word: &str, entry: &'a T) {
-        let mut current = self;
-        for ch in word.chars() {
-            current = current
-                .children
-                .entry(ch)
-                .or_insert_with(|| Box::new(TrieNode::new()));
-        }
-        current.entry = Some(entry);
+    pub fn insert(&mut self, key: &'a str, value: &'a T) {
+        self.entries.insert(key, value);
     }
 
-    pub fn find_char(&self, c: char) -> Option<&TrieNode<'_, T>> {
-        self.children.get(&c).map(|child| child.as_ref())
+    pub fn lookup(&self, typed: &str) -> KeyLookup<'_, T> {
+        if let Some(entry) = self.entries.get(typed) {
+            return KeyLookup::Found(entry);
+        }
+
+        if self.entries.keys().any(|k| k.starts_with(typed)) {
+            return KeyLookup::Prefix;
+        }
+
+        KeyLookup::NotFound
+    }
+
+    pub fn has_continuation(&self, typed: &str, c: char) -> bool {
+        let mut test = typed.to_string();
+        test.push(c);
+        self.entries.keys().any(|k| k.starts_with(&test))
     }
 }
 
-impl<'a, T> Default for TrieNode<'a, T> {
+impl<'a, T> Default for KeyMap<'a, T> {
     fn default() -> Self {
         Self::new()
     }

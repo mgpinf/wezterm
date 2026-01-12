@@ -1,4 +1,4 @@
-use crate::overlay::common::{OverlayColors, TrieNode};
+use crate::overlay::common::{KeyLookup, KeyMap, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -43,7 +43,8 @@ struct SelectorState<'a> {
     fuzzy_description: String,
     window: GuiWin,
     pane: MuxPane,
-    traversed_nodes: Vec<&'a TrieNode<'a, TransientArgument>>,
+    keymap: &'a KeyMap<'a, TransientArgument>,
+    typed: String,
     context: Option<&'a TransientContext>,
     colors: OverlayColors,
     section: ArgumentSection<'a>,
@@ -57,7 +58,7 @@ impl<'a> SelectorState<'a> {
         args: &'a SelectorActions,
         window: GuiWin,
         pane: MuxPane,
-        trie_node: &'a TrieNode<'a, TransientArgument>,
+        keymap: &'a KeyMap<'a, TransientArgument>,
         choices: &'a Vec<SelectorEntry<'_>>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
@@ -99,7 +100,8 @@ impl<'a> SelectorState<'a> {
             fuzzy_description,
             window,
             pane,
-            traversed_nodes: vec![trie_node],
+            keymap,
+            typed: String::new(),
             context: args.context.as_ref(),
             colors: OverlayColors::new(),
             section,
@@ -404,9 +406,7 @@ impl<'a> SelectorState<'a> {
                     key: KeyCode::Backspace,
                     modifiers: _,
                 }) => {
-                    if self.traversed_nodes.len() >= 2 {
-                        self.traversed_nodes.pop();
-                    }
+                    self.typed.pop();
                     continue;
                 }
                 InputEvent::Key(KeyEvent {
@@ -452,48 +452,32 @@ impl<'a> SelectorState<'a> {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('j'),
                     modifiers: Modifiers::NONE,
-                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
-                    .children
-                    .contains_key(&'j') =>
-                {
+                }) if !self.keymap.has_continuation(&self.typed, 'j') => {
                     self.move_down();
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('k'),
                     modifiers: Modifiers::NONE,
-                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
-                    .children
-                    .contains_key(&'k') =>
-                {
+                }) if !self.keymap.has_continuation(&self.typed, 'k') => {
                     self.move_up();
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('/'),
                     modifiers: Modifiers::NONE,
-                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
-                    .children
-                    .contains_key(&'/') =>
-                {
+                }) if !self.keymap.has_continuation(&self.typed, '/') => {
                     self.filtering = true;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('y'),
                     modifiers: Modifiers::NONE,
-                }) if !self.traversed_nodes[self.traversed_nodes.len() - 1]
-                    .children
-                    .contains_key(&'y') =>
-                {
+                }) if !self.keymap.has_continuation(&self.typed, 'y') => {
                     self.copy_active_choice_to_clipboard();
                     continue;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char(c),
                     modifiers: Modifiers::NONE,
-                }) if c.is_ascii_digit()
-                    && !self.traversed_nodes[self.traversed_nodes.len() - 1]
-                        .children
-                        .contains_key(&c) =>
-                {
+                }) if c.is_ascii_digit() && !self.keymap.has_continuation(&self.typed, c) => {
                     if c >= '2' {
                         self.repeat[1] = c as u8 - b'0';
                     }
@@ -503,60 +487,50 @@ impl<'a> SelectorState<'a> {
                     key: KeyCode::Char(c),
                     ..
                 }) => {
-                    let cur_node = self.traversed_nodes[self.traversed_nodes.len() - 1];
+                    self.typed.push(c);
 
-                    let cur_node = match cur_node.find_char(c) {
-                        Some(cur_node) => cur_node,
-                        None => {
-                            self.traversed_nodes.truncate(1);
-                            continue;
+                    match self.keymap.lookup(&self.typed) {
+                        KeyLookup::Found(positional_arg) => {
+                            let name = match *positional_arg.action {
+                                KeyAssignment::EmitEvent(ref id) => id,
+                                _ => anyhow::bail!("SelectorActions requires action to be defined by wezterm.action_callback")
+                            };
+
+                            let mut choices: Vec<InputSelectorEntry> = vec![];
+
+                            if let Some(multiple_idx) = self.multiple_idx.as_ref() {
+                                choices.extend(
+                                    multiple_idx
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, val)| **val)
+                                        .map(|(idx, _)| InputSelectorEntry {
+                                            label: self.choices[idx].delegate.label.clone(),
+                                            id: self.choices[idx].delegate.id.clone(),
+                                        }),
+                                );
+                            }
+
+                            if choices.is_empty() && self.filtered_entries.is_empty() {
+                                self.typed.clear();
+                                continue;
+                            }
+
+                            if choices.is_empty() {
+                                let entry = self.filtered_entries[self.active_idx];
+                                choices.push(InputSelectorEntry {
+                                    label: entry.delegate.label.clone(),
+                                    id: entry.delegate.id.clone(),
+                                });
+                            }
+
+                            let result = SelectorActionsResult { choices };
+                            self.trigger_event(name, Some(result));
+                            break;
                         }
-                    };
-
-                    let positional_arg = match cur_node.entry.as_ref() {
-                        Some(positional_arg) => positional_arg,
-                        None => {
-                            self.traversed_nodes.push(cur_node);
-                            continue;
-                        }
-                    };
-
-                    let name = match *positional_arg.action {
-                        KeyAssignment::EmitEvent(ref id) => id,
-                        _ => anyhow::bail!("SelectorActions requires action to be defined by wezterm.action_callback")
-                    };
-
-                    let mut choices: Vec<InputSelectorEntry> = vec![];
-
-                    if let Some(multiple_idx) = self.multiple_idx.as_ref() {
-                        choices.extend(
-                            multiple_idx
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, val)| **val)
-                                .map(|(idx, _)| InputSelectorEntry {
-                                    label: self.choices[idx].delegate.label.clone(),
-                                    id: self.choices[idx].delegate.id.clone(),
-                                }),
-                        );
+                        KeyLookup::Prefix => {}
+                        KeyLookup::NotFound => self.typed.clear(),
                     }
-
-                    if choices.is_empty() && self.filtered_entries.is_empty() {
-                        self.traversed_nodes.truncate(1);
-                        continue;
-                    }
-
-                    if choices.is_empty() {
-                        let entry = self.filtered_entries[self.active_idx];
-                        choices.push(InputSelectorEntry {
-                            label: entry.delegate.label.clone(),
-                            id: entry.delegate.id.clone(),
-                        });
-                    }
-
-                    let result = SelectorActionsResult { choices };
-                    self.trigger_event(name, Some(result));
-                    break;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Tab,
@@ -617,9 +591,9 @@ struct SelectorActionsResult {
 }
 impl_lua_conversion_dynamic!(SelectorActionsResult);
 
-fn create_trie<'a>(args: &'a SelectorActions, trie_node: &mut TrieNode<'a, TransientArgument>) {
+fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<'a, TransientArgument>) {
     for positional_arg in &args.section.arguments {
-        trie_node.add_word(&positional_arg.key, positional_arg);
+        keymap.insert(&positional_arg.key, positional_arg);
     }
 }
 
@@ -669,10 +643,10 @@ pub fn show_selector_actions_overlay(
         .map(|(idx, delegate)| SelectorEntry { delegate, idx })
         .collect();
 
-    let mut trie_node = TrieNode::new();
-    create_trie(&args, &mut trie_node);
+    let mut keymap = KeyMap::new();
+    create_keymap(&args, &mut keymap);
 
-    let mut state = SelectorState::new(&args, window, pane, &trie_node, &choices, &mut buf);
+    let mut state = SelectorState::new(&args, window, pane, &keymap, &choices, &mut buf);
 
     state.render()?;
     state.run_loop()?;
