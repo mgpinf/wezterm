@@ -38,23 +38,23 @@ const PUNCTUATION_SURROUNDING: &[(char, char)] = &[
 const MAX_WORDS_PER_LINE: usize = 10;
 
 #[derive(Clone, Debug)]
-pub struct TypingTestResults {
-    pub total_words: usize,
-    pub total_chars_typed: usize,
-    pub total_chars_in_text: usize,
-    pub total_char_errors: usize,
-    pub final_chars_typed_correctly: usize,
-    pub final_uncorrected_errors: usize,
-    pub started_at: Instant,
-    pub ended_at: Instant,
+struct TypingTestResults {
+    total_words: usize,
+    total_chars_typed: usize,
+    total_chars_in_text: usize,
+    total_char_errors: usize,
+    final_chars_typed_correctly: usize,
+    final_uncorrected_errors: usize,
+    started_at: Instant,
+    ended_at: Instant,
 }
 
 impl TypingTestResults {
-    pub fn duration_secs(&self) -> f64 {
+    fn duration_secs(&self) -> f64 {
         self.ended_at.duration_since(self.started_at).as_secs_f64()
     }
 
-    pub fn accuracy(&self) -> f64 {
+    fn accuracy(&self) -> f64 {
         if self.total_chars_typed == 0 {
             return 0.0;
         }
@@ -63,7 +63,7 @@ impl TypingTestResults {
             .max(0.0)
     }
 
-    pub fn wpm(&self) -> f64 {
+    fn wpm(&self) -> f64 {
         let duration_mins = self.duration_secs() / 60.0;
         if duration_mins <= 0.0 {
             return 0.0;
