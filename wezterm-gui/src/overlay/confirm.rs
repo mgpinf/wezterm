@@ -92,6 +92,7 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
     render(term, active)?;
 
     while let Ok(Some(event)) = term.poll_input(None) {
+        let mut should_render = false;
         match event {
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('y' | 'Y'),
@@ -117,6 +118,7 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
             }) => {
                 let x = x as usize;
                 let y = y as usize;
+                let prior_active = active;
                 if y == button_row && x >= yes_x && x < yes_x + yes_w {
                     active = ActiveButton::Yes;
                     if mouse_buttons == MouseButtons::LEFT {
@@ -131,15 +133,24 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
                     active = ActiveButton::None;
                 }
 
+                if active != prior_active {
+                    should_render = true;
+                }
+
                 if mouse_buttons != MouseButtons::NONE {
                     // Treat any other mouse button as cancel
                     return Ok(false);
                 }
             }
+            InputEvent::Resized { .. } => {
+                should_render = true;
+            }
             _ => {}
         }
 
-        render(term, active)?;
+        if should_render {
+            render(term, active)?;
+        }
     }
 
     Ok(false)
