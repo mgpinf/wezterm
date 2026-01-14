@@ -47,6 +47,7 @@ return {
 |-----------|------|---------|-------------|
 | `commands` | list | n/a | List of `CommandRunnerCommand` entries |
 | `auto_close_on_success` | boolean | `false` | Close the overlay when all commands finish successfully |
+| `alphabet` | string | `"1234567890abcdefhilmnopstuvwxyz"` | Characters used to build quick-select labels in the list view |
 
 ## CommandRunnerCommand
 
@@ -65,10 +66,14 @@ The overlay is modal with a list view, output view, and filter input.
 
 List view:
 * <kbd>j</kbd>/<kbd>k</kbd> or arrows: move selection
+* Keys in `alphabet`: open the matching entry (single- or double-key)
 * <kbd>Enter</kbd>: open output view
 * <kbd>r</kbd>: rerun selected command
 * <kbd>Ctrl</kbd>+<kbd>C</kbd>: kill selected command
 * <kbd>q</kbd>: quit (prompts if commands are running)
+
+Note: keys present in `alphabet` are reserved for quick selection; remove any
+navigation keys you want to keep from the alphabet string.
 
 Output view:
 * <kbd>j</kbd>/<kbd>k</kbd> or arrows: move by logical lines
