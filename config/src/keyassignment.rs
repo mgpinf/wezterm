@@ -683,6 +683,30 @@ fn default_message() -> String {
     "🛑 Really continue?".to_string()
 }
 
+/// A single command to run in the CommandRunner overlay.
+/// Uses similar syntax to `wezterm.run_child_process` where `args` contains
+/// the command as the first element followed by its arguments.
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct CommandRunnerCommand {
+    /// Display title for this command (defaults to args[0] if not specified)
+    #[dynamic(default)]
+    pub title: Option<String>,
+    /// The command and its arguments (first element is the program)
+    pub args: Vec<String>,
+    #[dynamic(default)]
+    pub cwd: Option<String>,
+    #[dynamic(default)]
+    pub set_environment_variables: HashMap<String, String>,
+}
+
+/// Configuration for the CommandRunner overlay
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct CommandRunner {
+    pub commands: Vec<CommandRunnerCommand>,
+    #[dynamic(default)]
+    pub auto_close_on_success: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub enum KeyAssignment {
     SpawnTab(SpawnTabDomain),
@@ -800,6 +824,7 @@ pub enum KeyAssignment {
     PromptInputLine(PromptInputLine),
     InputSelector(InputSelector),
     Confirmation(Confirmation),
+    CommandRunner(CommandRunner),
 }
 impl_lua_conversion_dynamic!(KeyAssignment);
 
