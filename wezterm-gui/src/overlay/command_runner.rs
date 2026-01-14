@@ -578,9 +578,12 @@ impl CommandRunnerState {
     }
 
     fn take_count(&mut self) -> usize {
+        if self.count_buffer.is_empty() {
+            return 1;
+        }
         let count = self.count_buffer.parse::<usize>().unwrap_or(0);
         self.count_buffer.clear();
-        count.max(1)
+        count
     }
 
     fn reset_count(&mut self) {
@@ -1924,7 +1927,9 @@ impl CommandRunnerState {
                 key: KeyCode::Char(c),
                 modifiers: Modifiers::NONE,
             }) if c.is_ascii_digit() => {
-                self.count_buffer.push(c);
+                if c != '0' || !self.count_buffer.is_empty() {
+                    self.count_buffer.push(c);
+                }
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('j'),
