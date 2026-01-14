@@ -514,43 +514,41 @@ impl CommandState {
             return;
         }
 
-        let mut to_drop = self.output_size - MAX_OUTPUT_SIZE;
-        while to_drop > 0 && self.output_lines.len() > 1 {
+        while self.output_size > MAX_OUTPUT_SIZE && self.output_lines.len() > 1 {
             let line_len = *self.line_byte_lengths.front().unwrap_or(&0);
             let line_with_newline = line_len + 1;
-            if to_drop >= line_with_newline {
-                self.output_lines.pop_front();
-                self.line_byte_lengths.pop_front();
-                self.output_size = self.output_size.saturating_sub(line_with_newline);
-                to_drop -= line_with_newline;
-            } else {
-                break;
-            }
+            self.output_lines.pop_front();
+            self.line_byte_lengths.pop_front();
+            self.output_size = self.output_size.saturating_sub(line_with_newline);
         }
 
-        if to_drop > 0 && !self.output_lines.is_empty() {
+        if self.output_size <= MAX_OUTPUT_SIZE {
+            return;
+        }
+
+        if self.output_lines.len() == 1 {
             let line_len = *self.line_byte_lengths.front().unwrap_or(&0);
-            let drop_in_line = to_drop.min(line_len);
-            if drop_in_line > 0 {
-                let line = self.output_lines.front_mut().unwrap();
-                let bytes = line.as_bytes();
-                let updated = if drop_in_line >= bytes.len() {
-                    String::new()
-                } else {
-                    String::from_utf8_lossy(&bytes[drop_in_line..]).into_owned()
-                };
-                *line = updated;
-                if let Some(len) = self.line_byte_lengths.front_mut() {
-                    *len = len.saturating_sub(drop_in_line);
-                }
-                if self.output_lines.len() == 1 {
+            if line_len > MAX_OUTPUT_SIZE {
+                let drop_in_line = self.output_size - MAX_OUTPUT_SIZE;
+                if drop_in_line > 0 {
+                    let line = self.output_lines.front_mut().unwrap();
+                    let bytes = line.as_bytes();
+                    let updated = if drop_in_line >= bytes.len() {
+                        String::new()
+                    } else {
+                        String::from_utf8_lossy(&bytes[drop_in_line..]).into_owned()
+                    };
+                    *line = updated;
+                    if let Some(len) = self.line_byte_lengths.front_mut() {
+                        *len = len.saturating_sub(drop_in_line);
+                    }
                     if drop_in_line >= self.pending_line.len() {
                         self.pending_line.clear();
                     } else {
                         self.pending_line.drain(..drop_in_line);
                     }
+                    self.output_size = self.output_size.saturating_sub(drop_in_line);
                 }
-                self.output_size = self.output_size.saturating_sub(drop_in_line);
             }
         }
     }
