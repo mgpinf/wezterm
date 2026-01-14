@@ -179,6 +179,18 @@ pub struct Palette {
 
     pub launcher_label_fg: Option<ColorSpec>,
     pub launcher_label_bg: Option<ColorSpec>,
+
+    pub command_runner_list_header_fg: Option<ColorSpec>,
+    pub command_runner_list_marker_fg: Option<ColorSpec>,
+    pub command_runner_output_label_fg: Option<ColorSpec>,
+    pub command_runner_output_separator_fg: Option<ColorSpec>,
+    pub command_runner_output_margin_fg: Option<ColorSpec>,
+    pub command_runner_output_line_number_fg: Option<ColorSpec>,
+    pub command_runner_output_active_line_number_fg: Option<ColorSpec>,
+    pub command_runner_match_fg: Option<ColorSpec>,
+    pub command_runner_match_bg: Option<ColorSpec>,
+    pub command_runner_current_match_fg: Option<ColorSpec>,
+    pub command_runner_current_match_bg: Option<ColorSpec>,
 }
 impl_lua_conversion_dynamic!(Palette);
 
@@ -234,6 +246,19 @@ impl Palette {
             input_selector_label_bg: overlay!(input_selector_label_bg),
             launcher_label_fg: overlay!(launcher_label_fg),
             launcher_label_bg: overlay!(launcher_label_bg),
+            command_runner_list_header_fg: overlay!(command_runner_list_header_fg),
+            command_runner_list_marker_fg: overlay!(command_runner_list_marker_fg),
+            command_runner_output_label_fg: overlay!(command_runner_output_label_fg),
+            command_runner_output_separator_fg: overlay!(command_runner_output_separator_fg),
+            command_runner_output_margin_fg: overlay!(command_runner_output_margin_fg),
+            command_runner_output_line_number_fg: overlay!(command_runner_output_line_number_fg),
+            command_runner_output_active_line_number_fg: overlay!(
+                command_runner_output_active_line_number_fg
+            ),
+            command_runner_match_fg: overlay!(command_runner_match_fg),
+            command_runner_match_bg: overlay!(command_runner_match_bg),
+            command_runner_current_match_fg: overlay!(command_runner_current_match_fg),
+            command_runner_current_match_bg: overlay!(command_runner_current_match_bg),
         }
     }
 }
