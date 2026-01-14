@@ -648,7 +648,7 @@ pub struct InputSelector {
 }
 
 fn default_num_alphabet() -> String {
-    "1234567890abcdefghilmnopqrstuvwxyz".to_string()
+    "1234567890abcdefhilmnopstuvwxyz".to_string()
 }
 
 fn default_description() -> String {
@@ -939,6 +939,8 @@ pub struct CommandRunner {
     pub commands: Vec<CommandRunnerCommand>,
     #[dynamic(default)]
     pub auto_close_on_success: bool,
+    #[dynamic(default = "default_num_alphabet")]
+    pub alphabet: String,
 }
 
 /// Built-in word lists for the typing test (matches toipe's wordlists)
