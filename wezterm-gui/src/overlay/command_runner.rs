@@ -396,8 +396,10 @@ impl CommandStatus {
 struct CommandState {
     config: CommandRunnerCommand,
     status: CommandStatus,
-    output: VecDeque<u8>,
-    output_lines: Vec<String>,
+    output_lines: VecDeque<String>,
+    line_byte_lengths: VecDeque<usize>,
+    pending_line: Vec<u8>,
+    output_size: usize,
     start_time: Option<Instant>,
     end_time: Option<Instant>,
 }
@@ -407,8 +409,10 @@ impl CommandState {
         Self {
             config,
             status: CommandStatus::Pending,
-            output: VecDeque::with_capacity(MAX_OUTPUT_SIZE),
-            output_lines: Vec::new(),
+            output_lines: VecDeque::new(),
+            line_byte_lengths: VecDeque::new(),
+            pending_line: Vec::new(),
+            output_size: 0,
             start_time: None,
             end_time: None,
         }
@@ -447,24 +451,108 @@ impl CommandState {
     }
 
     fn append_output(&mut self, data: &[u8]) {
-        // Ring buffer behavior - remove old data if we exceed the limit
-        let new_len = self.output.len() + data.len();
-        if new_len > MAX_OUTPUT_SIZE {
-            let to_remove = new_len - MAX_OUTPUT_SIZE;
-            for _ in 0..to_remove {
-                self.output.pop_front();
-            }
+        if data.is_empty() {
+            return;
         }
-        self.output.extend(data);
-        self.reparse_lines();
+        self.output_size = self.output_size.saturating_add(data.len());
+        self.pending_line.extend_from_slice(data);
+        self.update_lines_from_pending();
+        self.trim_output_to_limit();
     }
 
-    fn reparse_lines(&mut self) {
-        let text = String::from_utf8_lossy(self.output.make_contiguous());
-        self.output_lines = text
-            .split('\n')
-            .map(|s| s.trim_end_matches('\r').to_string())
-            .collect();
+    fn decode_line(bytes: &[u8]) -> String {
+        let line = String::from_utf8_lossy(bytes);
+        if line.ends_with('\r') {
+            line.trim_end_matches('\r').to_string()
+        } else {
+            line.into_owned()
+        }
+    }
+
+    fn update_lines_from_pending(&mut self) {
+        if self.pending_line.is_empty() && self.output_lines.is_empty() {
+            return;
+        }
+
+        let mut iter = self.pending_line.split(|&b| b == b'\n');
+        let Some(first) = iter.next() else {
+            return;
+        };
+
+        if self.output_lines.is_empty() {
+            self.output_lines.clear();
+            self.line_byte_lengths.clear();
+            self.output_lines.push_back(Self::decode_line(first));
+            self.line_byte_lengths.push_back(first.len());
+        } else {
+            if let Some(last) = self.output_lines.back_mut() {
+                *last = Self::decode_line(first);
+            }
+            if let Some(last_len) = self.line_byte_lengths.back_mut() {
+                *last_len = first.len();
+            } else {
+                self.line_byte_lengths.push_back(first.len());
+            }
+        }
+
+        let mut last_seg = first;
+        let mut saw_newline = false;
+        for seg in iter {
+            saw_newline = true;
+            self.output_lines.push_back(Self::decode_line(seg));
+            self.line_byte_lengths.push_back(seg.len());
+            last_seg = seg;
+        }
+
+        if saw_newline {
+            self.pending_line = last_seg.to_vec();
+        }
+    }
+
+    fn trim_output_to_limit(&mut self) {
+        if self.output_size <= MAX_OUTPUT_SIZE {
+            return;
+        }
+
+        let mut to_drop = self.output_size - MAX_OUTPUT_SIZE;
+        while to_drop > 0 && self.output_lines.len() > 1 {
+            let line_len = *self.line_byte_lengths.front().unwrap_or(&0);
+            let line_with_newline = line_len + 1;
+            if to_drop >= line_with_newline {
+                self.output_lines.pop_front();
+                self.line_byte_lengths.pop_front();
+                self.output_size = self.output_size.saturating_sub(line_with_newline);
+                to_drop -= line_with_newline;
+            } else {
+                break;
+            }
+        }
+
+        if to_drop > 0 && !self.output_lines.is_empty() {
+            let line_len = *self.line_byte_lengths.front().unwrap_or(&0);
+            let drop_in_line = to_drop.min(line_len);
+            if drop_in_line > 0 {
+                let line = self.output_lines.front_mut().unwrap();
+                let bytes = line.as_bytes();
+                let updated = if drop_in_line >= bytes.len() {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&bytes[drop_in_line..]).into_owned()
+                };
+                *line = updated;
+                if let Some(len) = self.line_byte_lengths.front_mut() {
+                    *len = len.saturating_sub(drop_in_line);
+                }
+                if self.output_lines.len() == 1 {
+                    if drop_in_line >= self.pending_line.len() {
+                        self.pending_line.clear();
+                    } else {
+                        self.pending_line.drain(..drop_in_line);
+                    }
+                }
+                self.output_size = self.output_size.saturating_sub(drop_in_line);
+            }
+        }
     }
 }
 
@@ -989,6 +1077,23 @@ impl CommandRunnerState {
     }
 
     fn copy_current_lines(&mut self, command_idx: usize, count: usize) {
+        fn join_lines(lines: &VecDeque<String>, start: usize, count: usize) -> Option<String> {
+            if start >= lines.len() {
+                return None;
+            }
+            let end = (start + count).min(lines.len());
+            let mut iter = lines.iter().skip(start).take(end - start);
+            let mut out = String::new();
+            if let Some(first) = iter.next() {
+                out.push_str(first);
+                for line in iter {
+                    out.push('\n');
+                    out.push_str(line);
+                }
+            }
+            Some(out)
+        }
+
         let total_rows = self.output_wrapped_row_count(command_idx);
         let current_row = match self.current_line_for(command_idx, total_rows) {
             Some(idx) => idx,
@@ -1022,24 +1127,14 @@ impl CommandRunnerState {
                     }
                     Some(lines.join("\n"))
                 } else {
-                    self.commands.get(command_idx).and_then(|cmd| {
-                        if line_idx < cmd.output_lines.len() {
-                            let end = (line_idx + count).min(cmd.output_lines.len());
-                            Some(cmd.output_lines[line_idx..end].join("\n"))
-                        } else {
-                            None
-                        }
-                    })
+                    self.commands
+                        .get(command_idx)
+                        .and_then(|cmd| join_lines(&cmd.output_lines, line_idx, count))
                 }
             } else {
-                self.commands.get(command_idx).and_then(|cmd| {
-                    if line_idx < cmd.output_lines.len() {
-                        let end = (line_idx + count).min(cmd.output_lines.len());
-                        Some(cmd.output_lines[line_idx..end].join("\n"))
-                    } else {
-                        None
-                    }
-                })
+                self.commands
+                    .get(command_idx)
+                    .and_then(|cmd| join_lines(&cmd.output_lines, line_idx, count))
             }
         } else {
             rows.get(self.scroll_offset)
@@ -1177,7 +1272,7 @@ impl CommandRunnerState {
             }
         };
 
-        let output_lines: Vec<String> = match self.current_command() {
+        let output_lines: VecDeque<String> = match self.current_command() {
             Some(c) => c.output_lines.clone(),
             None => return,
         };
@@ -2619,8 +2714,10 @@ pub fn show_command_runner_overlay(
 
                     if let Some(cmd) = state.commands.get_mut(idx) {
                         cmd.status = CommandStatus::Running;
-                        cmd.output.clear();
                         cmd.output_lines.clear();
+                        cmd.line_byte_lengths.clear();
+                        cmd.pending_line.clear();
+                        cmd.output_size = 0;
                         cmd.start_time = Some(Instant::now());
                         cmd.end_time = None;
                         dirty = true;
