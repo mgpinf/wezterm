@@ -8,8 +8,10 @@ tags:
 {{since('nightly')}}
 
 Runs a list of non-interactive commands in a dedicated overlay with a list
-view and a per-command output view. Each command is started once when the
-overlay opens, and you can rerun or kill individual commands from the UI.
+view and a per-command output view. This is intended for batch-style commands
+and viewing streaming logs, rather than interactive programs. Each command is
+started once when the overlay opens, and you can rerun or kill individual
+commands from the UI.
 
 ```lua
 local wezterm = require 'wezterm'
