@@ -825,6 +825,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: None,
         },
+        CommandRunner(_) => CommandDef {
+            brief: "Run multiple commands in overlay".into(),
+            doc: "Opens an overlay to run and monitor multiple non-interactive commands".into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &[],
+            icon: Some("md_terminal"),
+        },
         QuickSelect => CommandDef {
             brief: "Enter QuickSelect mode".into(),
             doc: "Activates the quick selection UI for the current pane".into(),
