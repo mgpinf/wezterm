@@ -1,3 +1,4 @@
+use crate::overlay::quickselect;
 use config::configuration;
 use config::keyassignment::{CommandRunner, CommandRunnerCommand};
 use mux::termwiztermtab::TermWizTerminal;
@@ -544,6 +545,8 @@ struct CommandRunnerState {
     screen_rows: usize,
     screen_cols: usize,
     count_buffer: String,
+    list_selection_input: String,
+    list_alphabet: String,
     colors: CommandRunnerColors,
     window: Window,
 }
@@ -567,6 +570,8 @@ impl CommandRunnerState {
             screen_rows: 24,
             screen_cols: 80,
             count_buffer: String::new(),
+            list_selection_input: String::new(),
+            list_alphabet: args.alphabet,
             colors: CommandRunnerColors::new(),
             window,
         }
@@ -1231,6 +1236,28 @@ impl CommandRunnerState {
         self.screen_rows.saturating_sub(4)
     }
 
+    fn list_labels(&self) -> Vec<String> {
+        let visible = self.visible_list_rows();
+        let count = self.commands.len().min(visible);
+        if count == 0 || self.list_alphabet.is_empty() {
+            return Vec::new();
+        }
+        quickselect::compute_labels_for_alphabet_with_preserved_case(&self.list_alphabet, count)
+    }
+
+    fn open_output_view(&mut self, command_idx: usize) {
+        if command_idx >= self.commands.len() {
+            return;
+        }
+        self.view_mode = ViewMode::Output { command_idx };
+        self.scroll_offset = 0;
+        if self.commands[command_idx].status.is_running() {
+            self.scroll_to_bottom();
+        } else {
+            self.reset_current_line_to_scroll_offset();
+        }
+    }
+
     fn scroll_down(&mut self, amount: usize) {
         let max_offset = self
             .output_line_count()
@@ -1297,6 +1324,13 @@ impl CommandRunnerState {
 
         let visible_rows = self.visible_list_rows();
         let start_row = 2;
+        let labels = self.list_labels();
+        let max_label_len = labels.iter().map(|label| label.len()).max().unwrap_or(0);
+        let label_width = if max_label_len > 0 {
+            max_label_len + 3
+        } else {
+            0
+        };
 
         for (idx, cmd) in self.commands.iter().enumerate() {
             if idx >= visible_rows {
@@ -1316,6 +1350,14 @@ impl CommandRunnerState {
                 changes.push(Change::AllAttributes(Default::default()));
             } else {
                 changes.push(Change::Text("  ".to_string()));
+            }
+
+            if label_width > 0 {
+                if let Some(label) = labels.get(idx) {
+                    changes.push(Change::Text(format!(" {label:>max_label_len$}. ")));
+                } else {
+                    changes.push(Change::Text(" ".repeat(label_width)));
+                }
             }
 
             let status_char = match &cmd.status {
@@ -1393,7 +1435,7 @@ impl CommandRunnerState {
             changes.push(Change::Text(format!(" {:>6}", elapsed)));
 
             if is_selected {
-                let current_len = 2 + 2 + title_width + status_field_width + 1 + 6;
+                let current_len = 2 + label_width + 2 + title_width + status_field_width + 1 + 6;
                 let padding = self.screen_cols.saturating_sub(current_len);
                 changes.push(Change::Text(" ".repeat(padding)));
             }
@@ -1743,12 +1785,36 @@ impl CommandRunnerState {
         process_tx: &Sender<ProcessMessage>,
     ) -> ControlFlow {
         match event {
-            // Numeric keys for count prefix
+            // Alphabet-driven selection labels
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char(c),
-                modifiers: Modifiers::NONE,
-            }) if c.is_ascii_digit() => {
-                self.count_buffer.push(c);
+                modifiers,
+            }) if (modifiers == Modifiers::NONE || modifiers == Modifiers::SHIFT)
+                && self.list_alphabet.contains(c) =>
+            {
+                self.reset_count();
+                self.list_selection_input.push(c);
+                let labels = self.list_labels();
+                if let Some(pos) = labels
+                    .iter()
+                    .position(|label| label == &self.list_selection_input)
+                {
+                    self.list_selection = pos;
+                    self.list_selection_input.clear();
+                    self.open_output_view(self.list_selection);
+                } else if !labels
+                    .iter()
+                    .any(|label| label.starts_with(&self.list_selection_input))
+                {
+                    self.list_selection_input.clear();
+                }
+            }
+            InputEvent::Key(KeyEvent {
+                key: KeyCode::Backspace,
+                ..
+            }) => {
+                self.reset_count();
+                self.list_selection_input.pop();
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('j'),
@@ -1758,9 +1824,10 @@ impl CommandRunnerState {
                 key: KeyCode::DownArrow,
                 ..
             }) => {
-                let count = self.take_count();
+                self.reset_count();
+                self.list_selection_input.clear();
                 let max = self.commands.len().saturating_sub(1);
-                self.list_selection = (self.list_selection + count).min(max);
+                self.list_selection = (self.list_selection + 1).min(max);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('k'),
@@ -1770,52 +1837,40 @@ impl CommandRunnerState {
                 key: KeyCode::UpArrow,
                 ..
             }) => {
-                let count = self.take_count();
-                self.list_selection = self.list_selection.saturating_sub(count);
+                self.reset_count();
+                self.list_selection_input.clear();
+                self.list_selection = self.list_selection.saturating_sub(1);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('g'),
                 modifiers: Modifiers::NONE,
             }) => {
                 self.reset_count();
+                self.list_selection_input.clear();
                 self.list_selection = 0;
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('G'),
                 modifiers: Modifiers::SHIFT | Modifiers::NONE,
             }) => {
-                if self.count_buffer.is_empty() {
-                    self.list_selection = self.commands.len().saturating_sub(1);
-                } else {
-                    let count = self.take_count();
-                    self.list_selection = count
-                        .saturating_sub(1)
-                        .min(self.commands.len().saturating_sub(1));
-                }
+                self.reset_count();
+                self.list_selection_input.clear();
+                self.list_selection = self.commands.len().saturating_sub(1);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Enter,
                 ..
             }) => {
                 self.reset_count();
-                if self.list_selection < self.commands.len() {
-                    // Auto-scroll to bottom for running commands
-                    self.view_mode = ViewMode::Output {
-                        command_idx: self.list_selection,
-                    };
-                    self.scroll_offset = 0;
-                    if self.commands[self.list_selection].status.is_running() {
-                        self.scroll_to_bottom();
-                    } else {
-                        self.reset_current_line_to_scroll_offset();
-                    }
-                }
+                self.list_selection_input.clear();
+                self.open_output_view(self.list_selection);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('r'),
                 modifiers: Modifiers::NONE,
             }) => {
                 self.reset_count();
+                self.list_selection_input.clear();
                 if self.list_selection < self.commands.len() {
                     let _ = process_tx.try_send(ProcessMessage::Rerun(self.list_selection));
                 }
@@ -1825,6 +1880,7 @@ impl CommandRunnerState {
                 modifiers: Modifiers::CTRL,
             }) => {
                 self.reset_count();
+                self.list_selection_input.clear();
                 if self.list_selection < self.commands.len() {
                     let _ = process_tx.try_send(ProcessMessage::Kill(self.list_selection));
                 }
@@ -1834,6 +1890,7 @@ impl CommandRunnerState {
                 modifiers: Modifiers::NONE,
             }) => {
                 self.reset_count();
+                self.list_selection_input.clear();
                 if self.any_running() {
                     self.view_mode = ViewMode::ConfirmQuit;
                 } else {
@@ -1845,9 +1902,11 @@ impl CommandRunnerState {
                 ..
             }) => {
                 self.reset_count();
+                self.list_selection_input.clear();
             }
             _ => {
                 self.reset_count();
+                self.list_selection_input.clear();
             }
         }
         ControlFlow::Continue
@@ -2118,6 +2177,7 @@ impl CommandRunnerState {
             }) => {
                 self.reset_count();
                 self.clear_active_filter();
+                self.list_selection_input.clear();
                 self.view_mode = ViewMode::List;
             }
             InputEvent::Key(KeyEvent {
@@ -2126,6 +2186,7 @@ impl CommandRunnerState {
             }) => {
                 self.reset_count();
                 self.clear_active_filter();
+                self.list_selection_input.clear();
                 self.view_mode = ViewMode::List;
             }
             _ => {
@@ -2318,6 +2379,7 @@ impl CommandRunnerState {
                 key: KeyCode::Escape,
                 ..
             }) => {
+                self.list_selection_input.clear();
                 self.view_mode = ViewMode::List;
             }
             _ => {}
