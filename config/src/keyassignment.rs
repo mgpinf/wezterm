@@ -917,6 +917,30 @@ pub struct DisplayText {
     pub text: String,
 }
 
+/// A single command to run in the CommandRunner overlay.
+/// Uses similar syntax to `wezterm.run_child_process` where `args` contains
+/// the command as the first element followed by its arguments.
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct CommandRunnerCommand {
+    /// Display title for this command (defaults to args[0] if not specified)
+    #[dynamic(default)]
+    pub title: Option<String>,
+    /// The command and its arguments (first element is the program)
+    pub args: Vec<String>,
+    #[dynamic(default)]
+    pub cwd: Option<String>,
+    #[dynamic(default)]
+    pub set_environment_variables: HashMap<String, String>,
+}
+
+/// Configuration for the CommandRunner overlay
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct CommandRunner {
+    pub commands: Vec<CommandRunnerCommand>,
+    #[dynamic(default)]
+    pub auto_close_on_success: bool,
+}
+
 /// Built-in word lists for the typing test (matches toipe's wordlists)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic, Default)]
 pub enum TypingTestWordlist {
@@ -1167,6 +1191,7 @@ pub enum KeyAssignment {
     DisplayText(DisplayText),
     TypingTest(TypingTest),
     ScrollbackSearchWithContext(ScrollbackSearchWithContextArgs),
+    CommandRunner(CommandRunner),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic, Default)]

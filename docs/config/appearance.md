@@ -201,6 +201,18 @@ config.colors = {
   input_text_replace_prompt_value_fg = { AnsiColor = 'Lime' }, -- {{since('nightly', inline=True)}}
   input_text_replace_prompt_options_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
 
+  command_runner_list_header_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  command_runner_list_marker_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_label_fg = { AnsiColor = 'Olive' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_separator_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_margin_fg = { AnsiColor = 'Teal' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_active_line_number_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  command_runner_match_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  command_runner_match_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  command_runner_current_match_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  command_runner_current_match_bg = { AnsiColor = 'Navy' }, -- {{since('nightly', inline=True)}}
+
   scrollback_search_match_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   scrollback_search_match_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
   scrollback_search_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}

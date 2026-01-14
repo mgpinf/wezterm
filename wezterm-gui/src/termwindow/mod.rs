@@ -2490,6 +2490,23 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
+    fn show_command_runner(&mut self, args: &config::keyassignment::CommandRunner) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let args = args.clone();
+        let window = self.window.clone().unwrap();
+
+        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::command_runner::show_command_runner_overlay(term, args, window)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
     fn show_typing_test(&mut self, args: &TypingTest) {
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
@@ -3395,6 +3412,7 @@ impl TermWindow {
             DisplayText(args) => self.show_display_text(args),
             TypingTest(args) => self.show_typing_test(args),
             ScrollbackSearchWithContext(args) => self.show_scrollback_search(args),
+            CommandRunner(args) => self.show_command_runner(args),
         };
         Ok(PerformAssignmentResult::Handled)
     }
