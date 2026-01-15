@@ -695,49 +695,64 @@ impl FromDynamic for CommandRunnerCommand {
         value: &wezterm_dynamic::Value,
         options: wezterm_dynamic::FromDynamicOptions,
     ) -> Result<Self, wezterm_dynamic::Error> {
-        let obj = match value {
-            wezterm_dynamic::Value::Object(obj) => obj,
-            _ => {
-                return Err(wezterm_dynamic::Error::Message(
-                    "CommandRunnerCommand must be an object".to_string(),
-                ))
+        match value {
+            // Simple syntax: {"ls", "-la"} - just an array of strings
+            wezterm_dynamic::Value::Array(_) => {
+                let args = Vec::<String>::from_dynamic(value, options)?;
+                if args.is_empty() {
+                    return Err(wezterm_dynamic::Error::Message(
+                        "CommandRunnerCommand 'args' must not be empty".to_string(),
+                    ));
+                }
+                Ok(Self {
+                    title: None,
+                    args,
+                    cwd: None,
+                    set_environment_variables: HashMap::new(),
+                })
             }
-        };
+            // Extended syntax: {args = {"ls", "-la"}, cwd = "/tmp", ...}
+            wezterm_dynamic::Value::Object(obj) => {
+                let title = obj
+                    .get_by_str("title")
+                    .map(|v| String::from_dynamic(v, options))
+                    .transpose()?;
 
-        let title = obj
-            .get_by_str("title")
-            .map(|v| String::from_dynamic(v, options))
-            .transpose()?;
+                let args: Vec<String> = obj
+                    .get_by_str("args")
+                    .map(|v| Vec::<String>::from_dynamic(v, options))
+                    .transpose()?
+                    .unwrap_or_default();
 
-        let args: Vec<String> = obj
-            .get_by_str("args")
-            .map(|v| Vec::<String>::from_dynamic(v, options))
-            .transpose()?
-            .unwrap_or_default();
+                if args.is_empty() {
+                    return Err(wezterm_dynamic::Error::Message(
+                        "CommandRunnerCommand 'args' must not be empty".to_string(),
+                    ));
+                }
 
-        if args.is_empty() {
-            return Err(wezterm_dynamic::Error::Message(
-                "CommandRunnerCommand 'args' must not be empty".to_string(),
-            ));
+                let cwd = obj
+                    .get_by_str("cwd")
+                    .map(|v| String::from_dynamic(v, options))
+                    .transpose()?;
+
+                let set_environment_variables = obj
+                    .get_by_str("set_environment_variables")
+                    .map(|v| HashMap::<String, String>::from_dynamic(v, options))
+                    .transpose()?
+                    .unwrap_or_default();
+
+                Ok(Self {
+                    title,
+                    args,
+                    cwd,
+                    set_environment_variables,
+                })
+            }
+            _ => Err(wezterm_dynamic::Error::Message(
+                "CommandRunnerCommand must be an array of strings or an object with 'args' field"
+                    .to_string(),
+            )),
         }
-
-        let cwd = obj
-            .get_by_str("cwd")
-            .map(|v| String::from_dynamic(v, options))
-            .transpose()?;
-
-        let set_environment_variables = obj
-            .get_by_str("set_environment_variables")
-            .map(|v| HashMap::<String, String>::from_dynamic(v, options))
-            .transpose()?
-            .unwrap_or_default();
-
-        Ok(Self {
-            title,
-            args,
-            cwd,
-            set_environment_variables,
-        })
     }
 }
 
