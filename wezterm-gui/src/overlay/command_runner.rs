@@ -9,7 +9,7 @@ use smol::process::{Child, Command, Stdio};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use termwiz::cell::{AttributeChange, Intensity};
+use termwiz::cell::{AttributeChange, CellAttributes, Intensity};
 use termwiz::color::{AnsiColor, ColorAttribute};
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers};
 use termwiz::surface::{Change, CursorVisibility, Position};
@@ -1605,7 +1605,7 @@ impl CommandRunnerState {
             };
             changes.extend([
                 Change::AllAttributes(
-                    termwiz::cell::CellAttributes::default()
+                    CellAttributes::default()
                         .set_foreground(cmd.status.color())
                         .clone(),
                 ),
@@ -1618,7 +1618,7 @@ impl CommandRunnerState {
             let title: String = cmd.title().chars().take(title_width).collect();
             if is_selected {
                 changes.push(Change::AllAttributes(
-                    termwiz::cell::CellAttributes::default()
+                    CellAttributes::default()
                         .set_intensity(Intensity::Bold)
                         .clone(),
                 ));
@@ -1643,7 +1643,7 @@ impl CommandRunnerState {
                 CommandStatus::Failed(code) => Some(code.to_string()),
                 _ => None,
             };
-            let status_attrs = termwiz::cell::CellAttributes::default()
+            let status_attrs = CellAttributes::default()
                 .set_foreground(cmd.status.color())
                 .clone();
             let mut status_len: usize = 1 + status_label.len();
