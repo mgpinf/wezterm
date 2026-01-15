@@ -24,14 +24,20 @@ return {
       mods = 'CTRL|SHIFT',
       action = act.CommandRunner {
         commands = {
+          -- Simple syntax: just an array of strings
+          { 'git', 'status' },
+          -- Extended syntax: object with options
           {
             title = 'Build',
             args = { 'cargo', 'build' },
             cwd = '/path/to/repo',
           },
+          -- Can mix both syntaxes
+          { 'cargo', 'test', '--all' },
           {
-            title = 'Tests',
-            args = { 'cargo', 'test', '--all' },
+            title = 'Lint',
+            args = { 'cargo', 'clippy' },
+            set_environment_variables = { RUST_BACKTRACE = '1' },
           },
         },
         auto_close_on_success = false,
@@ -51,12 +57,35 @@ return {
 
 ## CommandRunnerCommand
 
-Each entry in `commands` can have:
+Each entry in `commands` can be specified in two ways:
+
+### Simple Syntax
+
+An array of strings where the first element is the command:
+
+```lua
+local cmd = { 'cargo', 'build', '--release' }
+```
+
+### Extended Syntax
+
+An object with named fields for additional options:
+
+```lua
+local cmd = {
+  title = 'Build Release',
+  args = { 'cargo', 'build', '--release' },
+  cwd = '/path/to/project',
+  set_environment_variables = { RUST_LOG = 'debug' },
+}
+```
+
+### Fields
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `title` | string | no | args[1] | Display name in the list view |
-| `args` | list | yes | - | Command and arguments, with the program as the first element |
+| `args` | list | yes | - | Command and arguments (must not be empty) |
 | `cwd` | string | no | `nil` | Working directory |
 | `set_environment_variables` | map | no | `{}` | Environment variables to set for the command |
 
