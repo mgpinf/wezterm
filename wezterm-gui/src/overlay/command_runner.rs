@@ -1222,12 +1222,8 @@ impl CommandRunnerState {
             return;
         }
 
-        let mut row_idx = current_row.min(rows.len().saturating_sub(1));
-        let mut line_number = rows.get(row_idx).and_then(|segment| segment.line_number);
-        while line_number.is_none() && row_idx > 0 {
-            row_idx -= 1;
-            line_number = rows.get(row_idx).and_then(|segment| segment.line_number);
-        }
+        let row_idx = current_row.min(rows.len().saturating_sub(1));
+        let line_number = Self::logical_line_number_at(rows.as_ref(), row_idx);
 
         let text = if let Some(line_number) = line_number {
             let line_idx = line_number.saturating_sub(1);
@@ -1815,16 +1811,8 @@ impl CommandRunnerState {
             } else {
                 Some(self.scroll_offset.min(line_count - 1))
             };
-            let mut row_idx = match current_row {
-                Some(idx) => idx,
-                None => 0,
-            };
-            let mut line_number = rows.get(row_idx).and_then(|segment| segment.line_number);
-            while line_number.is_none() && row_idx > 0 {
-                row_idx -= 1;
-                line_number = rows.get(row_idx).and_then(|segment| segment.line_number);
-            }
-            line_number
+            let row_idx = current_row.unwrap_or(0);
+            Self::logical_line_number_at(rows.as_ref(), row_idx)
         };
         let current_match_id = if self.current_match_command == Some(cmd_idx) {
             self.current_match_idx.and_then(|idx| {
