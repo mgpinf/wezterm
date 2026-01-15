@@ -778,29 +778,10 @@ impl CommandRunnerState {
     }
 
     fn output_line_count(&self) -> usize {
-        let command_idx = match self.current_command_idx() {
-            Some(idx) => idx,
-            None => return 0,
-        };
-        let max_width = self.output_content_width_for(command_idx);
-        let mut count = 0;
-        let filter_active = self.filter_active_for(command_idx);
-
-        // Use filtered lines if available (both in Filter mode and Output mode after Enter)
-        if filter_active {
-            if self.filtered_lines.is_empty() {
-                return 0;
-            }
-            for (_, line) in &self.filtered_lines {
-                count += wrapped_row_count(line, max_width);
-            }
-        } else if let Some(cmd) = self.current_command() {
-            for line in &cmd.output_lines {
-                count += wrapped_row_count(line, max_width);
-            }
+        match self.current_command_idx() {
+            Some(idx) => self.output_wrapped_row_count(idx),
+            None => 0,
         }
-
-        count
     }
 
     fn filter_active_for(&self, command_idx: usize) -> bool {
