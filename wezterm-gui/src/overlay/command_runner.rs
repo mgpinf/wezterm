@@ -1093,9 +1093,13 @@ impl CommandRunnerState {
 
     fn match_locations_from_rows(rows: &[WrappedSegment]) -> Vec<MatchLocation> {
         let mut locations: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+        let mut current_line_number = None;
         for (row_idx, segment) in rows.iter().enumerate() {
+            if segment.line_number.is_some() {
+                current_line_number = segment.line_number;
+            }
+            let line_number = current_line_number.unwrap_or(0);
             for hl in &segment.highlights {
-                let line_number = Self::logical_line_number_at(rows, row_idx).unwrap_or(0);
                 locations
                     .entry(hl.match_id)
                     .or_insert((row_idx, line_number));
@@ -1839,10 +1843,11 @@ impl CommandRunnerState {
             }
             line_number
         };
-        let match_locations = Self::match_locations_from_rows(rows.as_ref());
         let current_match_id = if self.current_match_command == Some(cmd_idx) {
-            self.current_match_idx
-                .and_then(|idx| match_locations.get(idx).map(|loc| loc.match_id))
+            self.current_match_idx.and_then(|idx| {
+                let match_locations = Self::match_locations_from_rows(rows.as_ref());
+                match_locations.get(idx).map(|loc| loc.match_id)
+            })
         } else {
             None
         };
