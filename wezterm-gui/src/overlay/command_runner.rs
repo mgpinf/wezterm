@@ -130,11 +130,7 @@ fn compile_search_regex(pattern: &str, mode: SearchMode) -> Option<Regex> {
     regex.ok()
 }
 
-fn column_widths_at_byte_positions(
-    s: &str,
-    start_byte: usize,
-    end_byte: usize,
-) -> (usize, usize, usize) {
+fn column_widths_at_byte_positions(s: &str, start_byte: usize, end_byte: usize) -> (usize, usize) {
     let mut current_byte = 0;
     let mut current_width = 0;
     let mut start_width = None;
@@ -146,6 +142,9 @@ fn column_widths_at_byte_positions(
         }
         if end_width.is_none() && current_byte >= end_byte {
             end_width = Some(current_width);
+            if start_width.is_some() {
+                return (start_width.unwrap(), end_width.unwrap());
+            }
         }
 
         current_byte += ch.len_utf8();
@@ -155,7 +154,6 @@ fn column_widths_at_byte_positions(
     (
         start_width.unwrap_or(current_width),
         end_width.unwrap_or(current_width),
-        current_width,
     )
 }
 
@@ -171,6 +169,9 @@ fn get_segment_split_indices(s: &str, start_cell: usize, end_cell: usize) -> (us
         }
         if end_byte.is_none() && current_cell >= end_cell {
             end_byte = Some(current_byte);
+            if start_byte.is_some() {
+                break;
+            }
         }
 
         current_byte += ch.len_utf8();
@@ -190,7 +191,7 @@ fn match_ranges_in_cells(
     let mut highlights = Vec::new();
 
     for m in regex.find_iter(line) {
-        let (start, end, _) = column_widths_at_byte_positions(line, m.start(), m.end());
+        let (start, end) = column_widths_at_byte_positions(line, m.start(), m.end());
         if start < end {
             let match_id = *next_match_id;
             *next_match_id += 1;
