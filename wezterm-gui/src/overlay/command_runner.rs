@@ -7,6 +7,7 @@ use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::process::{Child, Command, Stdio};
 use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use termwiz::cell::{AttributeChange, Intensity};
 use termwiz::color::{AnsiColor, ColorAttribute};
@@ -96,8 +97,8 @@ struct HighlightRange {
 }
 
 #[derive(Debug, Clone)]
-struct WrappedSegment<'a> {
-    text: &'a str,
+struct WrappedSegment {
+    text: String,
     highlights: Vec<HighlightRange>,
     line_number: Option<usize>,
 }
@@ -204,15 +205,15 @@ fn match_ranges_in_cells(
     highlights
 }
 
-fn wrap_line_with_highlights<'a>(
-    line: &'a str,
+fn wrap_line_with_highlights(
+    line: &str,
     highlights: &[HighlightRange],
     max_width: usize,
     line_number: Option<usize>,
-) -> Vec<WrappedSegment<'a>> {
+) -> Vec<WrappedSegment> {
     if max_width == 0 {
         return vec![WrappedSegment {
-            text: "",
+            text: String::new(),
             highlights: Vec::new(),
             line_number,
         }];
@@ -229,7 +230,7 @@ fn wrap_line_with_highlights<'a>(
     for ch in line.chars() {
         let ch_width = char_column_width(ch);
         if current_width + ch_width > max_width && current_width > 0 {
-            let segment_text = &line[segment_start_byte..current_byte];
+            let segment_text = line[segment_start_byte..current_byte].to_string();
             let mut segment_highlights = Vec::new();
             let seg_end_cell = current_start_cell + current_width;
 
@@ -265,7 +266,7 @@ fn wrap_line_with_highlights<'a>(
     }
 
     if current_byte > segment_start_byte || segments.is_empty() {
-        let segment_text = &line[segment_start_byte..current_byte];
+        let segment_text = line[segment_start_byte..current_byte].to_string();
         let mut segment_highlights = Vec::new();
         let seg_end_cell = current_start_cell + current_width;
 
@@ -311,7 +312,7 @@ fn push_text_with_highlights(
         if hl.end <= hl.start {
             continue;
         }
-        let (start_byte, end_byte) = get_segment_split_indices(segment.text, hl.start, hl.end);
+        let (start_byte, end_byte) = get_segment_split_indices(&segment.text, hl.start, hl.end);
         if start_byte < last_byte {
             continue;
         }
@@ -400,6 +401,7 @@ struct CommandState {
     line_byte_lengths: VecDeque<usize>,
     pending_line: Vec<u8>,
     output_size: usize,
+    output_generation: u64,
     start_time: Option<Instant>,
     end_time: Option<Instant>,
 }
@@ -413,6 +415,7 @@ impl CommandState {
             line_byte_lengths: VecDeque::new(),
             pending_line: Vec::new(),
             output_size: 0,
+            output_generation: 0,
             start_time: None,
             end_time: None,
         }
@@ -458,6 +461,7 @@ impl CommandState {
         self.pending_line.extend_from_slice(data);
         self.update_lines_from_pending();
         self.trim_output_to_limit();
+        self.output_generation = self.output_generation.wrapping_add(1);
     }
 
     fn decode_line(bytes: &[u8]) -> String {
@@ -615,6 +619,17 @@ struct ActiveFilter {
     command_idx: usize,
 }
 
+#[derive(Debug, Clone)]
+struct WrappedRowsCache {
+    command_idx: usize,
+    max_width: usize,
+    filter_active: bool,
+    output_generation: u64,
+    filtered_generation: u64,
+    regex_pattern: Option<String>,
+    rows: Rc<Vec<WrappedSegment>>,
+}
+
 /// Main state for the command runner overlay
 struct CommandRunnerState {
     commands: Vec<CommandState>,
@@ -623,6 +638,8 @@ struct CommandRunnerState {
     scroll_offset: usize,
     filtered_lines: Vec<(usize, String)>, // (original_line_idx, line)
     active_filter: Option<ActiveFilter>,  // Persists filter params for streaming updates
+    filtered_generation: u64,
+    wrapped_rows_cache: Option<WrappedRowsCache>,
     current_match_idx: Option<usize>,
     current_match_command: Option<usize>,
     current_line_idx: Option<usize>,
@@ -648,6 +665,8 @@ impl CommandRunnerState {
             scroll_offset: 0,
             filtered_lines: Vec::new(),
             active_filter: None,
+            filtered_generation: 0,
+            wrapped_rows_cache: None,
             current_match_idx: None,
             current_match_command: None,
             current_line_idx: None,
@@ -806,20 +825,34 @@ impl CommandRunnerState {
         compile_search_regex(pattern, mode)
     }
 
-    fn output_wrapped_rows<'a>(
-        &'a self,
+    fn output_wrapped_rows(
+        &mut self,
         command_idx: usize,
         regex: Option<&Regex>,
-    ) -> Vec<WrappedSegment<'a>> {
+    ) -> Rc<Vec<WrappedSegment>> {
         let max_width = self.output_content_width_for(command_idx);
+        let filter_active = self.filter_active_for(command_idx);
+        let output_generation = self
+            .commands
+            .get(command_idx)
+            .map(|cmd| cmd.output_generation)
+            .unwrap_or(0);
+        let regex_pattern = regex.map(|regex| regex.as_str().to_string());
+        if let Some(cache) = &self.wrapped_rows_cache {
+            if cache.command_idx == command_idx
+                && cache.max_width == max_width
+                && cache.filter_active == filter_active
+                && cache.output_generation == output_generation
+                && cache.filtered_generation == self.filtered_generation
+                && cache.regex_pattern.as_deref() == regex_pattern.as_deref()
+            {
+                return Rc::clone(&cache.rows);
+            }
+        }
+
         let mut rows = Vec::new();
         let mut next_match_id = 0;
-        let filter_active = self.filter_active_for(command_idx);
-
         if filter_active {
-            if self.filtered_lines.is_empty() {
-                return rows;
-            }
             for (line_idx, line) in &self.filtered_lines {
                 let line_number = Some(*line_idx + 1);
                 let highlights = regex
@@ -847,12 +880,38 @@ impl CommandRunnerState {
             }
         }
 
+        let rows = Rc::new(rows);
+        self.wrapped_rows_cache = Some(WrappedRowsCache {
+            command_idx,
+            max_width,
+            filter_active,
+            output_generation,
+            filtered_generation: self.filtered_generation,
+            regex_pattern,
+            rows: Rc::clone(&rows),
+        });
         rows
     }
 
     fn output_wrapped_row_count(&self, command_idx: usize) -> usize {
-        let regex = self.active_search_regex_for(command_idx);
-        self.output_wrapped_rows(command_idx, regex.as_ref()).len()
+        let max_width = self.output_content_width_for(command_idx);
+        let mut count = 0;
+        let filter_active = self.filter_active_for(command_idx);
+
+        if filter_active {
+            if self.filtered_lines.is_empty() {
+                return 0;
+            }
+            for (_, line) in &self.filtered_lines {
+                count += wrapped_row_count(line, max_width);
+            }
+        } else if let Some(cmd) = self.commands.get(command_idx) {
+            for line in &cmd.output_lines {
+                count += wrapped_row_count(line, max_width);
+            }
+        }
+
+        count
     }
 
     fn current_line_for(&mut self, command_idx: usize, total_rows: usize) -> Option<usize> {
@@ -892,7 +951,7 @@ impl CommandRunnerState {
         self.reveal_current_line(clamped);
     }
 
-    fn logical_line_number_at(rows: &[WrappedSegment<'_>], row_idx: usize) -> Option<usize> {
+    fn logical_line_number_at(rows: &[WrappedSegment], row_idx: usize) -> Option<usize> {
         if rows.is_empty() {
             return None;
         }
@@ -908,7 +967,7 @@ impl CommandRunnerState {
         }
     }
 
-    fn next_logical_row(rows: &[WrappedSegment<'_>], row_idx: usize) -> Option<usize> {
+    fn next_logical_row(rows: &[WrappedSegment], row_idx: usize) -> Option<usize> {
         let current_line = Self::logical_line_number_at(rows, row_idx)?;
         for idx in row_idx.saturating_add(1)..rows.len() {
             if let Some(line_number) = rows[idx].line_number {
@@ -920,7 +979,7 @@ impl CommandRunnerState {
         None
     }
 
-    fn prev_logical_row(rows: &[WrappedSegment<'_>], row_idx: usize) -> Option<usize> {
+    fn prev_logical_row(rows: &[WrappedSegment], row_idx: usize) -> Option<usize> {
         let current_line = Self::logical_line_number_at(rows, row_idx)?;
         if row_idx == 0 {
             return None;
@@ -961,9 +1020,9 @@ impl CommandRunnerState {
         let mut row_idx = current.min(total_rows.saturating_sub(1));
         for _ in 0..steps {
             let next = if delta >= 0 {
-                Self::next_logical_row(&rows, row_idx)
+                Self::next_logical_row(rows.as_ref(), row_idx)
             } else {
-                Self::prev_logical_row(&rows, row_idx)
+                Self::prev_logical_row(rows.as_ref(), row_idx)
             };
             if let Some(next) = next {
                 row_idx = next;
@@ -1002,7 +1061,7 @@ impl CommandRunnerState {
         self.current_line_idx = Some(clamped);
     }
 
-    fn match_locations_from_rows(rows: &[WrappedSegment<'_>]) -> Vec<MatchLocation> {
+    fn match_locations_from_rows(rows: &[WrappedSegment]) -> Vec<MatchLocation> {
         let mut locations: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
         for (row_idx, segment) in rows.iter().enumerate() {
             for hl in &segment.highlights {
@@ -1022,9 +1081,9 @@ impl CommandRunnerState {
             .collect()
     }
 
-    fn match_locations_for(&self, command_idx: usize, regex: &Regex) -> Vec<MatchLocation> {
+    fn match_locations_for(&mut self, command_idx: usize, regex: &Regex) -> Vec<MatchLocation> {
         let rows = self.output_wrapped_rows(command_idx, Some(regex));
-        Self::match_locations_from_rows(&rows)
+        Self::match_locations_from_rows(rows.as_ref())
     }
 
     fn ensure_current_match(&mut self, command_idx: usize, regex: &Regex) -> Option<MatchLocation> {
@@ -1153,7 +1212,7 @@ impl CommandRunnerState {
             self.reset_current_match(command_idx);
         }
         let rows = self.output_wrapped_rows(command_idx, Some(&regex));
-        let matches = Self::match_locations_from_rows(&rows);
+        let matches = Self::match_locations_from_rows(rows.as_ref());
         if matches.is_empty() {
             drop(rows);
             self.reset_current_match(command_idx);
@@ -1163,7 +1222,7 @@ impl CommandRunnerState {
         let max = matches.len();
         let anchor_line = if self.current_line_command == Some(command_idx) {
             self.current_line_idx
-                .and_then(|idx| Self::logical_line_number_at(&rows, idx))
+                .and_then(|idx| Self::logical_line_number_at(rows.as_ref(), idx))
         } else {
             None
         };
@@ -1224,7 +1283,7 @@ impl CommandRunnerState {
 
         if let Some((pattern, mode, context)) = filter_params {
             if pattern.is_empty() {
-                self.filtered_lines.clear();
+                self.clear_filtered_lines();
             } else {
                 self.apply_filter(&pattern, mode, context);
             }
@@ -1246,18 +1305,26 @@ impl CommandRunnerState {
         });
     }
 
+    fn bump_filtered_generation(&mut self) {
+        self.filtered_generation = self.filtered_generation.wrapping_add(1);
+    }
+
+    fn clear_filtered_lines(&mut self) {
+        self.filtered_lines.clear();
+        self.bump_filtered_generation();
+    }
+
     fn clear_active_filter(&mut self) {
         self.active_filter = None;
-        self.filtered_lines.clear();
+        self.clear_filtered_lines();
         self.clear_current_match();
     }
 
     fn apply_filter(&mut self, pattern: &str, mode: SearchMode, context: usize) {
-        self.filtered_lines.clear();
-
         if pattern.is_empty() {
             self.scroll_offset = 0;
             self.clear_current_match();
+            self.clear_filtered_lines();
             self.reset_current_line_to_scroll_offset();
             return;
         }
@@ -1283,7 +1350,10 @@ impl CommandRunnerState {
 
         let regex = match regex {
             Ok(r) => r,
-            Err(_) => return,
+            Err(_) => {
+                self.clear_filtered_lines();
+                return;
+            }
         };
 
         let mut matching_lines: Vec<usize> = Vec::new();
@@ -1305,11 +1375,14 @@ impl CommandRunnerState {
         let mut sorted: Vec<usize> = included.into_iter().collect();
         sorted.sort();
 
+        let mut filtered_lines = Vec::with_capacity(sorted.len());
         for line_idx in sorted {
             if let Some(line) = output_lines.get(line_idx) {
-                self.filtered_lines.push((line_idx, line.clone()));
+                filtered_lines.push((line_idx, line.clone()));
             }
         }
+        self.filtered_lines = filtered_lines;
+        self.bump_filtered_generation();
 
         self.scroll_offset = 0;
         let current_match = self.ensure_current_match(command_idx, &regex);
@@ -1378,7 +1451,7 @@ impl CommandRunnerState {
         self.screen_rows = size.rows;
         self.screen_cols = size.cols;
 
-        match &self.view_mode {
+        match self.view_mode.clone() {
             ViewMode::List => self.render_list_view(term),
             ViewMode::Output { .. } | ViewMode::Filter { .. } => self.render_output_view(term),
             ViewMode::ConfirmQuit => self.render_confirm_quit(term),
@@ -1549,12 +1622,22 @@ impl CommandRunnerState {
         Ok(())
     }
 
-    fn render_output_view(&self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
+    fn render_output_view(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
         let cmd_idx = match self.current_command_idx() {
             Some(idx) => idx,
             None => return Ok(()),
         };
-        let cmd = &self.commands[cmd_idx];
+        let (status, cmd_title, status_color, exit_code) = {
+            let cmd = &self.commands[cmd_idx];
+            let status = cmd.status.clone();
+            let cmd_title = cmd.title().to_string();
+            let status_color = cmd.status.color();
+            let exit_code = match cmd.status {
+                CommandStatus::Failed(code) => Some(code.to_string()),
+                _ => None,
+            };
+            (status, cmd_title, status_color, exit_code)
+        };
 
         let filter_active = matches!(self.view_mode, ViewMode::Filter { .. });
         let cursor_visibility = if filter_active {
@@ -1571,23 +1654,17 @@ impl CommandRunnerState {
             x: Position::Absolute(0),
             y: Position::Absolute(0),
         });
-        let status = match cmd.status {
+        let status = match status {
             CommandStatus::Pending => "Pending",
             CommandStatus::Running => "Running",
             CommandStatus::Success(_) => "Success",
             CommandStatus::Failed(_) => "Failed",
             CommandStatus::Killed => "Killed",
         };
-        let cmd_title = cmd.title();
-        let status_color = cmd.status.color();
         let label_fg = self.colors.output_label_fg;
         let separator_fg = self.colors.separator_fg;
         let margin_fg = self.colors.margin_fg;
         let line_number_fg = self.colors.line_number_fg;
-        let exit_code = match cmd.status {
-            CommandStatus::Failed(code) => Some(code.to_string()),
-            _ => None,
-        };
         let mut remaining = self.screen_cols;
         let mut push_segment = |text: &str, color: Option<ColorAttribute>| {
             if remaining == 0 || text.is_empty() {
@@ -1607,7 +1684,7 @@ impl CommandRunnerState {
         push_segment("Command", Some(label_fg));
         push_segment(":", None);
         push_segment(" ", None);
-        push_segment(cmd_title, None);
+        push_segment(&cmd_title, None);
         push_segment(" │ ", Some(separator_fg));
         push_segment("Status", Some(label_fg));
         push_segment(":", None);
@@ -1627,16 +1704,16 @@ impl CommandRunnerState {
                 mode,
                 context,
                 ..
-            } => (pattern.as_str(), *mode, *context),
+            } => (pattern.clone(), *mode, *context),
             _ => {
                 if let Some(af) = self
                     .active_filter
                     .as_ref()
                     .filter(|af| af.command_idx == cmd_idx)
                 {
-                    (af.pattern.as_str(), af.mode, af.context)
+                    (af.pattern.clone(), af.mode, af.context)
                 } else {
-                    ("", SearchMode::default(), DEFAULT_CONTEXT_LINES)
+                    (String::new(), SearchMode::default(), DEFAULT_CONTEXT_LINES)
                 }
             }
         };
@@ -1675,7 +1752,7 @@ impl CommandRunnerState {
         push_search_segment("Search", Some(label_fg));
         push_search_segment(":", None);
         push_search_segment(" ", None);
-        push_search_segment(search_pattern, None);
+        push_search_segment(&search_pattern, None);
         if remaining > 0 {
             changes.push(Change::Text(" ".repeat(remaining)));
         }
@@ -1744,7 +1821,7 @@ impl CommandRunnerState {
             }
             line_number
         };
-        let match_locations = Self::match_locations_from_rows(&rows);
+        let match_locations = Self::match_locations_from_rows(rows.as_ref());
         let current_match_id = if self.current_match_command == Some(cmd_idx) {
             self.current_match_idx
                 .and_then(|idx| match_locations.get(idx).map(|loc| loc.match_id))
@@ -2387,7 +2464,7 @@ impl CommandRunnerState {
                 {
                     self.clear_active_filter();
                 } else {
-                    self.filtered_lines.clear();
+                    self.clear_filtered_lines();
                 }
                 self.view_mode = ViewMode::Filter {
                     command_idx,
@@ -2409,7 +2486,7 @@ impl CommandRunnerState {
                     self.view_mode = ViewMode::Output { command_idx };
                     self.apply_filter(&pattern, mode, context);
                 } else {
-                    self.filtered_lines.clear();
+                    self.clear_filtered_lines();
                     self.view_mode = ViewMode::Output { command_idx };
                     self.reset_current_line_to_scroll_offset();
                 }
@@ -2430,7 +2507,7 @@ impl CommandRunnerState {
                     {
                         self.clear_active_filter();
                     } else {
-                        self.filtered_lines.clear();
+                        self.clear_filtered_lines();
                     }
                 } else {
                     // Save filter params for streaming updates
@@ -2716,6 +2793,7 @@ pub fn show_command_runner_overlay(
                         cmd.line_byte_lengths.clear();
                         cmd.pending_line.clear();
                         cmd.output_size = 0;
+                        cmd.output_generation = cmd.output_generation.wrapping_add(1);
                         cmd.start_time = Some(Instant::now());
                         cmd.end_time = None;
                         dirty = true;
