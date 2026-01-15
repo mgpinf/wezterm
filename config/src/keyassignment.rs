@@ -920,17 +920,65 @@ pub struct DisplayText {
 /// A single command to run in the CommandRunner overlay.
 /// Uses similar syntax to `wezterm.run_child_process` where `args` contains
 /// the command as the first element followed by its arguments.
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, PartialEq, ToDynamic)]
 pub struct CommandRunnerCommand {
     /// Display title for this command (defaults to args[0] if not specified)
-    #[dynamic(default)]
     pub title: Option<String>,
     /// The command and its arguments (first element is the program)
     pub args: Vec<String>,
-    #[dynamic(default)]
     pub cwd: Option<String>,
-    #[dynamic(default)]
     pub set_environment_variables: HashMap<String, String>,
+}
+
+impl FromDynamic for CommandRunnerCommand {
+    fn from_dynamic(
+        value: &wezterm_dynamic::Value,
+        options: wezterm_dynamic::FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        let obj = match value {
+            wezterm_dynamic::Value::Object(obj) => obj,
+            _ => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "CommandRunnerCommand must be an object".to_string(),
+                ))
+            }
+        };
+
+        let title = obj
+            .get_by_str("title")
+            .map(|v| String::from_dynamic(v, options))
+            .transpose()?;
+
+        let args: Vec<String> = obj
+            .get_by_str("args")
+            .map(|v| Vec::<String>::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or_default();
+
+        if args.is_empty() {
+            return Err(wezterm_dynamic::Error::Message(
+                "CommandRunnerCommand 'args' must not be empty".to_string(),
+            ));
+        }
+
+        let cwd = obj
+            .get_by_str("cwd")
+            .map(|v| String::from_dynamic(v, options))
+            .transpose()?;
+
+        let set_environment_variables = obj
+            .get_by_str("set_environment_variables")
+            .map(|v| HashMap::<String, String>::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(Self {
+            title,
+            args,
+            cwd,
+            set_environment_variables,
+        })
+    }
 }
 
 /// Configuration for the CommandRunner overlay
