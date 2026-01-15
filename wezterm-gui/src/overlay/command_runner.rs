@@ -701,6 +701,10 @@ struct CommandRunnerState {
     window: Window,
 }
 
+// ============================================================================
+// Construction and Core State
+// ============================================================================
+
 impl CommandRunnerState {
     fn new(args: CommandRunner, window: Window) -> Self {
         let commands = args.commands.into_iter().map(CommandState::new).collect();
@@ -774,7 +778,13 @@ impl CommandRunnerState {
             _ => None,
         }
     }
+}
 
+// ============================================================================
+// Output Configuration and Filter State
+// ============================================================================
+
+impl CommandRunnerState {
     fn output_line_count(&self) -> usize {
         match self.current_command_idx() {
             Some(idx) => self.output_wrapped_row_count(idx),
@@ -878,7 +888,13 @@ impl CommandRunnerState {
         }
         self.cached_regex(&pattern, mode)
     }
+}
 
+// ============================================================================
+// Row Wrapping and Caching
+// ============================================================================
+
+impl CommandRunnerState {
     fn output_wrapped_rows(
         &mut self,
         command_idx: usize,
@@ -967,7 +983,13 @@ impl CommandRunnerState {
 
         count
     }
+}
 
+// ============================================================================
+// Line Navigation
+// ============================================================================
+
+impl CommandRunnerState {
     fn current_line_for(&mut self, command_idx: usize, total_rows: usize) -> Option<usize> {
         if total_rows == 0 {
             self.current_line_idx = None;
@@ -1114,7 +1136,13 @@ impl CommandRunnerState {
         self.current_line_command = Some(command_idx);
         self.current_line_idx = Some(clamped);
     }
+}
 
+// ============================================================================
+// Match Navigation
+// ============================================================================
+
+impl CommandRunnerState {
     fn match_locations_from_rows(rows: &[WrappedSegment]) -> Vec<MatchLocation> {
         // Match_ids are sequential starting from 0 and encountered in ascending order.
         // We only record the first row where each match_id appears.
@@ -1317,7 +1345,13 @@ impl CommandRunnerState {
         self.current_line_idx = Some(row_idx);
         self.reveal_current_line(row_idx);
     }
+}
 
+// ============================================================================
+// Filter Management
+// ============================================================================
+
+impl CommandRunnerState {
     fn reapply_filter(&mut self) {
         // Use active_filter if set (for streaming updates after Enter)
         // or get from current Filter view mode
@@ -1436,7 +1470,13 @@ impl CommandRunnerState {
             self.reset_current_line_to_scroll_offset();
         }
     }
+}
 
+// ============================================================================
+// View and Scrolling
+// ============================================================================
+
+impl CommandRunnerState {
     fn visible_output_rows(&self) -> usize {
         // Reserve rows for header, search line, context line, separator, and footer
         self.screen_rows.saturating_sub(5)
@@ -1487,7 +1527,13 @@ impl CommandRunnerState {
         self.scroll_offset = max_offset;
         self.reset_current_line_to_scroll_offset();
     }
+}
 
+// ============================================================================
+// Rendering
+// ============================================================================
+
+impl CommandRunnerState {
     fn render(&mut self, term: &mut TermWizTerminal) -> anyhow::Result<()> {
         let size = term.get_screen_size()?;
         self.screen_rows = size.rows;
@@ -1929,7 +1975,13 @@ impl CommandRunnerState {
 
         Ok(())
     }
+}
 
+// ============================================================================
+// Input Handling
+// ============================================================================
+
+impl CommandRunnerState {
     fn handle_input(
         &mut self,
         event: InputEvent,
