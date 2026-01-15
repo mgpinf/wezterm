@@ -1337,11 +1337,6 @@ impl CommandRunnerState {
             }
         };
 
-        let output_lines: VecDeque<String> = match self.current_command() {
-            Some(c) => c.output_lines.clone(),
-            None => return,
-        };
-
         let regex = match mode {
             SearchMode::CaseInsensitive => Regex::new(&format!("(?i){}", regex::escape(pattern))),
             SearchMode::CaseSensitive => Regex::new(&regex::escape(pattern)),
@@ -1356,31 +1351,34 @@ impl CommandRunnerState {
             }
         };
 
-        let mut matching_lines: Vec<usize> = Vec::new();
-        for (line_idx, line) in output_lines.iter().enumerate() {
-            if regex.is_match(line) {
-                matching_lines.push(line_idx);
+        let (filtered_lines, any_matches) = if let Some(cmd) = self.current_command() {
+            let mut include = vec![false; cmd.output_lines.len()];
+            let mut any_matches = false;
+            for (line_idx, line) in cmd.output_lines.iter().enumerate() {
+                if regex.is_match(line) {
+                    any_matches = true;
+                    let start = line_idx.saturating_sub(context);
+                    let end = (line_idx + context + 1).min(cmd.output_lines.len());
+                    for i in start..end {
+                        include[i] = true;
+                    }
+                }
             }
-        }
 
-        let mut included: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for &line_idx in &matching_lines {
-            let start = line_idx.saturating_sub(context);
-            let end = (line_idx + context + 1).min(output_lines.len());
-            for i in start..end {
-                included.insert(i);
+            let mut filtered_lines = Vec::new();
+            if any_matches {
+                filtered_lines.reserve(include.iter().filter(|flag| **flag).count());
+                for (line_idx, line) in cmd.output_lines.iter().enumerate() {
+                    if include[line_idx] {
+                        filtered_lines.push((line_idx, line.clone()));
+                    }
+                }
             }
-        }
+            (filtered_lines, any_matches)
+        } else {
+            return;
+        };
 
-        let mut sorted: Vec<usize> = included.into_iter().collect();
-        sorted.sort();
-
-        let mut filtered_lines = Vec::with_capacity(sorted.len());
-        for line_idx in sorted {
-            if let Some(line) = output_lines.get(line_idx) {
-                filtered_lines.push((line_idx, line.clone()));
-            }
-        }
         self.filtered_lines = filtered_lines;
         self.bump_filtered_generation();
 
