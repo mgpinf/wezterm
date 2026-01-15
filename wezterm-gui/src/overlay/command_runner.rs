@@ -620,6 +620,13 @@ struct ActiveFilter {
 }
 
 #[derive(Debug, Clone)]
+struct RegexCache {
+    pattern: String,
+    mode: SearchMode,
+    regex: Regex,
+}
+
+#[derive(Debug, Clone)]
 struct WrappedRowsCache {
     command_idx: usize,
     max_width: usize,
@@ -640,6 +647,7 @@ struct CommandRunnerState {
     active_filter: Option<ActiveFilter>,  // Persists filter params for streaming updates
     filtered_generation: u64,
     wrapped_rows_cache: Option<WrappedRowsCache>,
+    regex_cache: Option<RegexCache>,
     current_match_idx: Option<usize>,
     current_match_command: Option<usize>,
     current_line_idx: Option<usize>,
@@ -667,6 +675,7 @@ impl CommandRunnerState {
             active_filter: None,
             filtered_generation: 0,
             wrapped_rows_cache: None,
+            regex_cache: None,
             current_match_idx: None,
             current_match_command: None,
             current_line_idx: None,
@@ -802,7 +811,28 @@ impl CommandRunnerState {
             .max(1)
     }
 
-    fn active_search_regex_for(&self, command_idx: usize) -> Option<Regex> {
+    fn cached_regex(&mut self, pattern: &str, mode: SearchMode) -> Option<Regex> {
+        if pattern.is_empty() {
+            self.regex_cache = None;
+            return None;
+        }
+
+        if let Some(cache) = &self.regex_cache {
+            if cache.mode == mode && cache.pattern == pattern {
+                return Some(cache.regex.clone());
+            }
+        }
+
+        let regex = compile_search_regex(pattern, mode)?;
+        self.regex_cache = Some(RegexCache {
+            pattern: pattern.to_string(),
+            mode,
+            regex: regex.clone(),
+        });
+        Some(regex)
+    }
+
+    fn active_search_regex_for(&mut self, command_idx: usize) -> Option<Regex> {
         let (pattern, mode) = match &self.view_mode {
             ViewMode::Filter {
                 command_idx: filter_idx,
@@ -813,16 +843,16 @@ impl CommandRunnerState {
                 if pattern.is_empty() {
                     return None;
                 }
-                Some((pattern.as_str(), *mode))
+                Some((pattern.clone(), *mode))
             }
             _ => self
                 .active_filter
                 .as_ref()
                 .filter(|af| af.command_idx == command_idx && !af.pattern.is_empty())
-                .map(|af| (af.pattern.as_str(), af.mode)),
+                .map(|af| (af.pattern.clone(), af.mode)),
         }?;
 
-        compile_search_regex(pattern, mode)
+        self.cached_regex(&pattern, mode)
     }
 
     fn output_wrapped_rows(
@@ -1337,26 +1367,18 @@ impl CommandRunnerState {
             }
         };
 
-        let regex = match mode {
-            SearchMode::CaseInsensitive => Regex::new(&format!("(?i){}", regex::escape(pattern))),
-            SearchMode::CaseSensitive => Regex::new(&regex::escape(pattern)),
-            SearchMode::Regex => Regex::new(pattern),
-        };
-
-        let regex = match regex {
-            Ok(r) => r,
-            Err(_) => {
+        let regex = match self.cached_regex(pattern, mode) {
+            Some(regex) => regex,
+            None => {
                 self.clear_filtered_lines();
                 return;
             }
         };
 
-        let (filtered_lines, any_matches) = if let Some(cmd) = self.current_command() {
+        let filtered_lines = if let Some(cmd) = self.current_command() {
             let mut include = vec![false; cmd.output_lines.len()];
-            let mut any_matches = false;
             for (line_idx, line) in cmd.output_lines.iter().enumerate() {
                 if regex.is_match(line) {
-                    any_matches = true;
                     let start = line_idx.saturating_sub(context);
                     let end = (line_idx + context + 1).min(cmd.output_lines.len());
                     for i in start..end {
@@ -1365,16 +1387,14 @@ impl CommandRunnerState {
                 }
             }
 
-            let mut filtered_lines = Vec::new();
-            if any_matches {
-                filtered_lines.reserve(include.iter().filter(|flag| **flag).count());
-                for (line_idx, line) in cmd.output_lines.iter().enumerate() {
-                    if include[line_idx] {
-                        filtered_lines.push((line_idx, line.clone()));
-                    }
+            let included_count = include.iter().filter(|flag| **flag).count();
+            let mut filtered_lines = Vec::with_capacity(included_count);
+            for (line_idx, line) in cmd.output_lines.iter().enumerate() {
+                if include[line_idx] {
+                    filtered_lines.push((line_idx, line.clone()));
                 }
             }
-            (filtered_lines, any_matches)
+            filtered_lines
         } else {
             return;
         };
