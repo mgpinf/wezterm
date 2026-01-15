@@ -329,10 +329,12 @@ fn push_text_with_highlights(
         } else {
             (colors.match_bg, colors.match_fg)
         };
-        changes.push(AttributeChange::Background(bg).into());
-        changes.push(AttributeChange::Foreground(fg).into());
-        changes.push(Change::Text(segment.text[start_byte..end_byte].to_string()));
-        changes.push(Change::AllAttributes(Default::default()));
+        changes.extend([
+            AttributeChange::Background(bg).into(),
+            AttributeChange::Foreground(fg).into(),
+            Change::Text(segment.text[start_byte..end_byte].to_string()),
+            Change::AllAttributes(Default::default()),
+        ]);
 
         last_byte = end_byte;
     }
@@ -1535,26 +1537,24 @@ impl CommandRunnerState {
             Change::CursorVisibility(cursor_visibility),
         ];
 
-        changes.push(Change::CursorPosition {
-            x: Position::Absolute(0),
-            y: Position::Absolute(0),
-        });
         let title = "Command Runner";
-        changes.push(AttributeChange::Intensity(Intensity::Bold).into());
-        changes.push(AttributeChange::Foreground(self.colors.list_header_fg).into());
-        changes.push(Change::Text(format!(
-            "{:<width$}",
-            title,
-            width = self.screen_cols
-        )));
-        changes.push(Change::AllAttributes(Default::default()));
-        changes.push(Change::CursorPosition {
-            x: Position::Absolute(0),
-            y: Position::Absolute(1),
-        });
-        changes.push(AttributeChange::Foreground(self.colors.separator_fg).into());
-        changes.push(Change::Text("─".repeat(self.screen_cols)));
-        changes.push(Change::AllAttributes(Default::default()));
+        changes.extend([
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(0),
+            },
+            AttributeChange::Intensity(Intensity::Bold).into(),
+            AttributeChange::Foreground(self.colors.list_header_fg).into(),
+            Change::Text(format!("{:<width$}", title, width = self.screen_cols)),
+            Change::AllAttributes(Default::default()),
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(1),
+            },
+            AttributeChange::Foreground(self.colors.separator_fg).into(),
+            Change::Text("─".repeat(self.screen_cols)),
+            Change::AllAttributes(Default::default()),
+        ]);
 
         let visible_rows = self.visible_list_rows();
         let start_row = 2;
@@ -1579,9 +1579,11 @@ impl CommandRunnerState {
             let is_selected = idx == self.list_selection;
 
             if is_selected {
-                changes.push(AttributeChange::Foreground(self.colors.list_marker_fg).into());
-                changes.push(Change::Text("▌ ".to_string()));
-                changes.push(Change::AllAttributes(Default::default()));
+                changes.extend([
+                    AttributeChange::Foreground(self.colors.list_marker_fg).into(),
+                    Change::Text("▌ ".to_string()),
+                    Change::AllAttributes(Default::default()),
+                ]);
             } else {
                 changes.push(Change::Text("  ".to_string()));
             }
@@ -1601,13 +1603,15 @@ impl CommandRunnerState {
                 CommandStatus::Failed(_) => "✖",
                 CommandStatus::Killed => "⏹",
             };
-            changes.push(Change::AllAttributes(
-                termwiz::cell::CellAttributes::default()
-                    .set_foreground(cmd.status.color())
-                    .clone(),
-            ));
-            changes.push(Change::Text(format!("{} ", status_char)));
-            changes.push(Change::AllAttributes(Default::default()));
+            changes.extend([
+                Change::AllAttributes(
+                    termwiz::cell::CellAttributes::default()
+                        .set_foreground(cmd.status.color())
+                        .clone(),
+                ),
+                Change::Text(format!("{} ", status_char)),
+                Change::AllAttributes(Default::default()),
+            ]);
 
             let status_field_width: usize = 16;
             let title_width = self.screen_cols.saturating_sub(40);
@@ -1648,20 +1652,26 @@ impl CommandRunnerState {
             }
             let status_padding = status_field_width.saturating_sub(status_len);
 
-            changes.push(Change::AllAttributes(status_attrs.clone()));
-            changes.push(Change::Text(" ".to_string()));
-            changes.push(Change::Text(status_label.to_string()));
+            changes.extend([
+                Change::AllAttributes(status_attrs.clone()),
+                Change::Text(" ".to_string()),
+                Change::Text(status_label.to_string()),
+            ]);
             if let Some(code) = exit_code_string {
-                changes.push(Change::AllAttributes(Default::default()));
-                changes.push(Change::Text(" [".to_string()));
-                changes.push(Change::AllAttributes(status_attrs.clone()));
-                changes.push(Change::Text(code));
-                changes.push(Change::AllAttributes(Default::default()));
-                changes.push(Change::Text("]".to_string()));
+                changes.extend([
+                    Change::AllAttributes(Default::default()),
+                    Change::Text(" [".to_string()),
+                    Change::AllAttributes(status_attrs.clone()),
+                    Change::Text(code),
+                    Change::AllAttributes(Default::default()),
+                    Change::Text("]".to_string()),
+                ]);
             }
             if status_padding > 0 {
-                changes.push(Change::AllAttributes(Default::default()));
-                changes.push(Change::Text(" ".repeat(status_padding)));
+                changes.extend([
+                    Change::AllAttributes(Default::default()),
+                    Change::Text(" ".repeat(status_padding)),
+                ]);
             }
             changes.push(Change::AllAttributes(Default::default()));
 
@@ -1675,11 +1685,13 @@ impl CommandRunnerState {
             }
         }
 
-        changes.push(Change::CursorPosition {
-            x: Position::Absolute(0),
-            y: Position::Absolute(self.screen_rows - 1),
-        });
-        changes.push(Change::Text(" ".repeat(self.screen_cols)));
+        changes.extend([
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(self.screen_rows - 1),
+            },
+            Change::Text(" ".repeat(self.screen_cols)),
+        ]);
 
         term.render(&changes)?;
         term.flush()?;
@@ -1797,13 +1809,15 @@ impl CommandRunnerState {
             writer.push(mode.display(), None);
             writer.fill_remaining();
         }
-        changes.push(Change::CursorPosition {
-            x: Position::Absolute(0),
-            y: Position::Absolute(3),
-        });
-        changes.push(AttributeChange::Foreground(margin_fg).into());
-        changes.push(Change::Text("─".repeat(self.screen_cols)));
-        changes.push(Change::AllAttributes(Default::default()));
+        changes.extend([
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(3),
+            },
+            AttributeChange::Foreground(margin_fg).into(),
+            Change::Text("─".repeat(self.screen_cols)),
+            Change::AllAttributes(Default::default()),
+        ]);
 
         let visible_rows = self.visible_output_rows();
         let start_row = 4;
@@ -1880,18 +1894,22 @@ impl CommandRunnerState {
         }
 
         // Footer bar (blank)
-        changes.push(Change::CursorPosition {
-            x: Position::Absolute(0),
-            y: Position::Absolute(self.screen_rows - 1),
-        });
-        changes.push(Change::Text(" ".repeat(self.screen_cols)));
+        changes.extend([
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(self.screen_rows - 1),
+            },
+            Change::Text(" ".repeat(self.screen_cols)),
+        ]);
 
         if let Some(cursor_x) = filter_cursor_x {
-            changes.push(Change::CursorVisibility(CursorVisibility::Visible));
-            changes.push(Change::CursorPosition {
-                x: Position::Absolute(cursor_x),
-                y: Position::Absolute(1),
-            });
+            changes.extend([
+                Change::CursorVisibility(CursorVisibility::Visible),
+                Change::CursorPosition {
+                    x: Position::Absolute(cursor_x),
+                    y: Position::Absolute(1),
+                },
+            ]);
         }
 
         term.render(&changes)?;
@@ -1931,11 +1949,13 @@ impl CommandRunnerState {
             changes.push(Change::Text(row.trim_end().to_string()));
         }
 
-        changes.push(Change::CursorPosition {
-            x: Position::Absolute(x_pos),
-            y: Position::Absolute(button_row),
-        });
-        changes.push(Change::Text("[Y]es    [N]o".to_string()));
+        changes.extend([
+            Change::CursorPosition {
+                x: Position::Absolute(x_pos),
+                y: Position::Absolute(button_row),
+            },
+            Change::Text("[Y]es    [N]o".to_string()),
+        ]);
 
         term.render(&changes)?;
         term.flush()?;
