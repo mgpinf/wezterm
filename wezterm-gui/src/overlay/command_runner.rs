@@ -117,7 +117,7 @@ fn char_column_width(c: char) -> usize {
 }
 
 fn str_column_width(s: &str) -> usize {
-    s.chars().map(char_column_width).sum()
+    unicode_column_width(s, None)
 }
 
 fn compile_search_regex(pattern: &str, mode: SearchMode) -> Option<Regex> {
