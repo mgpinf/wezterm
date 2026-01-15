@@ -6,7 +6,7 @@ use regex::Regex;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::process::{Child, Command, Stdio};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use termwiz::cell::{AttributeChange, Intensity};
@@ -1135,7 +1135,9 @@ impl CommandRunnerState {
     }
 
     fn match_locations_from_rows(rows: &[WrappedSegment]) -> Vec<MatchLocation> {
-        let mut locations: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+        // Match_ids are sequential starting from 0 and encountered in ascending order.
+        // We only record the first row where each match_id appears.
+        let mut locations: Vec<MatchLocation> = Vec::new();
         let mut current_line_number = None;
         for (row_idx, segment) in rows.iter().enumerate() {
             if segment.line_number.is_some() {
@@ -1143,19 +1145,17 @@ impl CommandRunnerState {
             }
             let line_number = current_line_number.unwrap_or(0);
             for hl in &segment.highlights {
-                locations
-                    .entry(hl.match_id)
-                    .or_insert((row_idx, line_number));
+                // Only record first occurrence of each match_id
+                if hl.match_id == locations.len() {
+                    locations.push(MatchLocation {
+                        match_id: hl.match_id,
+                        row_idx,
+                        line_number,
+                    });
+                }
             }
         }
         locations
-            .into_iter()
-            .map(|(match_id, (row_idx, line_number))| MatchLocation {
-                match_id,
-                row_idx,
-                line_number,
-            })
-            .collect()
     }
 
     fn match_locations_for(&mut self, command_idx: usize, regex: &Regex) -> Vec<MatchLocation> {
