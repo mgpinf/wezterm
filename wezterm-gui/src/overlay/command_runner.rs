@@ -362,6 +362,44 @@ fn wrapped_row_count(line: &str, max_width: usize) -> usize {
     count
 }
 
+/// Helper for rendering segments with optional colors and width limiting.
+/// This avoids duplicating the push_segment closure pattern across render methods.
+struct SegmentWriter<'a> {
+    changes: &'a mut Vec<Change>,
+    remaining: usize,
+}
+
+impl<'a> SegmentWriter<'a> {
+    fn new(changes: &'a mut Vec<Change>, max_width: usize) -> Self {
+        Self {
+            changes,
+            remaining: max_width,
+        }
+    }
+
+    fn push(&mut self, text: &str, color: Option<ColorAttribute>) {
+        if self.remaining == 0 || text.is_empty() {
+            return;
+        }
+        let segment: String = text.chars().take(self.remaining).collect();
+        self.remaining = self.remaining.saturating_sub(segment.chars().count());
+        if let Some(color) = color {
+            self.changes.push(AttributeChange::Foreground(color).into());
+        }
+        self.changes.push(Change::Text(segment));
+        if color.is_some() {
+            self.changes.push(Change::AllAttributes(Default::default()));
+        }
+    }
+
+    fn fill_remaining(&mut self) {
+        if self.remaining > 0 {
+            self.changes.push(Change::Text(" ".repeat(self.remaining)));
+            self.remaining = 0;
+        }
+    }
+}
+
 /// Status of a command
 #[derive(Debug, Clone, PartialEq)]
 enum CommandStatus {
@@ -1688,37 +1726,26 @@ impl CommandRunnerState {
         let separator_fg = self.colors.separator_fg;
         let margin_fg = self.colors.margin_fg;
         let line_number_fg = self.colors.line_number_fg;
-        let mut remaining = self.screen_cols;
-        let mut push_segment = |text: &str, color: Option<ColorAttribute>| {
-            if remaining == 0 || text.is_empty() {
-                return;
-            }
-            let segment: String = text.chars().take(remaining).collect();
-            remaining = remaining.saturating_sub(segment.chars().count());
-            if let Some(color) = color {
-                changes.push(AttributeChange::Foreground(color).into());
-            }
-            changes.push(Change::Text(segment));
-            if color.is_some() {
-                changes.push(Change::AllAttributes(Default::default()));
-            }
-        };
 
-        push_segment("Command", Some(label_fg));
-        push_segment(":", None);
-        push_segment(" ", None);
-        push_segment(&cmd_title, None);
-        push_segment(" │ ", Some(separator_fg));
-        push_segment("Status", Some(label_fg));
-        push_segment(":", None);
-        push_segment(" ", None);
-        push_segment(status, Some(status_color));
-        if let Some(code) = exit_code.as_deref() {
-            push_segment(" │ ", Some(separator_fg));
-            push_segment("Exit Code", Some(label_fg));
-            push_segment(":", None);
-            push_segment(" ", None);
-            push_segment(code, Some(status_color));
+        // Header line: Command: <title> │ Status: <status> [│ Exit Code: <code>]
+        {
+            let mut writer = SegmentWriter::new(&mut changes, self.screen_cols);
+            writer.push("Command", Some(label_fg));
+            writer.push(":", None);
+            writer.push(" ", None);
+            writer.push(&cmd_title, None);
+            writer.push(" │ ", Some(separator_fg));
+            writer.push("Status", Some(label_fg));
+            writer.push(":", None);
+            writer.push(" ", None);
+            writer.push(status, Some(status_color));
+            if let Some(code) = exit_code.as_deref() {
+                writer.push(" │ ", Some(separator_fg));
+                writer.push("Exit Code", Some(label_fg));
+                writer.push(":", None);
+                writer.push(" ", None);
+                writer.push(code, Some(status_color));
+            }
         }
 
         let (search_pattern, mode, context) = match &self.view_mode {
@@ -1757,58 +1784,32 @@ impl CommandRunnerState {
             x: Position::Absolute(0),
             y: Position::Absolute(1),
         });
-        let mut remaining = self.screen_cols;
-        let mut push_search_segment = |text: &str, color: Option<ColorAttribute>| {
-            if remaining == 0 || text.is_empty() {
-                return;
-            }
-            let segment: String = text.chars().take(remaining).collect();
-            remaining = remaining.saturating_sub(segment.chars().count());
-            if let Some(color) = color {
-                changes.push(AttributeChange::Foreground(color).into());
-            }
-            changes.push(Change::Text(segment));
-            if color.is_some() {
-                changes.push(Change::AllAttributes(Default::default()));
-            }
-        };
-        push_search_segment("Search", Some(label_fg));
-        push_search_segment(":", None);
-        push_search_segment(" ", None);
-        push_search_segment(&search_pattern, None);
-        if remaining > 0 {
-            changes.push(Change::Text(" ".repeat(remaining)));
+        // Search line: Search: <pattern>
+        {
+            let mut writer = SegmentWriter::new(&mut changes, self.screen_cols);
+            writer.push("Search", Some(label_fg));
+            writer.push(":", None);
+            writer.push(" ", None);
+            writer.push(&search_pattern, None);
+            writer.fill_remaining();
         }
         changes.push(Change::CursorPosition {
             x: Position::Absolute(0),
             y: Position::Absolute(2),
         });
-        let mut remaining = self.screen_cols;
-        let mut push_context_segment = |text: &str, color: Option<ColorAttribute>| {
-            if remaining == 0 || text.is_empty() {
-                return;
-            }
-            let segment: String = text.chars().take(remaining).collect();
-            remaining = remaining.saturating_sub(segment.chars().count());
-            if let Some(color) = color {
-                changes.push(AttributeChange::Foreground(color).into());
-            }
-            changes.push(Change::Text(segment));
-            if color.is_some() {
-                changes.push(Change::AllAttributes(Default::default()));
-            }
-        };
-        push_context_segment("Context", Some(label_fg));
-        push_context_segment(":", None);
-        push_context_segment(" ", None);
-        push_context_segment(&format!("±{}", context), None);
-        push_context_segment(" │ ", Some(separator_fg));
-        push_context_segment("Mode", Some(label_fg));
-        push_context_segment(":", None);
-        push_context_segment(" ", None);
-        push_context_segment(mode.display(), None);
-        if remaining > 0 {
-            changes.push(Change::Text(" ".repeat(remaining)));
+        // Context line: Context: ±<n> │ Mode: <mode>
+        {
+            let mut writer = SegmentWriter::new(&mut changes, self.screen_cols);
+            writer.push("Context", Some(label_fg));
+            writer.push(":", None);
+            writer.push(" ", None);
+            writer.push(&format!("±{}", context), None);
+            writer.push(" │ ", Some(separator_fg));
+            writer.push("Mode", Some(label_fg));
+            writer.push(":", None);
+            writer.push(" ", None);
+            writer.push(mode.display(), None);
+            writer.fill_remaining();
         }
         changes.push(Change::CursorPosition {
             x: Position::Absolute(0),
