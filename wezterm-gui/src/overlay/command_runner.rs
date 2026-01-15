@@ -850,6 +850,25 @@ impl CommandRunnerState {
             .max(1)
     }
 
+    /// Get filter parameters for a command, checking ViewMode::Filter first, then active_filter.
+    /// Returns (pattern, mode, context) or default values if no filter is active.
+    fn get_filter_params(&self, command_idx: usize) -> (String, SearchMode, usize) {
+        match &self.view_mode {
+            ViewMode::Filter {
+                command_idx: filter_idx,
+                pattern,
+                mode,
+                context,
+            } if *filter_idx == command_idx => (pattern.clone(), *mode, *context),
+            _ => self
+                .active_filter
+                .as_ref()
+                .filter(|af| af.command_idx == command_idx)
+                .map(|af| (af.pattern.clone(), af.mode, af.context))
+                .unwrap_or_else(|| (String::new(), SearchMode::default(), DEFAULT_CONTEXT_LINES)),
+        }
+    }
+
     fn cached_regex(&mut self, pattern: &str, mode: SearchMode) -> Option<Regex> {
         if pattern.is_empty() {
             self.regex_cache = None;
@@ -872,25 +891,10 @@ impl CommandRunnerState {
     }
 
     fn active_search_regex_for(&mut self, command_idx: usize) -> Option<Regex> {
-        let (pattern, mode) = match &self.view_mode {
-            ViewMode::Filter {
-                command_idx: filter_idx,
-                pattern,
-                mode,
-                ..
-            } if *filter_idx == command_idx => {
-                if pattern.is_empty() {
-                    return None;
-                }
-                Some((pattern.clone(), *mode))
-            }
-            _ => self
-                .active_filter
-                .as_ref()
-                .filter(|af| af.command_idx == command_idx && !af.pattern.is_empty())
-                .map(|af| (af.pattern.clone(), af.mode)),
-        }?;
-
+        let (pattern, mode, _) = self.get_filter_params(command_idx);
+        if pattern.is_empty() {
+            return None;
+        }
         self.cached_regex(&pattern, mode)
     }
 
@@ -1748,25 +1752,7 @@ impl CommandRunnerState {
             }
         }
 
-        let (search_pattern, mode, context) = match &self.view_mode {
-            ViewMode::Filter {
-                pattern,
-                mode,
-                context,
-                ..
-            } => (pattern.clone(), *mode, *context),
-            _ => {
-                if let Some(af) = self
-                    .active_filter
-                    .as_ref()
-                    .filter(|af| af.command_idx == cmd_idx)
-                {
-                    (af.pattern.clone(), af.mode, af.context)
-                } else {
-                    (String::new(), SearchMode::default(), DEFAULT_CONTEXT_LINES)
-                }
-            }
-        };
+        let (search_pattern, mode, context) = self.get_filter_params(cmd_idx);
         let search_line = if search_pattern.is_empty() {
             "Search: ".to_string()
         } else {
@@ -2269,18 +2255,7 @@ impl CommandRunnerState {
                 modifiers: Modifiers::NONE,
             }) => {
                 self.reset_count();
-                let (pattern, mode, context) = self
-                    .active_filter
-                    .as_ref()
-                    .filter(|af| af.command_idx == command_idx)
-                    .map(|af| (af.pattern.clone(), af.mode, af.context))
-                    .unwrap_or_else(|| {
-                        (
-                            String::new(),
-                            SearchMode::CaseSensitive,
-                            DEFAULT_CONTEXT_LINES,
-                        )
-                    });
+                let (pattern, mode, context) = self.get_filter_params(command_idx);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
                     pattern,
