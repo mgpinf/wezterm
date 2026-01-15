@@ -1516,7 +1516,7 @@ impl CommandRunnerState {
         self.screen_rows = size.rows;
         self.screen_cols = size.cols;
 
-        match self.view_mode.clone() {
+        match &self.view_mode {
             ViewMode::List => self.render_list_view(term),
             ViewMode::Output { .. } | ViewMode::Filter { .. } => self.render_output_view(term),
             ViewMode::ConfirmQuit => self.render_confirm_quit(term),
@@ -1948,7 +1948,7 @@ impl CommandRunnerState {
         event: InputEvent,
         process_tx: &Sender<ProcessMessage>,
     ) -> ControlFlow {
-        match &self.view_mode.clone() {
+        match &self.view_mode {
             ViewMode::List => self.handle_list_input(event, process_tx),
             ViewMode::Output { command_idx } => {
                 self.handle_output_input(event, *command_idx, process_tx)
