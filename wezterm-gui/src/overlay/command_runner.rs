@@ -220,6 +220,34 @@ fn wrap_line_with_highlights(
         }];
     }
 
+    // Helper to compute local highlights for a segment
+    fn compute_segment_highlights(
+        highlights: &[HighlightRange],
+        start_cell: usize,
+        width: usize,
+    ) -> Vec<HighlightRange> {
+        let end_cell = start_cell + width;
+        let mut segment_highlights: Vec<HighlightRange> = highlights
+            .iter()
+            .filter_map(|hl| {
+                if hl.start < end_cell && hl.end > start_cell {
+                    let local_start = hl.start.saturating_sub(start_cell);
+                    let local_end = (hl.end - start_cell).min(width);
+                    if local_start < local_end {
+                        return Some(HighlightRange {
+                            start: local_start,
+                            end: local_end,
+                            match_id: hl.match_id,
+                        });
+                    }
+                }
+                None
+            })
+            .collect();
+        segment_highlights.sort_by_key(|hl| hl.start);
+        segment_highlights
+    }
+
     let mut segments = Vec::new();
     let mut current_width = 0;
     let mut current_start_cell = 0;
@@ -232,24 +260,9 @@ fn wrap_line_with_highlights(
         let ch_width = char_column_width(ch);
         if current_width + ch_width > max_width && current_width > 0 {
             let segment_text = line[segment_start_byte..current_byte].to_string();
-            let mut segment_highlights = Vec::new();
-            let seg_end_cell = current_start_cell + current_width;
+            let segment_highlights =
+                compute_segment_highlights(highlights, current_start_cell, current_width);
 
-            for hl in highlights {
-                if hl.start < seg_end_cell && hl.end > current_start_cell {
-                    let local_start = hl.start.saturating_sub(current_start_cell);
-                    let local_end = (hl.end - current_start_cell).min(current_width);
-                    if local_start < local_end {
-                        segment_highlights.push(HighlightRange {
-                            start: local_start,
-                            end: local_end,
-                            match_id: hl.match_id,
-                        });
-                    }
-                }
-            }
-
-            segment_highlights.sort_by_key(|hl| hl.start);
             segments.push(WrappedSegment {
                 text: segment_text,
                 highlights: segment_highlights,
@@ -268,24 +281,9 @@ fn wrap_line_with_highlights(
 
     if current_byte > segment_start_byte || segments.is_empty() {
         let segment_text = line[segment_start_byte..current_byte].to_string();
-        let mut segment_highlights = Vec::new();
-        let seg_end_cell = current_start_cell + current_width;
+        let segment_highlights =
+            compute_segment_highlights(highlights, current_start_cell, current_width);
 
-        for hl in highlights {
-            if hl.start < seg_end_cell && hl.end > current_start_cell {
-                let local_start = hl.start.saturating_sub(current_start_cell);
-                let local_end = (hl.end - current_start_cell).min(current_width);
-                if local_start < local_end {
-                    segment_highlights.push(HighlightRange {
-                        start: local_start,
-                        end: local_end,
-                        match_id: hl.match_id,
-                    });
-                }
-            }
-        }
-
-        segment_highlights.sort_by_key(|hl| hl.start);
         segments.push(WrappedSegment {
             text: segment_text,
             highlights: segment_highlights,
