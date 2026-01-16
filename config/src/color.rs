@@ -262,6 +262,7 @@ pub struct Palette {
     pub scrollback_search_error_fg: Option<ColorSpec>,
     pub scrollback_search_selected_line_fg: Option<ColorSpec>,
     pub scrollback_search_fg: Option<ColorSpec>,
+    pub scrollback_search_label_fg: Option<ColorSpec>,
 }
 impl_lua_conversion_dynamic!(Palette);
 
@@ -395,6 +396,7 @@ impl Palette {
             scrollback_search_error_fg: overlay!(scrollback_search_error_fg),
             scrollback_search_selected_line_fg: overlay!(scrollback_search_selected_line_fg),
             scrollback_search_fg: overlay!(scrollback_search_fg),
+            scrollback_search_label_fg: overlay!(scrollback_search_label_fg),
         }
     }
 }

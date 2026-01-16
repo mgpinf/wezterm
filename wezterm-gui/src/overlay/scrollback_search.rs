@@ -57,6 +57,7 @@ struct ScrollbackSearchColors {
     error_fg: ColorAttribute,
     selected_line_fg: ColorAttribute,
     fg: ColorAttribute,
+    label_fg: ColorAttribute,
 }
 
 impl ScrollbackSearchColors {
@@ -106,6 +107,9 @@ impl ScrollbackSearchColors {
                 .map_or_else(|| ColorAttribute::Default, |c| c.into()),
             fg: colors
                 .scrollback_search_fg
+                .map_or_else(|| ColorAttribute::Default, |c| c.into()),
+            label_fg: colors
+                .scrollback_search_label_fg
                 .map_or_else(|| ColorAttribute::Default, |c| c.into()),
         }
     }
@@ -688,6 +692,7 @@ impl ScrollbackSearchState {
             && self.compiled_regex.is_none();
 
         let mut changes: Vec<Change> = vec![
+            AttributeChange::Foreground(self.colors.label_fg).into(),
             AttributeChange::Intensity(Intensity::Bold).into(),
             Change::Text("Search".to_string()),
             Change::AllAttributes(CellAttributes::default()),
