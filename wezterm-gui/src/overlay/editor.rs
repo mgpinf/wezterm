@@ -295,11 +295,12 @@ enum ExCommand {
     Quit,
     /// :q! - Force quit
     QuitForce,
-    /// :s/pattern/replacement/[flags] - Substitute
+    /// :s/pattern/replacement/[flags] or :%s/pattern/replacement/[flags] - Substitute
     Substitute {
         pattern: String,
         replacement: String,
         global: bool,
+        all_lines: bool,
     },
     /// :lua <expr> - Evaluate Lua
     Lua(String),
@@ -6610,13 +6611,25 @@ impl<'a> EditorState<'a> {
             _ => {}
         }
 
-        // Check for :s/pattern/replacement/[flags]
+        // Check for :%s/pattern/replacement/[flags] (all lines)
+        if input.starts_with("%s") && input.len() > 2 {
+            let rest = &input[2..];
+            if let Some(delim) = rest.chars().next() {
+                if !delim.is_alphanumeric() {
+                    if let Some(cmd) = Self::parse_substitute(rest, delim, true) {
+                        return cmd;
+                    }
+                }
+            }
+        }
+
+        // Check for :s/pattern/replacement/[flags] (current line)
         if input.starts_with('s') && input.len() > 1 {
             let rest = &input[1..];
             if let Some(delim) = rest.chars().next() {
                 // Common delimiters: /, #, @, etc.
                 if !delim.is_alphanumeric() {
-                    if let Some(cmd) = Self::parse_substitute(rest, delim) {
+                    if let Some(cmd) = Self::parse_substitute(rest, delim, false) {
                         return cmd;
                     }
                 }
@@ -6635,7 +6648,7 @@ impl<'a> EditorState<'a> {
     }
 
     /// Parse substitute command: /pattern/replacement/[flags]
-    fn parse_substitute(input: &str, delim: char) -> Option<ExCommand> {
+    fn parse_substitute(input: &str, delim: char, all_lines: bool) -> Option<ExCommand> {
         let parts: Vec<&str> = input.split(delim).collect();
 
         // parts[0] is empty (before first delimiter)
@@ -6654,6 +6667,7 @@ impl<'a> EditorState<'a> {
             pattern,
             replacement,
             global,
+            all_lines,
         })
     }
 
@@ -6674,8 +6688,9 @@ impl<'a> EditorState<'a> {
                 pattern,
                 replacement,
                 global,
+                all_lines,
             } => {
-                self.execute_substitute(&pattern, &replacement, global)?;
+                self.execute_substitute(&pattern, &replacement, global, all_lines)?;
                 Ok(false)
             }
             ExCommand::Lua(expr) => {
@@ -6692,28 +6707,42 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    /// Execute substitute on current line
+    /// Execute substitute on current line or all lines
     fn execute_substitute(
         &mut self,
         pattern: &str,
         replacement: &str,
         global: bool,
+        all_lines: bool,
     ) -> Result<(), String> {
         if pattern.is_empty() {
             return Err("Empty pattern".to_string());
         }
 
         self.save_undo_state();
-        let line = &self.lines[self.cursor.0];
+        let mut changed = false;
 
-        let new_line = if global {
-            line.replace(pattern, replacement)
+        let lines_range = if all_lines {
+            0..self.lines.len()
         } else {
-            line.replacen(pattern, replacement, 1)
+            self.cursor.0..self.cursor.0 + 1
         };
 
-        if new_line != *line {
-            self.lines[self.cursor.0] = new_line;
+        for line_idx in lines_range {
+            let line = &self.lines[line_idx];
+            let new_line = if global {
+                line.replace(pattern, replacement)
+            } else {
+                line.replacen(pattern, replacement, 1)
+            };
+
+            if new_line != *line {
+                self.lines[line_idx] = new_line;
+                changed = true;
+            }
+        }
+
+        if changed {
             self.lines_version += 1;
             self.record_change();
         }
@@ -12083,6 +12112,27 @@ mod tests {
                 self.lines_version += 1;
             }
         }
+
+        /// Execute substitute on all lines (for :%s command tests)
+        fn execute_substitute_all_lines(&mut self, pattern: &str, replacement: &str, global: bool) {
+            self.save_undo_state();
+            let mut changed = false;
+            for line_idx in 0..self.lines.len() {
+                let line = &self.lines[line_idx];
+                let new_line = if global {
+                    line.replace(pattern, replacement)
+                } else {
+                    line.replacen(pattern, replacement, 1)
+                };
+                if new_line != *line {
+                    self.lines[line_idx] = new_line;
+                    changed = true;
+                }
+            }
+            if changed {
+                self.lines_version += 1;
+            }
+        }
     }
 
     // ============ Basic Cursor Tests ============
@@ -14729,6 +14779,7 @@ mod tests {
                 pattern: "foo".to_string(),
                 replacement: "bar".to_string(),
                 global: false,
+                all_lines: false,
             }
         );
     }
@@ -14741,6 +14792,7 @@ mod tests {
                 pattern: "foo".to_string(),
                 replacement: "bar".to_string(),
                 global: true,
+                all_lines: false,
             }
         );
     }
@@ -14753,6 +14805,7 @@ mod tests {
                 pattern: "old".to_string(),
                 replacement: "new".to_string(),
                 global: true,
+                all_lines: false,
             }
         );
     }
@@ -14765,6 +14818,33 @@ mod tests {
                 pattern: "foo".to_string(),
                 replacement: "".to_string(),
                 global: true,
+                all_lines: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_command_substitute_all_lines() {
+        assert_eq!(
+            EditorState::parse_command("%s/foo/bar/g"),
+            ExCommand::Substitute {
+                pattern: "foo".to_string(),
+                replacement: "bar".to_string(),
+                global: true,
+                all_lines: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_command_substitute_all_lines_no_global() {
+        assert_eq!(
+            EditorState::parse_command("%s/foo/bar/"),
+            ExCommand::Substitute {
+                pattern: "foo".to_string(),
+                replacement: "bar".to_string(),
+                global: false,
+                all_lines: true,
             }
         );
     }
@@ -14835,5 +14915,19 @@ mod tests {
         editor.cursor = (1, 0);
         editor.execute_substitute("line", "row", true);
         assert_eq!(editor.text(), "line one\nrow two\nline three");
+    }
+
+    #[test]
+    fn test_substitute_all_lines_execution() {
+        let mut editor = TestEditor::new("foo bar\nfoo baz\nfoo qux");
+        editor.execute_substitute_all_lines("foo", "replaced", true);
+        assert_eq!(editor.text(), "replaced bar\nreplaced baz\nreplaced qux");
+    }
+
+    #[test]
+    fn test_substitute_all_lines_first_only() {
+        let mut editor = TestEditor::new("foo foo\nfoo foo\nfoo foo");
+        editor.execute_substitute_all_lines("foo", "bar", false);
+        assert_eq!(editor.text(), "bar foo\nbar foo\nbar foo");
     }
 }
