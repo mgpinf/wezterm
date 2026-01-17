@@ -6763,8 +6763,10 @@ impl<'a> EditorState<'a> {
             }
         }
 
-        // Update matches for highlighting (after replacement, for any remaining matches)
-        self.sub_find_matches();
+        // Clear match highlights since all replacements are now tracked in sub_replacements.
+        // In global mode, all matches are replaced; in non-global mode, only the first
+        // match per line is replaced and we don't highlight remaining occurrences.
+        self.sub_matches.clear();
         self.lines_version += 1;
     }
 
