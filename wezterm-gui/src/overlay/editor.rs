@@ -6207,18 +6207,13 @@ impl<'a> EditorState<'a> {
                     }
                 }
                 for row in 0..=start_row {
-                    let search_end = if row == start_row {
-                        start_col
-                    } else {
-                        self.lines[row].len()
-                    };
-                    if search_end > 0 {
-                        if let Some(pos) = self.lines[row][..search_end].find(&pattern) {
-                            self.cursor.0 = row;
-                            self.cursor.1 = self.lines[row][..pos].chars().count();
-                            self.current_match = Some(self.cursor);
-                            return;
-                        }
+                    // On wrap-around, search entire line including cursor position
+                    // to find matches that may contain the cursor
+                    if let Some(pos) = self.lines[row].find(&pattern) {
+                        self.cursor.0 = row;
+                        self.cursor.1 = self.lines[row][..pos].chars().count();
+                        self.current_match = Some(self.cursor);
+                        return;
                     }
                 }
             }
@@ -6241,15 +6236,13 @@ impl<'a> EditorState<'a> {
                     }
                 }
                 for row in (start_row..self.lines.len()).rev() {
-                    let search_start = if row == start_row { start_col } else { 0 };
-                    if search_start < self.lines[row].len() {
-                        if let Some(pos) = self.lines[row][search_start..].rfind(&pattern) {
-                            self.cursor.0 = row;
-                            self.cursor.1 = self.lines[row][..search_start].chars().count()
-                                + self.lines[row][search_start..][..pos].chars().count();
-                            self.current_match = Some(self.cursor);
-                            return;
-                        }
+                    // On wrap-around, search entire line including cursor position
+                    // to find matches that may contain the cursor
+                    if let Some(pos) = self.lines[row].rfind(&pattern) {
+                        self.cursor.0 = row;
+                        self.cursor.1 = self.lines[row][..pos].chars().count();
+                        self.current_match = Some(self.cursor);
+                        return;
                     }
                 }
             }
