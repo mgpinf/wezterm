@@ -200,6 +200,10 @@ config.colors = {
   input_text_replace_prompt_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   input_text_replace_prompt_value_fg = { AnsiColor = 'Lime' }, -- {{since('nightly', inline=True)}}
   input_text_replace_prompt_options_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  input_text_substitute_match_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_substitute_match_bg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
+  input_text_substitute_replacement_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
+  input_text_substitute_replacement_bg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
 
   command_runner_list_header_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   command_runner_list_marker_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}

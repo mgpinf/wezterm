@@ -45,6 +45,10 @@ struct EditorColors {
     search_match_fg: ColorAttribute,
     search_current_match_bg: ColorAttribute,
     search_current_match_fg: ColorAttribute,
+    substitute_match_fg: ColorAttribute,
+    substitute_match_bg: ColorAttribute,
+    substitute_replacement_fg: ColorAttribute,
+    substitute_replacement_bg: ColorAttribute,
     normal_mode_text: String,
     insert_mode_text: String,
     replace_mode_text: String,
@@ -257,6 +261,26 @@ impl EditorColors {
             search_current_match_bg: colors
                 .input_text_search_current_match_bg
                 .map_or(ColorAttribute::PaletteIndex(AnsiColor::Navy.into()), |c| {
+                    c.into()
+                }),
+            substitute_match_fg: colors
+                .input_text_substitute_match_fg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::White.into()), |c| {
+                    c.into()
+                }),
+            substitute_match_bg: colors
+                .input_text_substitute_match_bg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Red.into()), |c| {
+                    c.into()
+                }),
+            substitute_replacement_fg: colors
+                .input_text_substitute_replacement_fg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Black.into()), |c| {
+                    c.into()
+                }),
+            substitute_replacement_bg: colors
+                .input_text_substitute_replacement_bg
+                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Green.into()), |c| {
                     c.into()
                 }),
             normal_mode_text: config.input_text_normal_mode_text.clone(),
@@ -536,6 +560,8 @@ struct EditorState<'a> {
     sub_saved_lines: Vec<String>,
     /// Substitute preview: match positions for highlighting (row, col, len)
     sub_matches: Vec<(usize, usize, usize)>,
+    /// Substitute preview: replacement positions for highlighting (row, col, len)
+    sub_replacements: Vec<(usize, usize, usize)>,
 }
 
 impl<'a> EditorState<'a> {
@@ -613,6 +639,7 @@ impl<'a> EditorState<'a> {
             sub_closed: false,
             sub_saved_lines: Vec::new(),
             sub_matches: Vec::new(),
+            sub_replacements: Vec::new(),
         }
     }
 
@@ -4957,6 +4984,8 @@ impl<'a> EditorState<'a> {
                     self.render_wrapped_segment_with_selection(
                         &chars, start_col, end_col, line_idx, sel_start, sel_end,
                     );
+                } else if self.mode == EditorMode::SubstitutePreview {
+                    self.render_segment_with_substitute_highlight(&segment, line_idx, start_col);
                 } else {
                     self.render_segment_with_search_highlight(&segment, line_idx, start_col);
                 }
@@ -5135,6 +5164,112 @@ impl<'a> EditorState<'a> {
                     )
                 } else {
                     (self.colors.search_match_bg, self.colors.search_match_fg)
+                };
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Background(match_bg)),
+                    Change::Attribute(AttributeChange::Foreground(match_fg)),
+                    Change::Text(matched),
+                    Change::AllAttributes(CellAttributes::default()),
+                ]);
+            }
+
+            last_pos = seg_match_end;
+        }
+
+        if last_pos < segment_chars.len() {
+            let after: String = segment_chars[last_pos..].iter().collect();
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(after),
+            ]);
+        }
+    }
+
+    fn render_segment_with_substitute_highlight(
+        &mut self,
+        segment: &str,
+        line_idx: usize,
+        start_col: usize,
+    ) {
+        // During Pattern phase: highlight matches in sub_matches
+        // During Replacement phase: highlight replacements in sub_replacements
+        // and remaining matches in sub_matches
+
+        let segment_chars: Vec<char> = segment.chars().collect();
+        let end_col = start_col + segment_chars.len();
+
+        // Collect pattern matches that overlap with this segment
+        let mut pattern_matches: Vec<(usize, usize)> = Vec::new();
+        for &(row, col, len) in &self.sub_matches {
+            if row == line_idx {
+                let match_start = col;
+                let match_end = col + len;
+                if match_end > start_col && match_start < end_col {
+                    pattern_matches.push((match_start, match_end));
+                }
+            }
+        }
+
+        // Collect replacement positions that overlap with this segment
+        let mut replacement_matches: Vec<(usize, usize)> = Vec::new();
+        for &(row, col, len) in &self.sub_replacements {
+            if row == line_idx {
+                let match_start = col;
+                let match_end = col + len;
+                if match_end > start_col && match_start < end_col {
+                    replacement_matches.push((match_start, match_end));
+                }
+            }
+        }
+
+        if pattern_matches.is_empty() && replacement_matches.is_empty() {
+            self.buf.add_changes(vec![
+                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Text(segment.to_string()),
+            ]);
+            return;
+        }
+
+        // Merge all highlights with their types: (start, end, is_replacement)
+        let mut highlights: Vec<(usize, usize, bool)> = Vec::new();
+        for (start, end) in pattern_matches {
+            highlights.push((start, end, false));
+        }
+        for (start, end) in replacement_matches {
+            highlights.push((start, end, true));
+        }
+        highlights.sort_by_key(|h| h.0);
+
+        // Render segment with highlighted regions
+        let mut last_pos = 0;
+
+        for (match_start, match_end, is_replacement) in highlights {
+            // Calculate positions relative to segment
+            let seg_match_start = match_start.saturating_sub(start_col);
+            let seg_match_end = (match_end.saturating_sub(start_col)).min(segment_chars.len());
+
+            // Text before match
+            if seg_match_start > last_pos {
+                let before: String = segment_chars[last_pos..seg_match_start].iter().collect();
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                    Change::Text(before),
+                ]);
+            }
+
+            let actual_start = seg_match_start.max(last_pos);
+            if actual_start < seg_match_end {
+                let matched: String = segment_chars[actual_start..seg_match_end].iter().collect();
+                let (match_bg, match_fg) = if is_replacement {
+                    (
+                        self.colors.substitute_replacement_bg,
+                        self.colors.substitute_replacement_fg,
+                    )
+                } else {
+                    (
+                        self.colors.substitute_match_bg,
+                        self.colors.substitute_match_fg,
+                    )
                 };
                 self.buf.add_changes(vec![
                     Change::Attribute(AttributeChange::Background(match_bg)),
@@ -6893,6 +7028,7 @@ impl<'a> EditorState<'a> {
         self.sub_closed = false;
         self.sub_saved_lines = self.lines.clone();
         self.sub_matches.clear();
+        self.sub_replacements.clear();
         self.mode = EditorMode::SubstitutePreview;
     }
 
@@ -6904,6 +7040,7 @@ impl<'a> EditorState<'a> {
         }
         self.sub_saved_lines.clear();
         self.sub_matches.clear();
+        self.sub_replacements.clear();
         self.mode = EditorMode::Normal;
     }
 
@@ -6939,26 +7076,62 @@ impl<'a> EditorState<'a> {
     fn sub_apply_preview(&mut self) {
         // Restore original lines first
         self.lines = self.sub_saved_lines.clone();
+        self.sub_replacements.clear();
 
         if self.sub_pattern.is_empty() {
             self.sub_find_matches();
             return;
         }
 
-        let lines_range = if self.sub_all_lines {
-            0..self.lines.len()
+        let lines_range: Vec<usize> = if self.sub_all_lines {
+            (0..self.lines.len()).collect()
         } else {
-            self.cursor.0..self.cursor.0 + 1
+            vec![self.cursor.0]
         };
+
+        let replacement_len = self.sub_replacement.chars().count();
 
         for line_idx in lines_range {
             let line = &self.lines[line_idx];
-            let new_line = if self.sub_global {
-                line.replace(&self.sub_pattern, &self.sub_replacement)
-            } else {
-                line.replacen(&self.sub_pattern, &self.sub_replacement, 1)
-            };
-            self.lines[line_idx] = new_line;
+            let mut new_line = String::new();
+            let mut last_end = 0;
+            let mut replacements_on_line: Vec<(usize, usize)> = Vec::new();
+
+            // Find all matches and track replacement positions
+            let mut search_start = 0;
+            let mut match_count = 0;
+            while let Some(pos) = line[search_start..].find(&self.sub_pattern) {
+                let byte_pos = search_start + pos;
+
+                // Add text before match
+                new_line.push_str(&line[last_end..byte_pos]);
+
+                // Track replacement position (char position in new line)
+                let replacement_col = new_line.chars().count();
+                replacements_on_line.push((replacement_col, replacement_len));
+
+                // Add replacement
+                new_line.push_str(&self.sub_replacement);
+
+                last_end = byte_pos + self.sub_pattern.len();
+                search_start = last_end;
+                match_count += 1;
+
+                // For non-global, only replace first match
+                if !self.sub_global {
+                    break;
+                }
+            }
+
+            // Add remaining text
+            new_line.push_str(&line[last_end..]);
+
+            if match_count > 0 {
+                self.lines[line_idx] = new_line;
+                for (col, len) in replacements_on_line {
+                    self.sub_replacements.push((line_idx, col, len));
+                }
+            }
         }
 
         // Update matches for highlighting (after replacement, for any remaining matches)
@@ -6971,6 +7144,7 @@ impl<'a> EditorState<'a> {
         // The buffer already has the preview applied, just clear saved state
         self.sub_saved_lines.clear();
         self.sub_matches.clear();
+        self.sub_replacements.clear();
         self.record_change();
         self.mode = EditorMode::Normal;
     }
