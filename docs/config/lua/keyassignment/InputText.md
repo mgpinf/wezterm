@@ -59,7 +59,7 @@ The editor supports Vim-style modal editing:
 | **Visual Line** | Line selection | `V` | `Escape`, `d`, `c`, `y` |
 | **Visual Block** | Column selection | `Ctrl-V` | `Escape`, `d`, `c`, `y` |
 | **Search** | Incremental search | `/`, `?` | `Enter`, `Escape` |
-| **Search/Replace** | Find and replace text | `Ctrl-H` | `q`, `Escape` |
+| **Command** | Ex commands (`:`) | `:` | `Enter`, `Escape` |
 
 ## Key Assignments
 
@@ -131,7 +131,6 @@ The editor supports Vim-style modal editing:
 | `u` | Undo |
 | `Ctrl-R` | Redo |
 | `.` | Repeat last change |
-| `Ctrl-H` | Enter search/replace mode |
 
 ### Operators (Normal mode)
 
@@ -205,33 +204,54 @@ Used with operators (`d`, `c`, `y`, `gu`, `gU`, `g~`) or in Visual mode:
 | `*` | Search word under cursor (forward) |
 | `#` | Search word under cursor (backward) |
 
-### Search and Replace
+### Command Mode
 
-Enter search/replace mode with `Ctrl-H` from Normal mode. The mode has three phases:
+Enter command mode by pressing `:` from Normal or Visual mode. Type a command and press `Enter` to execute.
 
-**Phase 1: Enter search pattern**
-- Type the text to search for
-- Matches are highlighted as you type
-- Press `Tab` or `Enter` to proceed to the replace phase
-- Press `Escape` to cancel
+#### Basic Commands
 
-**Phase 2: Enter replacement text**
-- Type the replacement text
-- Press `Tab` to go back to edit the search pattern
-- Press `Enter` to proceed to the confirm phase
-- Press `Escape` to cancel
+| Command | Action |
+|---------|--------|
+| `:w` | Submit (same as `ZZ`) |
+| `:wq`, `:x` | Submit (same as `ZZ`) |
+| `:q` | Quit (same as `ZQ`) |
+| `:q!` | Force quit (same as `ZQ`) |
+| `:noh`, `:nohlsearch` | Clear search highlighting |
 
-**Phase 3: Confirm replacements**
+#### Substitute Command
+
+The `:s` command performs search and replace with live preview:
+
+| Command | Action |
+|---------|--------|
+| `:s/pattern/replacement/` | Replace first match on current line |
+| `:s/pattern/replacement/g` | Replace all matches on current line |
+| `:%s/pattern/replacement/g` | Replace all matches in entire buffer |
+| `:'<,'>s/pattern/replacement/g` | Replace in visual selection (auto-filled) |
+| `{count}:s/pattern/replacement/g` | Replace in next {count} lines (e.g., `5:s/foo/bar/g`) |
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `g` | Global - replace all matches on each line (not just first) |
+| `c` | Confirm - prompt before each replacement |
+
+**Confirm mode keys** (when using `c` flag):
 
 | Key | Action |
 |-----|--------|
-| `y` or `Enter` | Replace current match and go to next |
-| `n` | Skip current match and go to next |
+| `y` | Replace this match and continue |
+| `n` | Skip this match and continue |
 | `a` | Replace all remaining matches |
-| `q` or `Escape` | Quit and keep changes made so far |
-| `l` | Replace current match and quit (last) |
+| `q`, `Escape` | Quit, keeping changes made so far |
+| `l` | Replace this match and quit (last) |
 
-The status bar shows the current match position (e.g., "2/5 matches").
+**Delimiter:** Any non-alphanumeric character can be used as delimiter (e.g., `:s#foo#bar#g`).
+
+**Live preview:** As you type the pattern and replacement, matches are highlighted and replacements are shown in real-time.
+
+**Visual mode integration:** Select text with `v`, `V`, or `Ctrl-V`, then press `:` to automatically scope the substitute to the selected lines.
 
 ### Visual Mode Operations
 
@@ -245,6 +265,7 @@ The status bar shows the current match position (e.g., "2/5 matches").
 | `Ctrl-V` | Toggle/switch to block-wise |
 | `I` | Insert at block start (block mode) |
 | `A` | Append at block end (block mode) |
+| `:` | Enter command mode with selection range (for `:s` substitute) |
 
 ### Insert Mode
 
