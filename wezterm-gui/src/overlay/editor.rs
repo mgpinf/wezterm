@@ -457,6 +457,8 @@ struct EditorState<'a> {
     sub_replace_count: usize,
     /// Substitute preview: line range for visual mode (start, end) inclusive
     sub_line_range: Option<(usize, usize)>,
+    /// Substitute preview: display prefix (e.g. ":s", ":%s", ":'<,'>s", ":.,.+4s")
+    sub_display_prefix: String,
 }
 
 impl<'a> EditorState<'a> {
@@ -532,6 +534,7 @@ impl<'a> EditorState<'a> {
             sub_current_match_idx: 0,
             sub_replace_count: 0,
             sub_line_range: None,
+            sub_display_prefix: String::new(),
         }
     }
 
@@ -4523,13 +4526,7 @@ impl<'a> EditorState<'a> {
             // Clear the error after displaying
         } else if self.mode == EditorMode::SubstitutePreview {
             // Render substitute preview command line at the bottom
-            let prefix = if self.sub_line_range.is_some() {
-                ":'<,'>s"
-            } else if self.sub_all_lines {
-                ":%s"
-            } else {
-                ":s"
-            };
+            let prefix = &self.sub_display_prefix;
             let delim = self.sub_delimiter;
             let mut flags = String::new();
             if self.sub_global {
@@ -4820,14 +4817,7 @@ impl<'a> EditorState<'a> {
                 (x, rows - 1, CursorShape::SteadyBar, true)
             } else if self.mode == EditorMode::SubstitutePreview {
                 // Cursor position in substitute command line
-                // Format: :s/pattern/replacement/[g] or :%s/pattern/replacement/[g] or :'<,'>s/...
-                let prefix = if self.sub_line_range.is_some() {
-                    ":'<,'>s"
-                } else if self.sub_all_lines {
-                    ":%s"
-                } else {
-                    ":s"
-                };
+                let prefix = &self.sub_display_prefix;
                 let x = match self.sub_phase {
                     SubstitutePhase::Pattern => {
                         // prefix + delim + pattern_len
@@ -6450,10 +6440,24 @@ impl<'a> EditorState<'a> {
 
     /// Enter command mode (triggered by `:` in Normal or Visual mode)
     fn enter_command_mode(&mut self) {
-        // Pre-fill with visual range marker if entering from visual mode
-        if self.sub_line_range.is_some() {
-            self.cmd_input = "'<,'>".to_string();
-            self.cmd_cursor = 5; // Position after '<,'>
+        // Pre-fill with range marker if applicable
+        if let Some((start, end)) = self.sub_line_range {
+            if matches!(
+                self.mode,
+                EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock
+            ) {
+                // Visual mode range
+                self.cmd_input = "'<,'>".to_string();
+            } else {
+                // Normal mode count range (e.g. 5:s -> .,.+4s)
+                let offset = end.saturating_sub(start);
+                if offset > 0 {
+                    self.cmd_input = format!(".,.+{}", offset);
+                } else {
+                    self.cmd_input = ".".to_string();
+                }
+            }
+            self.cmd_cursor = self.cmd_input.len();
         } else {
             self.cmd_input.clear();
             self.cmd_cursor = 0;
@@ -6495,6 +6499,46 @@ impl<'a> EditorState<'a> {
             if let Some(delim) = rest.chars().next() {
                 if !delim.is_alphanumeric() {
                     if let Some(cmd) = Self::parse_substitute(rest, delim, true) {
+                        return cmd;
+                    }
+                }
+            }
+        }
+
+        // Check for :'<,'>s/ (visual range)
+        if input.starts_with("'<,'>s") && input.len() > 6 {
+            let rest = &input[6..];
+            if let Some(delim) = rest.chars().next() {
+                if !delim.is_alphanumeric() {
+                    if let Some(cmd) = Self::parse_substitute(rest, delim, false) {
+                        return cmd;
+                    }
+                }
+            }
+        }
+
+        // Check for :.,.+<digits>s/ (relative count range)
+        if input.starts_with(".,.+") {
+            if let Some(s_idx) = input.find('s') {
+                if s_idx > 4 && input[4..s_idx].chars().all(|c| c.is_ascii_digit()) {
+                    let rest = &input[s_idx + 1..];
+                    if let Some(delim) = rest.chars().next() {
+                        if !delim.is_alphanumeric() {
+                            if let Some(cmd) = Self::parse_substitute(rest, delim, false) {
+                                return cmd;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check for :.s/ (explicit current line)
+        if input.starts_with(".s") && input.len() > 2 {
+            let rest = &input[2..];
+            if let Some(delim) = rest.chars().next() {
+                if !delim.is_alphanumeric() {
+                    if let Some(cmd) = Self::parse_substitute(rest, delim, false) {
                         return cmd;
                     }
                 }
@@ -6652,8 +6696,35 @@ impl<'a> EditorState<'a> {
     /// Check if cmd_input matches s/, %s/, or '<,'>s/ pattern and return delimiter
     fn check_substitute_entry(&self) -> Option<char> {
         let cmd = &self.cmd_input;
+        // Match relative range: .,.+<digits>s/
+        if cmd.starts_with(".,.+") {
+            if let Some(s_idx) = cmd.find('s') {
+                if s_idx > 4 {
+                    let digits_part = &cmd[4..s_idx];
+                    if digits_part.chars().all(|c| c.is_ascii_digit()) {
+                        if cmd.len() > s_idx + 1 {
+                            let rest = &cmd[s_idx + 1..];
+                            if let Some(delim) = rest.chars().next() {
+                                if !delim.is_alphanumeric() {
+                                    return Some(delim);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Match explicit current line: .s/
+        else if cmd.starts_with(".s") && cmd.len() > 2 {
+            let rest = &cmd[2..];
+            if let Some(delim) = rest.chars().next() {
+                if !delim.is_alphanumeric() {
+                    return Some(delim);
+                }
+            }
+        }
         // Match '<,'>s/ (visual range)
-        if cmd.starts_with("'<,'>s") && cmd.len() > 6 {
+        else if cmd.starts_with("'<,'>s") && cmd.len() > 6 {
             let rest = &cmd[6..];
             if let Some(delim) = rest.chars().next() {
                 if !delim.is_alphanumeric() {
@@ -6683,7 +6754,7 @@ impl<'a> EditorState<'a> {
     }
 
     /// Enter substitute preview mode from command mode
-    fn enter_substitute_preview(&mut self, delimiter: char, all_lines: bool) {
+    fn enter_substitute_preview(&mut self, delimiter: char, all_lines: bool, prefix: String) {
         self.sub_delimiter = delimiter;
         self.sub_pattern.clear();
         self.sub_replacement.clear();
@@ -6695,6 +6766,7 @@ impl<'a> EditorState<'a> {
         self.sub_saved_lines = self.lines.clone();
         self.sub_matches.clear();
         self.sub_replacements.clear();
+        self.sub_display_prefix = prefix;
         self.mode = EditorMode::SubstitutePreview;
     }
 
@@ -8998,6 +9070,12 @@ impl<'a> EditorState<'a> {
                             }
                             ':' => {
                                 // Enter command mode
+                                let count = self.take_count();
+                                if count > 1 {
+                                    let start = self.cursor.0;
+                                    let end = (start + count - 1).min(self.lines.len() - 1);
+                                    self.sub_line_range = Some((start, end));
+                                }
                                 self.enter_command_mode();
                             }
                             _ => {}
@@ -10171,12 +10249,18 @@ impl<'a> EditorState<'a> {
                             self.cmd_history_idx = None;
 
                             // Check for substitute pattern to enter preview mode
-                            // Matches: s/ or %s/ with any delimiter
+                            // Matches: s/ or %s/ or '<,'>s/ or .,.+Ns/ with any delimiter
                             if let Some(delim) = self.check_substitute_entry() {
                                 let all_lines = self.cmd_input.starts_with("%s");
+                                // Extract prefix part (before delimiter), include leading ':'
+                                let prefix = if let Some(idx) = self.cmd_input.find(delim) {
+                                    format!(":{}", &self.cmd_input[..idx])
+                                } else {
+                                    ":s".to_string()
+                                };
                                 self.cmd_input.clear();
                                 self.cmd_cursor = 0;
-                                self.enter_substitute_preview(delim, all_lines);
+                                self.enter_substitute_preview(delim, all_lines, prefix);
                             }
                         }
                     }
