@@ -281,6 +281,30 @@ enum EditorMode {
     Visual,
     VisualLine,
     VisualBlock,
+    Command,
+}
+
+/// Parsed ex-command
+#[derive(Clone, Debug, PartialEq)]
+enum ExCommand {
+    /// :w - Submit content
+    Write,
+    /// :wq - Submit and close
+    WriteQuit,
+    /// :q - Cancel/close
+    Quit,
+    /// :q! - Force quit
+    QuitForce,
+    /// :s/pattern/replacement/[flags] - Substitute
+    Substitute {
+        pattern: String,
+        replacement: String,
+        global: bool,
+    },
+    /// :lua <expr> - Evaluate Lua
+    Lua(String),
+    /// Unknown command
+    Unknown(String),
 }
 
 /// Phase of find/replace operation
@@ -471,6 +495,18 @@ struct EditorState<'a> {
     sr_start_pos: (usize, usize),
     /// Find/Replace mode: count of replacements made
     sr_replace_count: usize,
+    /// Command mode: input buffer
+    cmd_input: String,
+    /// Command mode: cursor position in input
+    cmd_cursor: usize,
+    /// Command mode: history of previous commands
+    cmd_history: Vec<String>,
+    /// Command mode: current position in history (-1 = current input)
+    cmd_history_idx: Option<usize>,
+    /// Command mode: saved input before navigating history
+    cmd_saved_input: String,
+    /// Command mode: error message to display
+    cmd_error: Option<String>,
 }
 
 impl<'a> EditorState<'a> {
@@ -533,6 +569,12 @@ impl<'a> EditorState<'a> {
             sr_current_match_idx: 0,
             sr_start_pos: (0, 0),
             sr_replace_count: 0,
+            cmd_input: String::new(),
+            cmd_cursor: 0,
+            cmd_history: Vec::new(),
+            cmd_history_idx: None,
+            cmd_saved_input: String::new(),
+            cmd_error: None,
         }
     }
 
@@ -4412,7 +4454,7 @@ impl<'a> EditorState<'a> {
             EditorMode::Normal => &self.colors.normal_mode_text,
             EditorMode::Insert => &self.colors.insert_mode_text,
             EditorMode::Replace => &self.colors.replace_mode_text,
-            EditorMode::Search => &self.colors.command_mode_text,
+            EditorMode::Search | EditorMode::Command => &self.colors.command_mode_text,
             EditorMode::SearchReplace => &self.colors.find_replace_mode_text,
             EditorMode::Visual => &self.colors.visual_mode_text,
             EditorMode::VisualLine => &self.colors.visual_line_mode_text,
@@ -4438,7 +4480,9 @@ impl<'a> EditorState<'a> {
             EditorMode::Normal => (self.colors.normal_mode_fg, self.colors.normal_mode_bg),
             EditorMode::Insert => (self.colors.insert_mode_fg, self.colors.insert_mode_bg),
             EditorMode::Replace => (self.colors.replace_mode_fg, self.colors.replace_mode_bg),
-            EditorMode::Search => (self.colors.command_mode_fg, self.colors.command_mode_bg),
+            EditorMode::Search | EditorMode::Command => {
+                (self.colors.command_mode_fg, self.colors.command_mode_bg)
+            }
             EditorMode::SearchReplace => (
                 self.colors.find_replace_mode_fg,
                 self.colors.find_replace_mode_bg,
@@ -4592,6 +4636,32 @@ impl<'a> EditorState<'a> {
                 self.buf
                     .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
             }
+        } else if self.mode == EditorMode::Command {
+            // Render command line at the bottom
+            let cmd_display = format!(":{}", self.cmd_input);
+            self.buf.add_changes(vec![
+                Change::CursorPosition {
+                    x: Position::Absolute(0),
+                    y: Position::Absolute(rows - 1),
+                },
+                Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
+                Change::Text(format!("{:<width$}", cmd_display, width = cols)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+        } else if let Some(ref error) = self.cmd_error {
+            // Display error message from failed command
+            self.buf.add_changes(vec![
+                Change::CursorPosition {
+                    x: Position::Absolute(0),
+                    y: Position::Absolute(rows - 1),
+                },
+                Change::Attribute(AttributeChange::Foreground(ColorAttribute::PaletteIndex(
+                    config::AnsiColor::Red.into(),
+                ))),
+                Change::Text(format!("{:<width$}", error, width = cols)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
+            // Clear the error after displaying
         } else {
             let search_display = if self.search_pattern.is_empty() {
                 String::new()
@@ -4839,6 +4909,10 @@ impl<'a> EditorState<'a> {
                         (0, rows - 1, CursorShape::SteadyBlock, false)
                     }
                 }
+            } else if self.mode == EditorMode::Command {
+                // Cursor position after ':' + input position
+                let x = 1 + self.cmd_cursor;
+                (x, rows - 1, CursorShape::SteadyBar, true)
             } else {
                 let y = cursor_screen_row.unwrap_or(content_start_row);
                 let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
@@ -4851,7 +4925,9 @@ impl<'a> EditorState<'a> {
                         EditorMode::Normal => CursorShape::SteadyBlock,
                         EditorMode::Insert => CursorShape::SteadyBar,
                         EditorMode::Replace => CursorShape::SteadyUnderline,
-                        EditorMode::Search | EditorMode::SearchReplace => CursorShape::SteadyBar,
+                        EditorMode::Search | EditorMode::SearchReplace | EditorMode::Command => {
+                            CursorShape::SteadyBar
+                        }
                         EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
                             CursorShape::SteadyBlock
                         }
@@ -6498,6 +6574,158 @@ impl<'a> EditorState<'a> {
         self.sr_matches.clear();
         self.search_highlight = false;
         self.current_match = None;
+    }
+
+    /// Enter command mode (triggered by `:` in Normal mode)
+    fn enter_command_mode(&mut self) {
+        self.cmd_input.clear();
+        self.cmd_cursor = 0;
+        self.cmd_history_idx = None;
+        self.cmd_saved_input.clear();
+        self.cmd_error = None;
+        self.mode = EditorMode::Command;
+    }
+
+    /// Exit command mode and return to normal mode
+    fn exit_command_mode(&mut self) {
+        self.mode = EditorMode::Normal;
+        self.cmd_error = None;
+    }
+
+    /// Parse a command string into an ExCommand
+    fn parse_command(input: &str) -> ExCommand {
+        let input = input.trim();
+
+        // Handle empty command
+        if input.is_empty() {
+            return ExCommand::Unknown(String::new());
+        }
+
+        // Check for simple commands first
+        match input {
+            "w" => return ExCommand::Write,
+            "wq" | "x" => return ExCommand::WriteQuit,
+            "q" => return ExCommand::Quit,
+            "q!" => return ExCommand::QuitForce,
+            _ => {}
+        }
+
+        // Check for :s/pattern/replacement/[flags]
+        if input.starts_with('s') && input.len() > 1 {
+            let rest = &input[1..];
+            if let Some(delim) = rest.chars().next() {
+                // Common delimiters: /, #, @, etc.
+                if !delim.is_alphanumeric() {
+                    if let Some(cmd) = Self::parse_substitute(rest, delim) {
+                        return cmd;
+                    }
+                }
+            }
+        }
+
+        // Check for :lua <expr>
+        if let Some(expr) = input.strip_prefix("lua ") {
+            return ExCommand::Lua(expr.to_string());
+        }
+        if input == "lua" {
+            return ExCommand::Lua(String::new());
+        }
+
+        ExCommand::Unknown(input.to_string())
+    }
+
+    /// Parse substitute command: /pattern/replacement/[flags]
+    fn parse_substitute(input: &str, delim: char) -> Option<ExCommand> {
+        let parts: Vec<&str> = input.split(delim).collect();
+
+        // parts[0] is empty (before first delimiter)
+        // parts[1] is pattern
+        // parts[2] is replacement
+        // parts[3] is flags (optional)
+        if parts.len() < 3 {
+            return None;
+        }
+
+        let pattern = parts[1].to_string();
+        let replacement = parts[2].to_string();
+        let global = parts.get(3).is_some_and(|flags| flags.contains('g'));
+
+        Some(ExCommand::Substitute {
+            pattern,
+            replacement,
+            global,
+        })
+    }
+
+    /// Execute a parsed command. Returns Ok(true) if editor should close.
+    fn execute_command(&mut self, cmd: ExCommand) -> Result<bool, String> {
+        match cmd {
+            ExCommand::Write => {
+                self.submit();
+                Ok(false)
+            }
+            ExCommand::WriteQuit => {
+                Ok(true) // Signal to close after submit
+            }
+            ExCommand::Quit | ExCommand::QuitForce => {
+                Ok(true) // Signal to close
+            }
+            ExCommand::Substitute {
+                pattern,
+                replacement,
+                global,
+            } => {
+                self.execute_substitute(&pattern, &replacement, global)?;
+                Ok(false)
+            }
+            ExCommand::Lua(expr) => {
+                self.execute_lua(&expr)?;
+                Ok(false)
+            }
+            ExCommand::Unknown(cmd) => {
+                if cmd.is_empty() {
+                    Ok(false)
+                } else {
+                    Err(format!("Unknown command: {}", cmd))
+                }
+            }
+        }
+    }
+
+    /// Execute substitute on current line
+    fn execute_substitute(
+        &mut self,
+        pattern: &str,
+        replacement: &str,
+        global: bool,
+    ) -> Result<(), String> {
+        if pattern.is_empty() {
+            return Err("Empty pattern".to_string());
+        }
+
+        self.save_undo_state();
+        let line = &self.lines[self.cursor.0];
+
+        let new_line = if global {
+            line.replace(pattern, replacement)
+        } else {
+            line.replacen(pattern, replacement, 1)
+        };
+
+        if new_line != *line {
+            self.lines[self.cursor.0] = new_line;
+            self.lines_version += 1;
+            self.record_change();
+        }
+
+        Ok(())
+    }
+
+    /// Execute Lua expression (placeholder - logs for now)
+    fn execute_lua(&self, expr: &str) -> Result<(), String> {
+        // TODO: Integrate with Lua runtime
+        log::info!("Ex-command :lua would execute: {}", expr);
+        Ok(())
     }
 
     fn get_visual_selection(&self) -> ((usize, usize), (usize, usize)) {
@@ -8570,6 +8798,10 @@ impl<'a> EditorState<'a> {
                                 self.mode = EditorMode::VisualLine;
                                 self.visual_start = self.cursor;
                             }
+                            ':' => {
+                                // Enter command mode
+                                self.enter_command_mode();
+                            }
                             _ => {}
                         }
                     }
@@ -9799,6 +10031,142 @@ impl<'a> EditorState<'a> {
                         _ => {}
                     }
                 }
+                EditorMode::Command => match event {
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Escape,
+                        ..
+                    }) => {
+                        // Cancel command mode
+                        self.exit_command_mode();
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Enter,
+                        ..
+                    }) => {
+                        // Execute the command
+                        let input = self.cmd_input.clone();
+                        if !input.is_empty() {
+                            // Add to history
+                            if self.cmd_history.last() != Some(&input) {
+                                self.cmd_history.push(input.clone());
+                            }
+                        }
+                        let cmd = Self::parse_command(&input);
+                        match self.execute_command(cmd) {
+                            Ok(should_close) => {
+                                self.exit_command_mode();
+                                if should_close {
+                                    // Handle :wq - submit then break
+                                    if input == "wq" || input == "x" {
+                                        self.submit();
+                                    }
+                                    // :q, :q!, :wq all close
+                                    break;
+                                }
+                            }
+                            Err(msg) => {
+                                self.cmd_error = Some(msg);
+                                self.exit_command_mode();
+                            }
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Backspace,
+                        ..
+                    }) => {
+                        if self.cmd_cursor > 0 {
+                            let mut chars: Vec<char> = self.cmd_input.chars().collect();
+                            chars.remove(self.cmd_cursor - 1);
+                            self.cmd_input = chars.into_iter().collect();
+                            self.cmd_cursor -= 1;
+                        } else if self.cmd_input.is_empty() {
+                            // Exit on backspace when empty
+                            self.exit_command_mode();
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::LeftArrow,
+                        ..
+                    }) => {
+                        if self.cmd_cursor > 0 {
+                            self.cmd_cursor -= 1;
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::RightArrow,
+                        ..
+                    }) => {
+                        if self.cmd_cursor < self.cmd_input.chars().count() {
+                            self.cmd_cursor += 1;
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::UpArrow,
+                        ..
+                    }) => {
+                        // Navigate command history (older)
+                        if !self.cmd_history.is_empty() {
+                            match self.cmd_history_idx {
+                                None => {
+                                    // Save current input and show most recent history
+                                    self.cmd_saved_input = self.cmd_input.clone();
+                                    self.cmd_history_idx = Some(self.cmd_history.len() - 1);
+                                    self.cmd_input =
+                                        self.cmd_history[self.cmd_history.len() - 1].clone();
+                                }
+                                Some(idx) if idx > 0 => {
+                                    self.cmd_history_idx = Some(idx - 1);
+                                    self.cmd_input = self.cmd_history[idx - 1].clone();
+                                }
+                                _ => {}
+                            }
+                            self.cmd_cursor = self.cmd_input.chars().count();
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::DownArrow,
+                        ..
+                    }) => {
+                        // Navigate command history (newer)
+                        if let Some(idx) = self.cmd_history_idx {
+                            if idx + 1 < self.cmd_history.len() {
+                                self.cmd_history_idx = Some(idx + 1);
+                                self.cmd_input = self.cmd_history[idx + 1].clone();
+                            } else {
+                                // Restore saved input
+                                self.cmd_history_idx = None;
+                                self.cmd_input = self.cmd_saved_input.clone();
+                            }
+                            self.cmd_cursor = self.cmd_input.chars().count();
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char(c),
+                        modifiers,
+                    }) => {
+                        if !modifiers.contains(Modifiers::CTRL)
+                            && !modifiers.contains(Modifiers::ALT)
+                        {
+                            let mut chars: Vec<char> = self.cmd_input.chars().collect();
+                            chars.insert(self.cmd_cursor, c);
+                            self.cmd_input = chars.into_iter().collect();
+                            self.cmd_cursor += 1;
+                            // Clear history navigation when typing
+                            self.cmd_history_idx = None;
+                        }
+                    }
+                    InputEvent::Paste(text) => {
+                        for c in text.chars() {
+                            if c != '\n' && c != '\r' {
+                                let mut chars: Vec<char> = self.cmd_input.chars().collect();
+                                chars.insert(self.cmd_cursor, c);
+                                self.cmd_input = chars.into_iter().collect();
+                                self.cmd_cursor += 1;
+                            }
+                        }
+                    }
+                    _ => {}
+                },
             }
             self.render()?;
         }
@@ -11698,6 +12066,21 @@ mod tests {
                 let mut new_chars = chars;
                 new_chars[self.cursor.1] = replacement;
                 self.lines[self.cursor.0] = new_chars.into_iter().collect();
+            }
+        }
+
+        /// Execute substitute on current line (for :s command tests)
+        fn execute_substitute(&mut self, pattern: &str, replacement: &str, global: bool) {
+            let line = &self.lines[self.cursor.0];
+            let new_line = if global {
+                line.replace(pattern, replacement)
+            } else {
+                line.replacen(pattern, replacement, 1)
+            };
+            if new_line != *line {
+                self.save_undo_state();
+                self.lines[self.cursor.0] = new_line;
+                self.lines_version += 1;
             }
         }
     }
@@ -14317,5 +14700,140 @@ mod tests {
         editor.cursor = (0, 0);
         editor.replace_char('@');
         assert_eq!(editor.text(), "@ello");
+    }
+
+    // ============ Ex-Command Parser Tests ============
+
+    #[test]
+    fn test_parse_command_write() {
+        assert_eq!(EditorState::parse_command("w"), ExCommand::Write);
+    }
+
+    #[test]
+    fn test_parse_command_write_quit() {
+        assert_eq!(EditorState::parse_command("wq"), ExCommand::WriteQuit);
+        assert_eq!(EditorState::parse_command("x"), ExCommand::WriteQuit);
+    }
+
+    #[test]
+    fn test_parse_command_quit() {
+        assert_eq!(EditorState::parse_command("q"), ExCommand::Quit);
+        assert_eq!(EditorState::parse_command("q!"), ExCommand::QuitForce);
+    }
+
+    #[test]
+    fn test_parse_command_substitute_basic() {
+        assert_eq!(
+            EditorState::parse_command("s/foo/bar/"),
+            ExCommand::Substitute {
+                pattern: "foo".to_string(),
+                replacement: "bar".to_string(),
+                global: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_command_substitute_global() {
+        assert_eq!(
+            EditorState::parse_command("s/foo/bar/g"),
+            ExCommand::Substitute {
+                pattern: "foo".to_string(),
+                replacement: "bar".to_string(),
+                global: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_command_substitute_alternate_delimiter() {
+        assert_eq!(
+            EditorState::parse_command("s#old#new#g"),
+            ExCommand::Substitute {
+                pattern: "old".to_string(),
+                replacement: "new".to_string(),
+                global: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_command_substitute_empty_replacement() {
+        assert_eq!(
+            EditorState::parse_command("s/foo//g"),
+            ExCommand::Substitute {
+                pattern: "foo".to_string(),
+                replacement: "".to_string(),
+                global: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_command_lua() {
+        assert_eq!(
+            EditorState::parse_command("lua print('hello')"),
+            ExCommand::Lua("print('hello')".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_command_lua_empty() {
+        assert_eq!(
+            EditorState::parse_command("lua"),
+            ExCommand::Lua("".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_command_unknown() {
+        assert_eq!(
+            EditorState::parse_command("foobar"),
+            ExCommand::Unknown("foobar".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_command_empty() {
+        assert_eq!(
+            EditorState::parse_command(""),
+            ExCommand::Unknown("".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_command_whitespace_trimmed() {
+        assert_eq!(EditorState::parse_command("  w  "), ExCommand::Write);
+    }
+
+    // ============ Substitute Execution Tests ============
+
+    #[test]
+    fn test_substitute_single_occurrence() {
+        let mut editor = TestEditor::new("hello world hello");
+        editor.execute_substitute("hello", "hi", false);
+        assert_eq!(editor.text(), "hi world hello");
+    }
+
+    #[test]
+    fn test_substitute_global() {
+        let mut editor = TestEditor::new("hello world hello");
+        editor.execute_substitute("hello", "hi", true);
+        assert_eq!(editor.text(), "hi world hi");
+    }
+
+    #[test]
+    fn test_substitute_no_match() {
+        let mut editor = TestEditor::new("hello world");
+        editor.execute_substitute("foo", "bar", true);
+        assert_eq!(editor.text(), "hello world");
+    }
+
+    #[test]
+    fn test_substitute_specific_line() {
+        let mut editor = TestEditor::new("line one\nline two\nline three");
+        editor.cursor = (1, 0);
+        editor.execute_substitute("line", "row", true);
+        assert_eq!(editor.text(), "line one\nrow two\nline three");
     }
 }
