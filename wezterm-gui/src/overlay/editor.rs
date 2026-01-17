@@ -6188,12 +6188,22 @@ impl<'a> EditorState<'a> {
 
         match self.search_direction {
             Direction::Forward => {
+                // Forward search: always advance past current position
+                // Search from start_col + 1 to find the next match
                 let current_line = &self.lines[start_row];
-                if start_col < current_line.len() {
-                    if let Some(pos) = current_line[start_col..].find(&pattern) {
+
+                // Convert start_col (char index) to byte index for slicing
+                let byte_offset: usize = current_line
+                    .chars()
+                    .take(start_col.saturating_add(1))
+                    .map(|c| c.len_utf8())
+                    .sum();
+
+                if byte_offset < current_line.len() {
+                    if let Some(pos) = current_line[byte_offset..].find(&pattern) {
                         self.cursor.0 = start_row;
                         self.cursor.1 =
-                            start_col + current_line[start_col..][..pos].chars().count();
+                            start_col + 1 + current_line[byte_offset..][..pos].chars().count();
                         self.current_match = Some(self.cursor);
                         return;
                     }
@@ -6207,8 +6217,7 @@ impl<'a> EditorState<'a> {
                     }
                 }
                 for row in 0..=start_row {
-                    // On wrap-around, search entire line including cursor position
-                    // to find matches that may contain the cursor
+                    // On wrap-around, search entire line
                     if let Some(pos) = self.lines[row].find(&pattern) {
                         self.cursor.0 = row;
                         self.cursor.1 = self.lines[row][..pos].chars().count();
@@ -6218,9 +6227,46 @@ impl<'a> EditorState<'a> {
                 }
             }
             Direction::Backward => {
+                // Backward search: if cursor is inside a match (not at first char),
+                // stay on that match. Otherwise, search backward.
                 let current_line = &self.lines[start_row];
-                if start_col > 0 {
-                    if let Some(pos) = current_line[..start_col].rfind(&pattern) {
+
+                // Check if cursor is inside a match (match starts before cursor)
+                // by searching from line start and finding any match that contains cursor
+                let mut search_pos = 0;
+                while let Some(rel_pos) = current_line[search_pos..].find(&pattern) {
+                    let match_start_byte = search_pos + rel_pos;
+                    let match_start_char = current_line[..match_start_byte].chars().count();
+                    let match_len_chars = pattern.chars().count();
+
+                    // If cursor is inside this match (after first char, before end)
+                    if match_start_char < start_col
+                        && start_col < match_start_char + match_len_chars
+                    {
+                        // Stay on this match
+                        self.cursor.0 = start_row;
+                        self.cursor.1 = match_start_char;
+                        self.current_match = Some(self.cursor);
+                        return;
+                    }
+
+                    // Move past this match to find the next one
+                    search_pos = match_start_byte + pattern.len();
+                    if search_pos >= current_line.len() {
+                        break;
+                    }
+                }
+
+                // Not inside a match, search backward normally
+                // Convert start_col to byte offset for slicing
+                let byte_offset: usize = current_line
+                    .chars()
+                    .take(start_col)
+                    .map(|c| c.len_utf8())
+                    .sum();
+
+                if byte_offset > 0 {
+                    if let Some(pos) = current_line[..byte_offset].rfind(&pattern) {
                         self.cursor.0 = start_row;
                         self.cursor.1 = current_line[..pos].chars().count();
                         self.current_match = Some(self.cursor);
@@ -6236,8 +6282,7 @@ impl<'a> EditorState<'a> {
                     }
                 }
                 for row in (start_row..self.lines.len()).rev() {
-                    // On wrap-around, search entire line including cursor position
-                    // to find matches that may contain the cursor
+                    // On wrap-around, search entire line
                     if let Some(pos) = self.lines[row].rfind(&pattern) {
                         self.cursor.0 = row;
                         self.cursor.1 = self.lines[row][..pos].chars().count();
