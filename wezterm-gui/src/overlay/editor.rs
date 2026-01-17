@@ -329,6 +329,8 @@ enum ExCommand {
     },
     /// :lua <expr> - Evaluate Lua
     Lua(String),
+    /// :noh/:nohlsearch - Clear search highlighting
+    NoHighlight,
     /// Unknown command
     Unknown(String),
 }
@@ -6923,6 +6925,11 @@ impl<'a> EditorState<'a> {
             return ExCommand::Lua(String::new());
         }
 
+        // Check for :noh/:nohlsearch
+        if input == "noh" || input == "nohlsearch" {
+            return ExCommand::NoHighlight;
+        }
+
         ExCommand::Unknown(input.to_string())
     }
 
@@ -6974,6 +6981,13 @@ impl<'a> EditorState<'a> {
             }
             ExCommand::Lua(expr) => {
                 self.execute_lua(&expr)?;
+                Ok(false)
+            }
+            ExCommand::NoHighlight => {
+                // Clear search highlighting
+                self.search_pattern.clear();
+                self.search_highlight = false;
+                self.sr_matches.clear();
                 Ok(false)
             }
             ExCommand::Unknown(cmd) => {
