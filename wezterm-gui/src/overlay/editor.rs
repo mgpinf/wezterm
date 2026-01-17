@@ -282,6 +282,7 @@ enum EditorMode {
     VisualLine,
     VisualBlock,
     Command,
+    SubstitutePreview,
 }
 
 /// Parsed ex-command
@@ -317,6 +318,15 @@ enum SearchReplacePhase {
     Replace,
     /// Confirming replacements interactively
     Confirm,
+}
+
+/// Phase of interactive substitute preview
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum SubstitutePhase {
+    /// Typing the search pattern
+    Pattern,
+    /// Typing the replacement text
+    Replacement,
 }
 
 /// Direction for search and motion operations
@@ -508,6 +518,24 @@ struct EditorState<'a> {
     cmd_saved_input: String,
     /// Command mode: error message to display
     cmd_error: Option<String>,
+    /// Substitute preview: delimiter character
+    sub_delimiter: char,
+    /// Substitute preview: search pattern being typed
+    sub_pattern: String,
+    /// Substitute preview: replacement text being typed
+    sub_replacement: String,
+    /// Substitute preview: current phase
+    sub_phase: SubstitutePhase,
+    /// Substitute preview: global flag (all matches per line)
+    sub_global: bool,
+    /// Substitute preview: all lines (%) flag
+    sub_all_lines: bool,
+    /// Substitute preview: whether closing delimiter has been typed
+    sub_closed: bool,
+    /// Substitute preview: saved buffer state for rollback
+    sub_saved_lines: Vec<String>,
+    /// Substitute preview: match positions for highlighting (row, col, len)
+    sub_matches: Vec<(usize, usize, usize)>,
 }
 
 impl<'a> EditorState<'a> {
@@ -576,6 +604,15 @@ impl<'a> EditorState<'a> {
             cmd_history_idx: None,
             cmd_saved_input: String::new(),
             cmd_error: None,
+            sub_delimiter: '/',
+            sub_pattern: String::new(),
+            sub_replacement: String::new(),
+            sub_phase: SubstitutePhase::Pattern,
+            sub_global: false,
+            sub_all_lines: false,
+            sub_closed: false,
+            sub_saved_lines: Vec::new(),
+            sub_matches: Vec::new(),
         }
     }
 
@@ -4455,7 +4492,9 @@ impl<'a> EditorState<'a> {
             EditorMode::Normal => &self.colors.normal_mode_text,
             EditorMode::Insert => &self.colors.insert_mode_text,
             EditorMode::Replace => &self.colors.replace_mode_text,
-            EditorMode::Search | EditorMode::Command => &self.colors.command_mode_text,
+            EditorMode::Search | EditorMode::Command | EditorMode::SubstitutePreview => {
+                &self.colors.command_mode_text
+            }
             EditorMode::SearchReplace => &self.colors.find_replace_mode_text,
             EditorMode::Visual => &self.colors.visual_mode_text,
             EditorMode::VisualLine => &self.colors.visual_line_mode_text,
@@ -4481,7 +4520,7 @@ impl<'a> EditorState<'a> {
             EditorMode::Normal => (self.colors.normal_mode_fg, self.colors.normal_mode_bg),
             EditorMode::Insert => (self.colors.insert_mode_fg, self.colors.insert_mode_bg),
             EditorMode::Replace => (self.colors.replace_mode_fg, self.colors.replace_mode_bg),
-            EditorMode::Search | EditorMode::Command => {
+            EditorMode::Search | EditorMode::Command | EditorMode::SubstitutePreview => {
                 (self.colors.command_mode_fg, self.colors.command_mode_bg)
             }
             EditorMode::SearchReplace => (
@@ -4663,6 +4702,44 @@ impl<'a> EditorState<'a> {
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             // Clear the error after displaying
+        } else if self.mode == EditorMode::SubstitutePreview {
+            // Render substitute preview command line at the bottom
+            let prefix = if self.sub_all_lines { ":%s" } else { ":s" };
+            let delim = self.sub_delimiter;
+            let global_flag = if self.sub_global { "g" } else { "" };
+            let cmd_display = match self.sub_phase {
+                SubstitutePhase::Pattern => {
+                    format!("{}{}{}", prefix, delim, self.sub_pattern)
+                }
+                SubstitutePhase::Replacement => {
+                    if self.sub_closed {
+                        format!(
+                            "{}{}{}{}{}{}{}",
+                            prefix,
+                            delim,
+                            self.sub_pattern,
+                            delim,
+                            self.sub_replacement,
+                            delim,
+                            global_flag
+                        )
+                    } else {
+                        format!(
+                            "{}{}{}{}{}",
+                            prefix, delim, self.sub_pattern, delim, self.sub_replacement
+                        )
+                    }
+                }
+            };
+            self.buf.add_changes(vec![
+                Change::CursorPosition {
+                    x: Position::Absolute(0),
+                    y: Position::Absolute(rows - 1),
+                },
+                Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
+                Change::Text(format!("{:<width$}", cmd_display, width = cols)),
+                Change::AllAttributes(CellAttributes::default()),
+            ]);
         } else {
             let search_display = if self.search_pattern.is_empty() {
                 String::new()
@@ -4914,6 +4991,31 @@ impl<'a> EditorState<'a> {
                 // Cursor position after ':' + input position
                 let x = 1 + self.cmd_cursor;
                 (x, rows - 1, CursorShape::SteadyBar, true)
+            } else if self.mode == EditorMode::SubstitutePreview {
+                // Cursor position in substitute command line
+                // Format: :s/pattern/replacement/[g] or :%s/pattern/replacement/[g]
+                let prefix = if self.sub_all_lines { ":%s" } else { ":s" };
+                let x = match self.sub_phase {
+                    SubstitutePhase::Pattern => {
+                        // prefix + delim + pattern_len
+                        prefix.len() + 1 + self.sub_pattern.chars().count()
+                    }
+                    SubstitutePhase::Replacement => {
+                        // prefix + delim + pattern + delim + replacement_len
+                        let base = prefix.len()
+                            + 1
+                            + self.sub_pattern.chars().count()
+                            + 1
+                            + self.sub_replacement.chars().count();
+                        if self.sub_closed {
+                            // Add closing delimiter + global flag
+                            base + 1 + if self.sub_global { 1 } else { 0 }
+                        } else {
+                            base
+                        }
+                    }
+                };
+                (x, rows - 1, CursorShape::SteadyBar, true)
             } else {
                 let y = cursor_screen_row.unwrap_or(content_start_row);
                 let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
@@ -4926,9 +5028,10 @@ impl<'a> EditorState<'a> {
                         EditorMode::Normal => CursorShape::SteadyBlock,
                         EditorMode::Insert => CursorShape::SteadyBar,
                         EditorMode::Replace => CursorShape::SteadyUnderline,
-                        EditorMode::Search | EditorMode::SearchReplace | EditorMode::Command => {
-                            CursorShape::SteadyBar
-                        }
+                        EditorMode::Search
+                        | EditorMode::SearchReplace
+                        | EditorMode::Command
+                        | EditorMode::SubstitutePreview => CursorShape::SteadyBar,
                         EditorMode::Visual | EditorMode::VisualLine | EditorMode::VisualBlock => {
                             CursorShape::SteadyBlock
                         }
@@ -6755,6 +6858,121 @@ impl<'a> EditorState<'a> {
         // TODO: Integrate with Lua runtime
         log::info!("Ex-command :lua would execute: {}", expr);
         Ok(())
+    }
+
+    /// Check if cmd_input matches s/ or %s/ pattern and return delimiter
+    fn check_substitute_entry(&self) -> Option<char> {
+        let cmd = &self.cmd_input;
+        // Match %s/ or s/
+        if cmd.starts_with("%s") && cmd.len() > 2 {
+            let rest = &cmd[2..];
+            if let Some(delim) = rest.chars().next() {
+                if !delim.is_alphanumeric() {
+                    return Some(delim);
+                }
+            }
+        } else if cmd.starts_with('s') && cmd.len() > 1 {
+            let rest = &cmd[1..];
+            if let Some(delim) = rest.chars().next() {
+                if !delim.is_alphanumeric() {
+                    return Some(delim);
+                }
+            }
+        }
+        None
+    }
+
+    /// Enter substitute preview mode from command mode
+    fn enter_substitute_preview(&mut self, delimiter: char, all_lines: bool) {
+        self.sub_delimiter = delimiter;
+        self.sub_pattern.clear();
+        self.sub_replacement.clear();
+        self.sub_phase = SubstitutePhase::Pattern;
+        self.sub_global = false;
+        self.sub_all_lines = all_lines;
+        self.sub_closed = false;
+        self.sub_saved_lines = self.lines.clone();
+        self.sub_matches.clear();
+        self.mode = EditorMode::SubstitutePreview;
+    }
+
+    /// Exit substitute preview mode, optionally restoring buffer
+    fn exit_substitute_preview(&mut self, restore: bool) {
+        if restore {
+            self.lines = self.sub_saved_lines.clone();
+            self.lines_version += 1;
+        }
+        self.sub_saved_lines.clear();
+        self.sub_matches.clear();
+        self.mode = EditorMode::Normal;
+    }
+
+    /// Find all matches of the current pattern for highlighting
+    fn sub_find_matches(&mut self) {
+        self.sub_matches.clear();
+        if self.sub_pattern.is_empty() {
+            return;
+        }
+
+        let lines_range = if self.sub_all_lines {
+            0..self.lines.len()
+        } else {
+            self.cursor.0..self.cursor.0 + 1
+        };
+
+        for row in lines_range {
+            let line = &self.lines[row];
+            let pattern_len = self.sub_pattern.chars().count();
+            let mut search_start = 0;
+
+            while let Some(pos) = line[search_start..].find(&self.sub_pattern) {
+                let byte_pos = search_start + pos;
+                // Convert byte position to char position
+                let col = line[..byte_pos].chars().count();
+                self.sub_matches.push((row, col, pattern_len));
+                search_start = byte_pos + self.sub_pattern.len();
+            }
+        }
+    }
+
+    /// Apply live preview of substitution to the buffer
+    fn sub_apply_preview(&mut self) {
+        // Restore original lines first
+        self.lines = self.sub_saved_lines.clone();
+
+        if self.sub_pattern.is_empty() {
+            self.sub_find_matches();
+            return;
+        }
+
+        let lines_range = if self.sub_all_lines {
+            0..self.lines.len()
+        } else {
+            self.cursor.0..self.cursor.0 + 1
+        };
+
+        for line_idx in lines_range {
+            let line = &self.lines[line_idx];
+            let new_line = if self.sub_global {
+                line.replace(&self.sub_pattern, &self.sub_replacement)
+            } else {
+                line.replacen(&self.sub_pattern, &self.sub_replacement, 1)
+            };
+            self.lines[line_idx] = new_line;
+        }
+
+        // Update matches for highlighting (after replacement, for any remaining matches)
+        self.sub_find_matches();
+        self.lines_version += 1;
+    }
+
+    /// Confirm and finalize the substitution
+    fn sub_confirm(&mut self) {
+        // The buffer already has the preview applied, just clear saved state
+        self.sub_saved_lines.clear();
+        self.sub_matches.clear();
+        self.record_change();
+        self.mode = EditorMode::Normal;
     }
 
     fn get_visual_selection(&self) -> ((usize, usize), (usize, usize)) {
@@ -10182,6 +10400,15 @@ impl<'a> EditorState<'a> {
                             self.cmd_cursor += 1;
                             // Clear history navigation when typing
                             self.cmd_history_idx = None;
+
+                            // Check for substitute pattern to enter preview mode
+                            // Matches: s/ or %s/ with any delimiter
+                            if let Some(delim) = self.check_substitute_entry() {
+                                let all_lines = self.cmd_input.starts_with("%s");
+                                self.cmd_input.clear();
+                                self.cmd_cursor = 0;
+                                self.enter_substitute_preview(delim, all_lines);
+                            }
                         }
                     }
                     InputEvent::Paste(text) => {
@@ -10191,6 +10418,107 @@ impl<'a> EditorState<'a> {
                                 chars.insert(self.cmd_cursor, c);
                                 self.cmd_input = chars.into_iter().collect();
                                 self.cmd_cursor += 1;
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                EditorMode::SubstitutePreview => match event {
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Escape,
+                        ..
+                    }) => {
+                        // Cancel and restore original buffer
+                        self.exit_substitute_preview(true);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Enter,
+                        ..
+                    }) => {
+                        // Confirm the substitution
+                        if !self.sub_pattern.is_empty() {
+                            self.sub_confirm();
+                        } else {
+                            self.exit_substitute_preview(true);
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Backspace,
+                        ..
+                    }) => {
+                        if self.sub_closed {
+                            if self.sub_global {
+                                // Backspace removes the 'g' flag first
+                                self.sub_global = false;
+                                self.sub_apply_preview();
+                            } else {
+                                // Then unclose if no flags are set
+                                self.sub_closed = false;
+                            }
+                        } else {
+                            match self.sub_phase {
+                                SubstitutePhase::Pattern => {
+                                    if self.sub_pattern.pop().is_none() {
+                                        // Backspace on empty pattern exits
+                                        self.exit_substitute_preview(true);
+                                    } else {
+                                        self.sub_find_matches();
+                                    }
+                                }
+                                SubstitutePhase::Replacement => {
+                                    if self.sub_replacement.pop().is_none() {
+                                        // Backspace on empty replacement goes back to pattern
+                                        self.sub_phase = SubstitutePhase::Pattern;
+                                        // Restore and update for pattern-only view
+                                        self.lines = self.sub_saved_lines.clone();
+                                        self.sub_find_matches();
+                                    } else {
+                                        self.sub_apply_preview();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char(c),
+                        modifiers,
+                    }) => {
+                        if !modifiers.contains(Modifiers::CTRL)
+                            && !modifiers.contains(Modifiers::ALT)
+                        {
+                            if c == self.sub_delimiter {
+                                // Delimiter typed - transition phases
+                                match self.sub_phase {
+                                    SubstitutePhase::Pattern => {
+                                        // Move to replacement phase
+                                        self.sub_phase = SubstitutePhase::Replacement;
+                                        self.sub_find_matches();
+                                    }
+                                    SubstitutePhase::Replacement => {
+                                        // Set closed flag - now 'g' can toggle
+                                        self.sub_closed = true;
+                                    }
+                                }
+                                // Don't add the delimiter as a character
+                            } else if c == 'g' && self.sub_closed {
+                                // Toggle global flag (only after closing delimiter)
+                                self.sub_global = !self.sub_global;
+                                self.sub_apply_preview();
+                            } else if self.sub_closed {
+                                // Any other char after closing delimiter is ignored
+                                // (or could be other flags in the future)
+                            } else {
+                                // Regular character input
+                                match self.sub_phase {
+                                    SubstitutePhase::Pattern => {
+                                        self.sub_pattern.push(c);
+                                        self.sub_find_matches();
+                                    }
+                                    SubstitutePhase::Replacement => {
+                                        self.sub_replacement.push(c);
+                                        self.sub_apply_preview();
+                                    }
+                                }
                             }
                         }
                     }
