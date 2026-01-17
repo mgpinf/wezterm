@@ -6690,14 +6690,13 @@ impl<'a> EditorState<'a> {
         for row in lines_range {
             let line = &self.lines[row];
             let pattern_len = self.sub_pattern.chars().count();
-            let mut search_start = 0;
 
-            while let Some(pos) = line[search_start..].find(&self.sub_pattern) {
-                let byte_pos = search_start + pos;
-                // Convert byte position to char position
-                let col = line[..byte_pos].chars().count();
+            // Only find first match per line - if global flag is set, all matches
+            // will already be replaced (shown with replacement colors), otherwise
+            // only the first match should be highlighted
+            if let Some(pos) = line.find(&self.sub_pattern) {
+                let col = line[..pos].chars().count();
                 self.sub_matches.push((row, col, pattern_len));
-                search_start = byte_pos + self.sub_pattern.len();
             }
         }
     }
