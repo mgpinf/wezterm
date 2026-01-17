@@ -351,6 +351,8 @@ enum SubstitutePhase {
     Pattern,
     /// Typing the replacement text
     Replacement,
+    /// Confirming replacements interactively (y/n/a/q/l)
+    Confirm,
 }
 
 /// Direction for search and motion operations
@@ -552,6 +554,8 @@ struct EditorState<'a> {
     sub_phase: SubstitutePhase,
     /// Substitute preview: global flag (all matches per line)
     sub_global: bool,
+    /// Substitute preview: confirm flag (confirm each replacement)
+    sub_confirm_mode: bool,
     /// Substitute preview: all lines (%) flag
     sub_all_lines: bool,
     /// Substitute preview: whether closing delimiter has been typed
@@ -562,6 +566,10 @@ struct EditorState<'a> {
     sub_matches: Vec<(usize, usize, usize)>,
     /// Substitute preview: replacement positions for highlighting (row, col, len)
     sub_replacements: Vec<(usize, usize, usize)>,
+    /// Substitute confirm: current match index (for confirm mode)
+    sub_current_match_idx: usize,
+    /// Substitute confirm: count of replacements made
+    sub_replace_count: usize,
 }
 
 impl<'a> EditorState<'a> {
@@ -635,11 +643,14 @@ impl<'a> EditorState<'a> {
             sub_replacement: String::new(),
             sub_phase: SubstitutePhase::Pattern,
             sub_global: false,
+            sub_confirm_mode: false,
             sub_all_lines: false,
             sub_closed: false,
             sub_saved_lines: Vec::new(),
             sub_matches: Vec::new(),
             sub_replacements: Vec::new(),
+            sub_current_match_idx: 0,
+            sub_replace_count: 0,
         }
     }
 
@@ -4733,7 +4744,13 @@ impl<'a> EditorState<'a> {
             // Render substitute preview command line at the bottom
             let prefix = if self.sub_all_lines { ":%s" } else { ":s" };
             let delim = self.sub_delimiter;
-            let global_flag = if self.sub_global { "g" } else { "" };
+            let mut flags = String::new();
+            if self.sub_global {
+                flags.push('g');
+            }
+            if self.sub_confirm_mode {
+                flags.push('c');
+            }
             let cmd_display = match self.sub_phase {
                 SubstitutePhase::Pattern => {
                     format!("{}{}{}", prefix, delim, self.sub_pattern)
@@ -4748,7 +4765,7 @@ impl<'a> EditorState<'a> {
                             delim,
                             self.sub_replacement,
                             delim,
-                            global_flag
+                            flags
                         )
                     } else {
                         format!(
@@ -4756,6 +4773,16 @@ impl<'a> EditorState<'a> {
                             prefix, delim, self.sub_pattern, delim, self.sub_replacement
                         )
                     }
+                }
+                SubstitutePhase::Confirm => {
+                    // Show confirm prompt with match info
+                    let current = self.sub_current_match_idx + 1;
+                    let total = self.sub_matches.len();
+                    let replaced = self.sub_replace_count;
+                    format!(
+                        "replace with '{}'? (y/n/a/q/l) [{}/{}] ({} replaced)",
+                        self.sub_replacement, current, total, replaced
+                    )
                 }
             };
             self.buf.add_changes(vec![
@@ -5037,14 +5064,28 @@ impl<'a> EditorState<'a> {
                             + 1
                             + self.sub_replacement.chars().count();
                         if self.sub_closed {
-                            // Add closing delimiter + global flag
-                            base + 1 + if self.sub_global { 1 } else { 0 }
+                            // Add closing delimiter + flags (g and/or c)
+                            let flags_len = if self.sub_global { 1 } else { 0 }
+                                + if self.sub_confirm_mode { 1 } else { 0 };
+                            base + 1 + flags_len
                         } else {
                             base
                         }
                     }
+                    SubstitutePhase::Confirm => {
+                        // In confirm mode, cursor is at the match position, not command line
+                        // Return 0 but we'll override below
+                        0
+                    }
                 };
-                (x, rows - 1, CursorShape::SteadyBar, true)
+                if self.sub_phase == SubstitutePhase::Confirm {
+                    // In confirm mode, cursor should be at the current match
+                    let y = cursor_screen_row.unwrap_or(content_start_row);
+                    let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
+                    (x, y, CursorShape::SteadyBlock, true)
+                } else {
+                    (x, rows - 1, CursorShape::SteadyBar, true)
+                }
             } else {
                 let y = cursor_screen_row.unwrap_or(content_start_row);
                 let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
@@ -7024,6 +7065,7 @@ impl<'a> EditorState<'a> {
         self.sub_replacement.clear();
         self.sub_phase = SubstitutePhase::Pattern;
         self.sub_global = false;
+        self.sub_confirm_mode = false;
         self.sub_all_lines = all_lines;
         self.sub_closed = false;
         self.sub_saved_lines = self.lines.clone();
@@ -7139,9 +7181,118 @@ impl<'a> EditorState<'a> {
         self.lines_version += 1;
     }
 
-    /// Confirm and finalize the substitution
-    fn sub_confirm(&mut self) {
-        // The buffer already has the preview applied, just clear saved state
+    /// Enter confirm mode for interactive confirmation
+    fn sub_enter_confirm_mode(&mut self) {
+        // Restore original lines and find all matches for confirmation
+        self.lines = self.sub_saved_lines.clone();
+        self.lines_version += 1;
+        self.sub_replacements.clear();
+
+        // Find all matches in the original buffer
+        self.sub_find_matches();
+
+        if self.sub_matches.is_empty() {
+            // No matches found, just exit
+            self.exit_substitute_preview(true);
+            return;
+        }
+
+        self.sub_current_match_idx = 0;
+        self.sub_replace_count = 0;
+        self.sub_phase = SubstitutePhase::Confirm;
+
+        // Jump to first match
+        self.sub_goto_current_match();
+    }
+
+    /// Jump viewport to current match
+    fn sub_goto_current_match(&mut self) {
+        if let Some(&(row, col, _)) = self.sub_matches.get(self.sub_current_match_idx) {
+            self.cursor = (row, col);
+            // Ensure current line is visible
+            let (_, rows) = self.buf.dimensions();
+            let content_rows = rows.saturating_sub(3); // Account for status lines
+            if row < self.viewport_top || row >= self.viewport_top + content_rows {
+                self.viewport_top = row.saturating_sub(content_rows / 2);
+            }
+        }
+    }
+
+    /// Replace current match and move to next
+    fn sub_replace_current(&mut self) {
+        if let Some(&(row, col, len)) = self.sub_matches.get(self.sub_current_match_idx) {
+            // Perform the replacement in the buffer
+            let line = &self.lines[row];
+            // Convert char position to byte position
+            let start_byte: usize = line.chars().take(col).map(|c| c.len_utf8()).sum();
+            let end_byte: usize = line.chars().take(col + len).map(|c| c.len_utf8()).sum();
+            let new_line = format!(
+                "{}{}{}",
+                &line[..start_byte],
+                self.sub_replacement,
+                &line[end_byte..]
+            );
+
+            let replacement_len = self.sub_replacement.chars().count();
+            let len_diff = replacement_len as isize - len as isize;
+
+            self.lines[row] = new_line;
+            self.lines_version += 1;
+            self.sub_replace_count += 1;
+
+            // Remove the replaced match
+            self.sub_matches.remove(self.sub_current_match_idx);
+
+            // Adjust subsequent matches on the same line
+            for m in &mut self.sub_matches {
+                if m.0 == row && m.1 > col {
+                    m.1 = (m.1 as isize + len_diff) as usize;
+                }
+            }
+
+            // If global mode, keep current index (next match is now at current position)
+            // If not global, remove all other matches on the same line
+            if !self.sub_global {
+                self.sub_matches.retain(|m| m.0 != row);
+            }
+
+            // Ensure current index is valid
+            if self.sub_current_match_idx >= self.sub_matches.len() && !self.sub_matches.is_empty()
+            {
+                self.sub_current_match_idx = 0;
+            }
+
+            // Jump to next match if any
+            if !self.sub_matches.is_empty() {
+                self.sub_goto_current_match();
+            }
+        }
+    }
+
+    /// Skip current match and move to next
+    fn sub_skip_current(&mut self) {
+        if !self.sub_matches.is_empty() {
+            self.sub_matches.remove(self.sub_current_match_idx);
+            if self.sub_current_match_idx >= self.sub_matches.len() && !self.sub_matches.is_empty()
+            {
+                self.sub_current_match_idx = 0;
+            }
+            if !self.sub_matches.is_empty() {
+                self.sub_goto_current_match();
+            }
+        }
+    }
+
+    /// Replace all remaining matches
+    fn sub_replace_all(&mut self) {
+        while !self.sub_matches.is_empty() {
+            self.sub_replace_current();
+        }
+    }
+
+    /// Finalize the substitution and exit
+    fn sub_finalize(&mut self) {
+        // Clear saved state and record the change
         self.sub_saved_lines.clear();
         self.sub_matches.clear();
         self.sub_replacements.clear();
@@ -10611,7 +10762,19 @@ impl<'a> EditorState<'a> {
                     }) => {
                         // Confirm the substitution
                         if !self.sub_pattern.is_empty() {
-                            self.sub_confirm();
+                            if self.sub_confirm_mode && self.sub_phase != SubstitutePhase::Confirm {
+                                // Enter confirm mode for interactive confirmation
+                                self.sub_enter_confirm_mode();
+                            } else if self.sub_phase == SubstitutePhase::Confirm {
+                                // Already in confirm mode, treat as 'y' (yes to current)
+                                self.sub_replace_current();
+                                if self.sub_matches.is_empty() {
+                                    self.sub_finalize();
+                                }
+                            } else {
+                                // Regular confirm (apply all)
+                                self.sub_finalize();
+                            }
                         } else {
                             self.exit_substitute_preview(true);
                         }
@@ -10621,8 +10784,11 @@ impl<'a> EditorState<'a> {
                         ..
                     }) => {
                         if self.sub_closed {
-                            if self.sub_global {
-                                // Backspace removes the 'g' flag first
+                            if self.sub_confirm_mode {
+                                // Backspace removes the 'c' flag first
+                                self.sub_confirm_mode = false;
+                            } else if self.sub_global {
+                                // Then removes the 'g' flag
                                 self.sub_global = false;
                                 self.sub_apply_preview();
                             } else {
@@ -10650,6 +10816,10 @@ impl<'a> EditorState<'a> {
                                         self.sub_apply_preview();
                                     }
                                 }
+                                SubstitutePhase::Confirm => {
+                                    // Backspace in confirm mode acts like 'q' (quit)
+                                    self.sub_finalize();
+                                }
                             }
                         }
                     }
@@ -10672,15 +10842,55 @@ impl<'a> EditorState<'a> {
                                         // Set closed flag - now 'g' can toggle
                                         self.sub_closed = true;
                                     }
+                                    SubstitutePhase::Confirm => {
+                                        // Delimiter is ignored in confirm mode
+                                    }
                                 }
                                 // Don't add the delimiter as a character
+                            } else if self.sub_phase == SubstitutePhase::Confirm {
+                                // Handle confirm mode keys
+                                match c {
+                                    'y' | 'Y' => {
+                                        // Replace current and go to next
+                                        self.sub_replace_current();
+                                        if self.sub_matches.is_empty() {
+                                            self.sub_finalize();
+                                        }
+                                    }
+                                    'n' | 'N' => {
+                                        // Skip current and go to next
+                                        self.sub_skip_current();
+                                        if self.sub_matches.is_empty() {
+                                            self.sub_finalize();
+                                        }
+                                    }
+                                    'a' | 'A' => {
+                                        // Replace all remaining
+                                        self.sub_replace_all();
+                                        self.sub_finalize();
+                                    }
+                                    'q' | 'Q' => {
+                                        // Quit without replacing more
+                                        self.sub_finalize();
+                                    }
+                                    'l' | 'L' => {
+                                        // Replace current (last) and quit
+                                        self.sub_replace_current();
+                                        self.sub_finalize();
+                                    }
+                                    _ => {
+                                        // Ignore other keys in confirm mode
+                                    }
+                                }
                             } else if c == 'g' && self.sub_closed {
                                 // Toggle global flag (only after closing delimiter)
                                 self.sub_global = !self.sub_global;
                                 self.sub_apply_preview();
+                            } else if c == 'c' && self.sub_closed {
+                                // Toggle confirm flag (only after closing delimiter)
+                                self.sub_confirm_mode = !self.sub_confirm_mode;
                             } else if self.sub_closed {
                                 // Any other char after closing delimiter is ignored
-                                // (or could be other flags in the future)
                             } else {
                                 // Regular character input
                                 match self.sub_phase {
@@ -10691,6 +10901,9 @@ impl<'a> EditorState<'a> {
                                     SubstitutePhase::Replacement => {
                                         self.sub_replacement.push(c);
                                         self.sub_apply_preview();
+                                    }
+                                    SubstitutePhase::Confirm => {
+                                        // Already handled above
                                     }
                                 }
                             }
