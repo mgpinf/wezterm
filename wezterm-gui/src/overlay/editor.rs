@@ -455,6 +455,8 @@ struct EditorState<'a> {
     sub_current_match_idx: usize,
     /// Substitute confirm: count of replacements made
     sub_replace_count: usize,
+    /// Substitute preview: line range for visual mode (start, end) inclusive
+    sub_line_range: Option<(usize, usize)>,
 }
 
 impl<'a> EditorState<'a> {
@@ -529,6 +531,7 @@ impl<'a> EditorState<'a> {
             sub_replacements: Vec::new(),
             sub_current_match_idx: 0,
             sub_replace_count: 0,
+            sub_line_range: None,
         }
     }
 
@@ -4520,7 +4523,13 @@ impl<'a> EditorState<'a> {
             // Clear the error after displaying
         } else if self.mode == EditorMode::SubstitutePreview {
             // Render substitute preview command line at the bottom
-            let prefix = if self.sub_all_lines { ":%s" } else { ":s" };
+            let prefix = if self.sub_line_range.is_some() {
+                ":'<,'>s"
+            } else if self.sub_all_lines {
+                ":%s"
+            } else {
+                ":s"
+            };
             let delim = self.sub_delimiter;
             let mut flags = String::new();
             if self.sub_global {
@@ -4811,8 +4820,14 @@ impl<'a> EditorState<'a> {
                 (x, rows - 1, CursorShape::SteadyBar, true)
             } else if self.mode == EditorMode::SubstitutePreview {
                 // Cursor position in substitute command line
-                // Format: :s/pattern/replacement/[g] or :%s/pattern/replacement/[g]
-                let prefix = if self.sub_all_lines { ":%s" } else { ":s" };
+                // Format: :s/pattern/replacement/[g] or :%s/pattern/replacement/[g] or :'<,'>s/...
+                let prefix = if self.sub_line_range.is_some() {
+                    ":'<,'>s"
+                } else if self.sub_all_lines {
+                    ":%s"
+                } else {
+                    ":s"
+                };
                 let x = match self.sub_phase {
                     SubstitutePhase::Pattern => {
                         // prefix + delim + pattern_len
@@ -6433,10 +6448,16 @@ impl<'a> EditorState<'a> {
         self.current_match = Some(self.cursor);
     }
 
-    /// Enter command mode (triggered by `:` in Normal mode)
+    /// Enter command mode (triggered by `:` in Normal or Visual mode)
     fn enter_command_mode(&mut self) {
-        self.cmd_input.clear();
-        self.cmd_cursor = 0;
+        // Pre-fill with visual range marker if entering from visual mode
+        if self.sub_line_range.is_some() {
+            self.cmd_input = "'<,'>".to_string();
+            self.cmd_cursor = 5; // Position after '<,'>
+        } else {
+            self.cmd_input.clear();
+            self.cmd_cursor = 0;
+        }
         self.cmd_history_idx = None;
         self.cmd_saved_input.clear();
         self.cmd_error = None;
@@ -6447,6 +6468,7 @@ impl<'a> EditorState<'a> {
     fn exit_command_mode(&mut self) {
         self.mode = EditorMode::Normal;
         self.cmd_error = None;
+        self.sub_line_range = None; // Clear visual range on exit
     }
 
     /// Parse a command string into an ExCommand
@@ -6589,7 +6611,10 @@ impl<'a> EditorState<'a> {
         self.save_undo_state();
         let mut changed = false;
 
-        let lines_range = if all_lines {
+        // Determine line range: visual range > all lines (%) > current line
+        let lines_range = if let Some((start, end)) = self.sub_line_range {
+            start..end + 1
+        } else if all_lines {
             0..self.lines.len()
         } else {
             self.cursor.0..self.cursor.0 + 1
@@ -6624,18 +6649,29 @@ impl<'a> EditorState<'a> {
         Ok(())
     }
 
-    /// Check if cmd_input matches s/ or %s/ pattern and return delimiter
+    /// Check if cmd_input matches s/, %s/, or '<,'>s/ pattern and return delimiter
     fn check_substitute_entry(&self) -> Option<char> {
         let cmd = &self.cmd_input;
-        // Match %s/ or s/
-        if cmd.starts_with("%s") && cmd.len() > 2 {
+        // Match '<,'>s/ (visual range)
+        if cmd.starts_with("'<,'>s") && cmd.len() > 6 {
+            let rest = &cmd[6..];
+            if let Some(delim) = rest.chars().next() {
+                if !delim.is_alphanumeric() {
+                    return Some(delim);
+                }
+            }
+        }
+        // Match %s/ (all lines)
+        else if cmd.starts_with("%s") && cmd.len() > 2 {
             let rest = &cmd[2..];
             if let Some(delim) = rest.chars().next() {
                 if !delim.is_alphanumeric() {
                     return Some(delim);
                 }
             }
-        } else if cmd.starts_with('s') && cmd.len() > 1 {
+        }
+        // Match s/ (current line)
+        else if cmd.starts_with('s') && cmd.len() > 1 {
             let rest = &cmd[1..];
             if let Some(delim) = rest.chars().next() {
                 if !delim.is_alphanumeric() {
@@ -6671,6 +6707,7 @@ impl<'a> EditorState<'a> {
         self.sub_saved_lines.clear();
         self.sub_matches.clear();
         self.sub_replacements.clear();
+        self.sub_line_range = None;
         self.mode = EditorMode::Normal;
     }
 
@@ -6681,7 +6718,10 @@ impl<'a> EditorState<'a> {
             return;
         }
 
-        let lines_range = if self.sub_all_lines {
+        // Determine line range: visual range > all lines (%) > current line
+        let lines_range = if let Some((start, end)) = self.sub_line_range {
+            start..end + 1
+        } else if self.sub_all_lines {
             0..self.lines.len()
         } else {
             self.cursor.0..self.cursor.0 + 1
@@ -6712,7 +6752,10 @@ impl<'a> EditorState<'a> {
             return;
         }
 
-        let lines_range: Vec<usize> = if self.sub_all_lines {
+        // Determine line range: visual range > all lines (%) > current line
+        let lines_range: Vec<usize> = if let Some((start, end)) = self.sub_line_range {
+            (start..end + 1).collect()
+        } else if self.sub_all_lines {
             (0..self.lines.len()).collect()
         } else {
             vec![self.cursor.0]
@@ -6885,6 +6928,7 @@ impl<'a> EditorState<'a> {
         self.sub_saved_lines.clear();
         self.sub_matches.clear();
         self.sub_replacements.clear();
+        self.sub_line_range = None;
         self.record_change();
         self.mode = EditorMode::Normal;
     }
@@ -9955,6 +9999,13 @@ impl<'a> EditorState<'a> {
                                     // 'g' prefix for gg command
                                     'g' => {
                                         self.pending_keys.push(KeyCode::Char('g'));
+                                    }
+                                    // Enter command mode with visual range
+                                    ':' => {
+                                        // Store the visual line range for substitute
+                                        let (start, end) = self.get_visual_selection();
+                                        self.sub_line_range = Some((start.0, end.0));
+                                        self.enter_command_mode();
                                     }
                                     _ => {
                                         // Clear pending keys on unrecognized input
