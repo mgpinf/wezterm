@@ -10583,6 +10583,13 @@ mod tests {
         viewport_top: usize,
         screen_height: usize,         // Number of visible lines for H/M/L tests
         visual_start: (usize, usize), // Anchor point for visual selection
+        // Search-related fields
+        search_input: String,
+        search_pattern: String,
+        search_direction: Direction,
+        search_start_pos: (usize, usize),
+        search_highlight: bool,
+        current_match: Option<(usize, usize)>,
     }
 
     impl TestEditor {
@@ -10608,8 +10615,14 @@ mod tests {
                 last_change: LastChange::None,
                 last_count: 1,
                 viewport_top: 0,
-                screen_height: 24,    // Default screen height for tests
-                visual_start: (0, 0), // Default visual start
+                screen_height: 24,
+                visual_start: (0, 0),
+                search_input: String::new(),
+                search_pattern: String::new(),
+                search_direction: Direction::Forward,
+                search_start_pos: (0, 0),
+                search_highlight: false,
+                current_match: None,
             }
         }
 
@@ -12257,6 +12270,135 @@ mod tests {
             if changed {
                 self.lines_version += 1;
             }
+        }
+
+        /// Start forward search from current cursor position
+        fn start_forward_search(&mut self, pattern: &str) {
+            self.search_input = pattern.to_string();
+            self.search_direction = Direction::Forward;
+            self.search_start_pos = self.cursor;
+            self.perform_incremental_search();
+        }
+
+        /// Start backward search from current cursor position
+        fn start_backward_search(&mut self, pattern: &str) {
+            self.search_input = pattern.to_string();
+            self.search_direction = Direction::Backward;
+            self.search_start_pos = self.cursor;
+            self.perform_incremental_search();
+        }
+
+        /// Perform incremental search (mirrors EditorState::perform_incremental_search)
+        fn perform_incremental_search(&mut self) {
+            if self.search_input.is_empty() {
+                self.cursor = self.search_start_pos;
+                self.search_highlight = false;
+                self.current_match = None;
+                return;
+            }
+
+            self.search_pattern = self.search_input.clone();
+            self.search_highlight = true;
+
+            let pattern = self.search_input.clone();
+            let pattern_len = pattern.len();
+            let pattern_char_len = pattern.chars().count();
+            let start_row = self.search_start_pos.0;
+            let start_col = self.search_start_pos.1;
+
+            match self.search_direction {
+                Direction::Forward => {
+                    // Forward search: always advance past current position
+                    let current_line = &self.lines[start_row];
+                    let search_start_char = start_col + 1;
+                    let byte_offset: usize = current_line
+                        .chars()
+                        .take(search_start_char)
+                        .map(|c| c.len_utf8())
+                        .sum();
+
+                    if byte_offset < current_line.len() {
+                        if let Some(pos) = current_line[byte_offset..].find(&pattern) {
+                            self.cursor.0 = start_row;
+                            self.cursor.1 = search_start_char
+                                + current_line[byte_offset..][..pos].chars().count();
+                            self.current_match = Some(self.cursor);
+                            return;
+                        }
+                    }
+                    for row in (start_row + 1)..self.lines.len() {
+                        if let Some(pos) = self.lines[row].find(&pattern) {
+                            self.cursor = (row, self.lines[row][..pos].chars().count());
+                            self.current_match = Some(self.cursor);
+                            return;
+                        }
+                    }
+                    // Wrap-around
+                    for row in 0..=start_row {
+                        if let Some(pos) = self.lines[row].find(&pattern) {
+                            self.cursor = (row, self.lines[row][..pos].chars().count());
+                            self.current_match = Some(self.cursor);
+                            return;
+                        }
+                    }
+                }
+                Direction::Backward => {
+                    // Backward search: if cursor is inside a match (not at first char), stay
+                    let current_line = &self.lines[start_row];
+
+                    // Check if cursor is inside a match
+                    let mut search_pos = 0;
+                    while let Some(rel_pos) = current_line[search_pos..].find(&pattern) {
+                        let match_start_byte = search_pos + rel_pos;
+                        let match_start_char = current_line[..match_start_byte].chars().count();
+
+                        if match_start_char < start_col
+                            && start_col < match_start_char + pattern_char_len
+                        {
+                            self.cursor = (start_row, match_start_char);
+                            self.current_match = Some(self.cursor);
+                            return;
+                        }
+
+                        search_pos = match_start_byte + pattern_len;
+                        if search_pos >= current_line.len() {
+                            break;
+                        }
+                    }
+
+                    // Not inside a match, search backward
+                    let byte_offset: usize = current_line
+                        .chars()
+                        .take(start_col)
+                        .map(|c| c.len_utf8())
+                        .sum();
+
+                    if byte_offset > 0 {
+                        if let Some(pos) = current_line[..byte_offset].rfind(&pattern) {
+                            self.cursor = (start_row, current_line[..pos].chars().count());
+                            self.current_match = Some(self.cursor);
+                            return;
+                        }
+                    }
+                    for row in (0..start_row).rev() {
+                        if let Some(pos) = self.lines[row].rfind(&pattern) {
+                            self.cursor = (row, self.lines[row][..pos].chars().count());
+                            self.current_match = Some(self.cursor);
+                            return;
+                        }
+                    }
+                    // Wrap-around
+                    for row in (start_row..self.lines.len()).rev() {
+                        if let Some(pos) = self.lines[row].rfind(&pattern) {
+                            self.cursor = (row, self.lines[row][..pos].chars().count());
+                            self.current_match = Some(self.cursor);
+                            return;
+                        }
+                    }
+                }
+            }
+            self.cursor = self.search_start_pos;
+            self.current_match = None;
         }
     }
 
@@ -14904,5 +15046,98 @@ mod tests {
         let mut editor = TestEditor::new("foo foo\nfoo foo\nfoo foo");
         editor.execute_substitute_all_lines("foo", "bar", false);
         assert_eq!(editor.text(), "bar foo\nbar foo\nbar foo");
+    }
+
+    // ============ Search Behavior Tests ============
+
+    #[test]
+    fn test_forward_search_from_first_char_advances() {
+        // Forward search from first char of match should go to NEXT match
+        let mut editor = TestEditor::new("foo bar foo baz foo");
+        editor.cursor = (0, 0); // On first 'f' of first "foo"
+        editor.start_forward_search("foo");
+        // Should move to second "foo" at column 8
+        assert_eq!(editor.cursor, (0, 8));
+        assert!(editor.current_match.is_some());
+    }
+
+    #[test]
+    fn test_forward_search_from_inside_match_advances() {
+        // Forward search from inside match should go to NEXT match
+        let mut editor = TestEditor::new("foo bar foo baz foo");
+        editor.cursor = (0, 1); // On 'o' inside first "foo"
+        editor.start_forward_search("foo");
+        // Should move to second "foo" at column 8
+        assert_eq!(editor.cursor, (0, 8));
+    }
+
+    #[test]
+    fn test_backward_search_from_first_char_goes_back() {
+        // Backward search from first char of match should go to PREVIOUS match
+        let mut editor = TestEditor::new("foo bar foo baz foo");
+        editor.cursor = (0, 8); // On first 'f' of second "foo"
+        editor.start_backward_search("foo");
+        // Should move to first "foo" at column 0
+        assert_eq!(editor.cursor, (0, 0));
+    }
+
+    #[test]
+    fn test_backward_search_from_inside_match_stays() {
+        // Backward search from inside match (not first char) should STAY on current match
+        let mut editor = TestEditor::new("foo bar foo baz foo");
+        editor.cursor = (0, 9); // On 'o' inside second "foo" (at column 8)
+        editor.start_backward_search("foo");
+        // Should stay on current match at column 8
+        assert_eq!(editor.cursor, (0, 8));
+    }
+
+    #[test]
+    fn test_forward_search_single_match_wraps() {
+        // Single match: forward search should wrap and find it
+        let mut editor = TestEditor::new("hello foo world");
+        editor.cursor = (0, 10); // After "foo"
+        editor.start_forward_search("foo");
+        // Should wrap and find "foo" at column 6
+        assert_eq!(editor.cursor, (0, 6));
+        assert!(editor.current_match.is_some());
+    }
+
+    #[test]
+    fn test_backward_search_single_match_wraps() {
+        // Single match: backward search should wrap and find it
+        let mut editor = TestEditor::new("hello foo world");
+        editor.cursor = (0, 2); // Before "foo"
+        editor.start_backward_search("foo");
+        // Should wrap and find "foo" at column 6
+        assert_eq!(editor.cursor, (0, 6));
+        assert!(editor.current_match.is_some());
+    }
+
+    #[test]
+    fn test_forward_search_multiline() {
+        let mut editor = TestEditor::new("line one\nfoo here\nline three");
+        editor.cursor = (0, 0);
+        editor.start_forward_search("foo");
+        // Should find "foo" on line 1, column 0
+        assert_eq!(editor.cursor, (1, 0));
+    }
+
+    #[test]
+    fn test_backward_search_multiline() {
+        let mut editor = TestEditor::new("foo here\nline two\nline three");
+        editor.cursor = (2, 0);
+        editor.start_backward_search("foo");
+        // Should find "foo" on line 0, column 0
+        assert_eq!(editor.cursor, (0, 0));
+    }
+
+    #[test]
+    fn test_search_no_match() {
+        let mut editor = TestEditor::new("hello world");
+        editor.cursor = (0, 0);
+        editor.start_forward_search("xyz");
+        // Should stay at original position
+        assert_eq!(editor.cursor, (0, 0));
+        assert!(editor.current_match.is_none());
     }
 }
