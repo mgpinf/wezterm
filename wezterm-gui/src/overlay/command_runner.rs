@@ -142,8 +142,8 @@ fn column_widths_at_byte_positions(s: &str, start_byte: usize, end_byte: usize) 
         }
         if end_width.is_none() && current_byte >= end_byte {
             end_width = Some(current_width);
-            if start_width.is_some() {
-                return (start_width.unwrap(), end_width.unwrap());
+            if let Some(start_width) = start_width {
+                return (start_width, end_width.unwrap());
             }
         }
 
@@ -2875,7 +2875,9 @@ pub fn show_command_runner_overlay(
                 }
                 ControlFlow::Exit => break,
             },
-            None => {} // Timeout, continue
+            None => {
+                // Timeout, continue
+            }
         }
     }
 
