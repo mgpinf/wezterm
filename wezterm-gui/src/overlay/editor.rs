@@ -3400,16 +3400,13 @@ impl<'a> EditorState<'a> {
                 self.delete_block_at_cursor(num_rows, col_width);
             }
             LastChange::ChangeBlock(num_rows, col_width, ref text) => {
-                let text = text.clone();
-                self.change_block_at_cursor(num_rows, col_width, &text);
+                self.change_block_at_cursor(num_rows, col_width, text);
             }
             LastChange::InsertBlock(num_rows, ref text) => {
-                let text = text.clone();
-                self.insert_block_at_cursor(num_rows, &text);
+                self.insert_block_at_cursor(num_rows, text);
             }
             LastChange::AppendBlock(num_rows, col_offset, ref text) => {
-                let text = text.clone();
-                self.insert_block_at_cursor_with_offset(num_rows, col_offset, &text);
+                self.insert_block_at_cursor_with_offset(num_rows, col_offset, text);
             }
         }
     }
@@ -5454,15 +5451,16 @@ impl<'a> EditorState<'a> {
                 self.yank_is_linewise = false;
 
                 let new_line = format!("{}{}", start_prefix, end_suffix);
+                let new_line_empty = new_line.is_empty();
 
                 for _ in start.0..end.0 {
                     self.lines.remove(start.0 + 1);
                 }
-                self.lines[start.0] = new_line.clone();
+                self.lines[start.0] = new_line;
 
                 self.cursor = start;
 
-                if delete_empty_lines && new_line.is_empty() {
+                if delete_empty_lines && new_line_empty {
                     if start_line_was_blank && start.0 > 0 {
                         self.lines.remove(start.0);
                         self.cursor.0 = start.0 - 1;
@@ -6562,7 +6560,7 @@ impl<'a> EditorState<'a> {
 
         let word = line[byte_start..byte_end].to_string();
         // Store the actual pattern (without boundary markers)
-        self.search_pattern = word.clone();
+        self.search_pattern = word;
         // Set word boundary flag
         self.search_word_boundary = with_boundaries;
         self.search_direction = if forward {
@@ -12345,7 +12343,7 @@ mod tests {
                 self.last_count
             };
 
-            match self.last_change.clone() {
+            match &self.last_change {
                 LastChange::None => {}
                 LastChange::IncrementNumber => self.increment_number(use_count),
                 LastChange::DecrementNumber => self.decrement_number(use_count),
