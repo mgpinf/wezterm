@@ -395,6 +395,10 @@ TOC = [
                 "config/lua/wezterm.mux",
             ),
             Gen(
+                "module: wezterm.password",
+                "config/lua/wezterm.password",
+            ),
+            Gen(
                 "module: wezterm.plugin",
                 "config/lua/wezterm.plugin",
             ),
