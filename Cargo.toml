@@ -164,6 +164,7 @@ openssl = "0.10.57"
 ordered-float = {version="4.1", default-features=false}
 parking_lot = "0.12"
 passfd = "0.1.6"
+password-funcs = { path = "lua-api-crates/password-funcs" }
 percent-encoding = "2.3"
 pest = "2.7"
 pest_derive = "2.7"

@@ -193,6 +193,7 @@ fn register_lua_modules() {
         termwiz_funcs::register,
         logging::register,
         mux_lua::register,
+        password_funcs::register,
         procinfo_funcs::register,
         filesystem::register,
         git_funcs::register,
