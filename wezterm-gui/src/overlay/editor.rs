@@ -414,6 +414,8 @@ struct EditorState<'a> {
     current_match: Option<(usize, usize)>,
     search_start_pos: (usize, usize),
     search_saved_pattern: String,
+    /// Whether the current search pattern uses word boundaries (\< and \>)
+    search_word_boundary: bool,
     visual_start: (usize, usize),
     replace_originals: Vec<Option<char>>,
     replace_start_pos: (usize, usize),
@@ -511,6 +513,7 @@ impl<'a> EditorState<'a> {
             current_match: None,
             search_start_pos: (0, 0),
             search_saved_pattern: String::new(),
+            search_word_boundary: false,
             visual_start: (0, 0),
             replace_originals: Vec::new(),
             replace_start_pos: (0, 0),
@@ -4587,7 +4590,12 @@ impl<'a> EditorState<'a> {
                 } else {
                     "?"
                 };
-                format!("{}{}", prompt, self.search_pattern)
+                // Show word boundaries in the display like Neovim does
+                if self.search_word_boundary {
+                    format!("{}\\<{}\\>", prompt, self.search_pattern)
+                } else {
+                    format!("{}{}", prompt, self.search_pattern)
+                }
             };
 
             let pending_with_padding = if pending_str.is_empty() {
@@ -4917,14 +4925,18 @@ impl<'a> EditorState<'a> {
 
         let mut matches: Vec<(usize, usize)> = Vec::new();
         let mut search_start = 0;
+        let pattern_len = pattern.len();
         while let Some(pos) = line[search_start..].find(pattern) {
             let match_start = search_start + pos;
-            let match_end = match_start + pattern.len();
-            // Check if this match overlaps with our segment
-            if match_end > start_col && match_start < end_col {
+            let match_end = match_start + pattern_len;
+            // Check if this match overlaps with our segment and respects boundaries
+            if match_end > start_col
+                && match_start < end_col
+                && self.match_respects_word_boundaries(line, match_start, pattern_len)
+            {
                 matches.push((match_start, match_end));
             }
-            search_start = match_end;
+            search_start = match_start + 1;
             if search_start >= line.len() {
                 break;
             }
@@ -6305,47 +6317,114 @@ impl<'a> EditorState<'a> {
         self.current_match = Some(self.cursor);
     }
 
+    /// Check if a pattern match at the given byte position respects word boundaries.
+    /// Returns true if word boundaries are not enabled, or if the match is at word boundaries.
+    #[inline]
+    fn match_respects_word_boundaries(
+        &self,
+        line: &str,
+        match_start: usize,
+        pattern_len: usize,
+    ) -> bool {
+        if !self.search_word_boundary {
+            return true;
+        }
+        let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+        let match_end = match_start + pattern_len;
+
+        // Check start boundary: nothing before, or non-word char before
+        let start_ok = match_start == 0
+            || line[..match_start]
+                .chars()
+                .last()
+                .map(|c| !is_word_char(c))
+                .unwrap_or(true);
+        // Check end boundary: nothing after, or non-word char after
+        let end_ok = match_end >= line.len()
+            || line[match_end..]
+                .chars()
+                .next()
+                .map(|c| !is_word_char(c))
+                .unwrap_or(true);
+
+        start_ok && end_ok
+    }
+
     fn search_forward_from_cursor(&mut self) {
         let pattern = &self.search_pattern;
         if pattern.is_empty() {
             return;
         }
+        let pattern_len = pattern.len();
 
         let start_row = self.cursor.0;
         let start_col = self.cursor.1 + 1;
 
+        // Search in current line after cursor
         let current_line = &self.lines[start_row];
         let chars: Vec<char> = current_line.chars().collect();
         if start_col < chars.len() {
-            let search_str: String = chars[start_col..].iter().collect();
-            if let Some(pos) = search_str.find(pattern) {
-                let char_pos = search_str[..pos].chars().count();
-                self.cursor.1 = start_col + char_pos;
-                return;
+            let byte_offset: usize = chars[..start_col].iter().map(|c| c.len_utf8()).sum();
+            let search_str = &current_line[byte_offset..];
+            let mut search_start = 0;
+            while let Some(pos) = search_str[search_start..].find(pattern.as_str()) {
+                let actual_pos = byte_offset + search_start + pos;
+                if self.match_respects_word_boundaries(current_line, actual_pos, pattern_len) {
+                    let char_pos = current_line[..actual_pos].chars().count();
+                    self.cursor.1 = char_pos;
+                    return;
+                }
+                search_start += pos + 1;
+                if search_start >= search_str.len() {
+                    break;
+                }
             }
         }
 
+        // Search in subsequent lines
         for row in (start_row + 1)..self.lines.len() {
-            if let Some(pos) = self.lines[row].find(pattern) {
-                let char_pos = self.lines[row][..pos].chars().count();
-                self.cursor.0 = row;
-                self.cursor.1 = char_pos;
-                return;
+            let line = &self.lines[row];
+            let mut search_start = 0;
+            while let Some(pos) = line[search_start..].find(pattern.as_str()) {
+                let actual_pos = search_start + pos;
+                if self.match_respects_word_boundaries(line, actual_pos, pattern_len) {
+                    let char_pos = line[..actual_pos].chars().count();
+                    self.cursor.0 = row;
+                    self.cursor.1 = char_pos;
+                    return;
+                }
+                search_start = actual_pos + 1;
+                if search_start >= line.len() {
+                    break;
+                }
             }
         }
 
+        // Wrap around to beginning
         for row in 0..=start_row {
+            let line = &self.lines[row];
             let search_end = if row == start_row {
-                self.cursor.1
+                chars[..self.cursor.1.min(chars.len())]
+                    .iter()
+                    .map(|c| c.len_utf8())
+                    .sum()
             } else {
-                self.lines[row].len()
+                line.len()
             };
-            let search_str = &self.lines[row][..search_end.min(self.lines[row].len())];
-            if let Some(pos) = search_str.find(pattern) {
-                let char_pos = search_str[..pos].chars().count();
-                self.cursor.0 = row;
-                self.cursor.1 = char_pos;
-                return;
+            let search_str = &line[..search_end.min(line.len())];
+            let mut search_start = 0;
+            while let Some(pos) = search_str[search_start..].find(pattern.as_str()) {
+                let actual_pos = search_start + pos;
+                if self.match_respects_word_boundaries(line, actual_pos, pattern_len) {
+                    let char_pos = line[..actual_pos].chars().count();
+                    self.cursor.0 = row;
+                    self.cursor.1 = char_pos;
+                    return;
+                }
+                search_start = actual_pos + 1;
+                if search_start >= search_str.len() {
+                    break;
+                }
             }
         }
     }
@@ -6359,29 +6438,38 @@ impl<'a> EditorState<'a> {
         let start_row = self.cursor.0;
         let start_col = self.cursor.1;
 
+        // Search in current line before cursor (prefix of line, offset = 0)
         let current_line = &self.lines[start_row];
         let chars: Vec<char> = current_line.chars().collect();
         if start_col > 0 {
-            let search_str: String = chars[..start_col].iter().collect();
-            if let Some(pos) = search_str.rfind(pattern) {
-                let char_pos = search_str[..pos].chars().count();
+            let byte_end: usize = chars[..start_col.min(chars.len())]
+                .iter()
+                .map(|c| c.len_utf8())
+                .sum();
+            let search_str = &current_line[..byte_end];
+            if let Some(pos) = self.find_last_word_match(current_line, search_str, &pattern, 0) {
+                let char_pos = current_line[..pos].chars().count();
                 self.cursor.1 = char_pos;
                 return;
             }
         }
 
+        // Search in previous lines (entire line, offset = 0)
         for row in (0..start_row).rev() {
-            if let Some(pos) = self.lines[row].rfind(pattern) {
-                let char_pos = self.lines[row][..pos].chars().count();
+            let line = &self.lines[row];
+            if let Some(pos) = self.find_last_word_match(line, line, &pattern, 0) {
+                let char_pos = line[..pos].chars().count();
                 self.cursor.0 = row;
                 self.cursor.1 = char_pos;
                 return;
             }
         }
 
+        // Wrap around from the end
         for row in (start_row..self.lines.len()).rev() {
-            let search_start = if row == start_row {
-                let chars: Vec<char> = self.lines[row].chars().collect();
+            let line = &self.lines[row];
+            let search_start_byte = if row == start_row {
+                let chars: Vec<char> = line.chars().collect();
                 if start_col < chars.len() {
                     chars[..start_col].iter().map(|c| c.len_utf8()).sum()
                 } else {
@@ -6390,10 +6478,12 @@ impl<'a> EditorState<'a> {
             } else {
                 0
             };
-            let search_str = &self.lines[row][search_start..];
-            if let Some(pos) = search_str.rfind(pattern) {
-                let full_str = &self.lines[row][..search_start + pos];
-                let char_pos = full_str.chars().count();
+            let search_str = &line[search_start_byte..];
+            // For suffix search, offset is search_start_byte
+            if let Some(pos) =
+                self.find_last_word_match(line, search_str, &pattern, search_start_byte)
+            {
+                let char_pos = line[..pos].chars().count();
                 self.cursor.0 = row;
                 self.cursor.1 = char_pos;
                 return;
@@ -6401,7 +6491,32 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn search_word_under_cursor(&mut self, forward: bool) {
+    /// Find the last match in search_str that respects word boundaries.
+    /// Returns the byte position in the original line, not in search_str.
+    fn find_last_word_match(
+        &self,
+        line: &str,
+        search_str: &str,
+        pattern: &str,
+        byte_offset: usize,
+    ) -> Option<usize> {
+        let mut last_valid: Option<usize> = None;
+        let mut search_start = 0;
+        let pattern_len = pattern.len();
+        while let Some(pos) = search_str[search_start..].find(pattern) {
+            let actual_pos = byte_offset + search_start + pos;
+            if self.match_respects_word_boundaries(line, actual_pos, pattern_len) {
+                last_valid = Some(actual_pos);
+            }
+            search_start += pos + 1;
+            if search_start >= search_str.len() {
+                break;
+            }
+        }
+        last_valid
+    }
+
+    fn search_word_under_cursor(&mut self, forward: bool, with_boundaries: bool) {
         let line = &self.lines[self.cursor.0];
         if line.is_empty() {
             return;
@@ -6445,7 +6560,11 @@ impl<'a> EditorState<'a> {
         let byte_start: usize = chars[..start].iter().map(|c| c.len_utf8()).sum();
         let byte_end: usize = chars[..end].iter().map(|c| c.len_utf8()).sum();
 
-        self.search_pattern = line[byte_start..byte_end].to_string();
+        let word = line[byte_start..byte_end].to_string();
+        // Store the actual pattern (without boundary markers)
+        self.search_pattern = word.clone();
+        // Set word boundary flag
+        self.search_word_boundary = with_boundaries;
         self.search_direction = if forward {
             Direction::Forward
         } else {
@@ -8687,6 +8806,14 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('g') && c == 'E' {
                                 // gE - move backward to end of previous WORD
                                 self.move_to_word_end_backward(WordType::LongWord);
+                            } else if first == KeyCode::Char('g') && c == '*' {
+                                // g* - search word under cursor forward (no word boundaries)
+                                self.search_word_under_cursor(true, false);
+                                self.update_desired_col();
+                            } else if first == KeyCode::Char('g') && c == '#' {
+                                // g# - search word under cursor backward (no word boundaries)
+                                self.search_word_under_cursor(false, false);
+                                self.update_desired_col();
                             } else if first == KeyCode::Char('g') && c == 'J' {
                                 // gJ - join lines without space
                                 self.join_lines_no_space();
@@ -9076,11 +9203,13 @@ impl<'a> EditorState<'a> {
                                 self.update_desired_col();
                             }
                             '*' => {
-                                self.search_word_under_cursor(true); // Forward
+                                // * - search word under cursor forward (with word boundaries)
+                                self.search_word_under_cursor(true, true);
                                 self.update_desired_col();
                             }
                             '#' => {
-                                self.search_word_under_cursor(false); // Backward
+                                // # - search word under cursor backward (with word boundaries)
+                                self.search_word_under_cursor(false, true);
                                 self.update_desired_col();
                             }
                             'v' => {
@@ -9410,6 +9539,7 @@ impl<'a> EditorState<'a> {
                         // Only set pattern and enable highlighting if a match was found
                         if self.current_match.is_some() {
                             self.search_pattern = self.search_input.clone();
+                            self.search_word_boundary = false; // Normal /? search doesn't use word boundaries
                             self.search_highlight = true;
                             self.search_display_direction = self.search_direction;
                         } else {
