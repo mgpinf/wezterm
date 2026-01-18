@@ -77,7 +77,7 @@ impl OverlayColors {
                 .into(),
             inactive_flag_fg: colors
                 .transient_entry_inactive_flag_fg
-                .map_or_else(|| ColorAttribute::default(), |fg_color| fg_color.into()),
+                .map_or(ColorAttribute::Default, |fg_color| fg_color.into()),
             active_value_fg: colors
                 .transient_entry_active_value_fg
                 .unwrap_or(AnsiColor::Green.into())
@@ -100,7 +100,7 @@ impl OverlayColors {
                 .into(),
             separator_fg: colors
                 .transient_separator_fg
-                .map_or_else(|| ColorAttribute::Default, |fg_color| fg_color.into()),
+                .map_or(ColorAttribute::Default, |fg_color| fg_color.into()),
             multiple_marker_bg: colors
                 .selector_multiple_marker_bg
                 .unwrap_or(AnsiColor::Purple.into())
