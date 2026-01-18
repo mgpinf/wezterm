@@ -4031,7 +4031,7 @@ impl<'a> EditorState<'a> {
 
         if self.mode == EditorMode::VisualLine {
             for row in start.0..=end.0 {
-                let transformed: String = self.lines[row].chars().map(|c| transform(c)).collect();
+                let transformed: String = self.lines[row].chars().map(&transform).collect();
                 self.lines[row] = transformed;
             }
         } else if self.mode == EditorMode::VisualBlock {
@@ -4861,9 +4861,9 @@ impl<'a> EditorState<'a> {
             } else {
                 let y = cursor_screen_row.unwrap_or(content_start_row);
                 let x = cursor_screen_col.unwrap_or(GUTTER_WIDTH);
-                let shape = if self.pending_operator.is_some() {
-                    CursorShape::SteadyUnderline
-                } else if self.pending_keys.contains(&KeyCode::Char('r')) {
+                let shape = if self.pending_operator.is_some()
+                    || self.pending_keys.contains(&KeyCode::Char('r'))
+                {
                     CursorShape::SteadyUnderline
                 } else {
                     match self.mode {
@@ -6445,7 +6445,7 @@ impl<'a> EditorState<'a> {
                 .map(|c| c.len_utf8())
                 .sum();
             let search_str = &current_line[..byte_end];
-            if let Some(pos) = self.find_last_word_match(current_line, search_str, &pattern, 0) {
+            if let Some(pos) = self.find_last_word_match(current_line, search_str, pattern, 0) {
                 let char_pos = current_line[..pos].chars().count();
                 self.cursor.1 = char_pos;
                 return;
@@ -6455,7 +6455,7 @@ impl<'a> EditorState<'a> {
         // Search in previous lines (entire line, offset = 0)
         for row in (0..start_row).rev() {
             let line = &self.lines[row];
-            if let Some(pos) = self.find_last_word_match(line, line, &pattern, 0) {
+            if let Some(pos) = self.find_last_word_match(line, line, pattern, 0) {
                 let char_pos = line[..pos].chars().count();
                 self.cursor.0 = row;
                 self.cursor.1 = char_pos;
@@ -6479,7 +6479,7 @@ impl<'a> EditorState<'a> {
             let search_str = &line[search_start_byte..];
             // For suffix search, offset is search_start_byte
             if let Some(pos) =
-                self.find_last_word_match(line, search_str, &pattern, search_start_byte)
+                self.find_last_word_match(line, search_str, pattern, search_start_byte)
             {
                 let char_pos = line[..pos].chars().count();
                 self.cursor.0 = row;
