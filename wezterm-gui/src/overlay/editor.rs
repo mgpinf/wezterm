@@ -10528,7 +10528,8 @@ impl<'a> EditorState<'a> {
                                     SubstitutePhase::Pattern => {
                                         // Move to replacement phase
                                         self.sub_phase = SubstitutePhase::Replacement;
-                                        self.sub_find_matches();
+                                        // Apply preview to clear pattern highlights and show replacement preview
+                                        self.sub_apply_preview();
                                     }
                                     SubstitutePhase::Replacement => {
                                         // Set closed flag - now 'g' can toggle
