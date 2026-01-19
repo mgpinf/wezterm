@@ -7138,6 +7138,17 @@ impl<'a> EditorState<'a> {
 
     /// Finalize the substitution and exit
     fn sub_finalize(&mut self) {
+        // Position cursor at first non-blank of the line with last replacement (like Neovim)
+        // For current line substitute: stays on current line
+        // For all lines substitute: goes to line of last match
+        let target_line = self
+            .sub_replacements
+            .last()
+            .map(|&(line, _, _)| line)
+            .unwrap_or(self.cursor.0);
+        self.cursor.0 = target_line;
+        self.cursor.1 = self.get_first_non_blank_in_line(target_line);
+
         // Clear saved state and record the change
         self.sub_saved_lines.clear();
         self.sub_matches.clear();
