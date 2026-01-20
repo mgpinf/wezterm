@@ -239,6 +239,8 @@ enum ExCommand {
     Lua(String),
     /// :noh/:nohlsearch - Clear search highlighting
     NoHighlight,
+    /// :<number> - Go to line number
+    GotoLine(usize),
     /// Unknown command
     Unknown(String),
 }
@@ -6626,6 +6628,11 @@ impl<'a> EditorState<'a> {
             return ExCommand::Unknown(String::new());
         }
 
+        // Handle :<number> - go to line
+        if let Ok(line_num) = input.parse::<usize>() {
+            return ExCommand::GotoLine(line_num);
+        }
+
         // Check for simple commands first
         match input {
             "w" => return ExCommand::Write,
@@ -6770,6 +6777,16 @@ impl<'a> EditorState<'a> {
                 // Clear search highlighting
                 self.search_pattern.clear();
                 self.search_highlight = false;
+                Ok(false)
+            }
+            ExCommand::GotoLine(line_num) => {
+                // Go to specified line (1-indexed)
+                let target_line = line_num
+                    .saturating_sub(1)
+                    .min(self.lines.len().saturating_sub(1));
+                self.cursor.0 = target_line;
+                self.move_to_first_non_blank();
+                self.update_desired_col();
                 Ok(false)
             }
             ExCommand::Unknown(cmd) => {
