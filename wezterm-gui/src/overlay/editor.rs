@@ -6126,8 +6126,8 @@ impl<'a> EditorState<'a> {
             }
             self.lines[self.cursor.0] = chars.into_iter().collect();
 
-            // Cursor stays at first character of pasted text (Neovim behavior)
-            self.cursor.1 = insert_pos;
+            // Cursor moves to last character of pasted text
+            self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
         }
         self.clamp_cursor();
         self.record_change();
