@@ -3935,14 +3935,17 @@ impl<'a> EditorState<'a> {
     }
 
     fn toggle_case(&mut self) {
-        let line = &mut self.lines[self.cursor.0];
-        if let Some(ch) = line.chars().nth(self.cursor.1) {
+        let ch = self.lines[self.cursor.0].chars().nth(self.cursor.1);
+        if let Some(ch) = ch {
+            self.save_undo_state();
+            self.lines_version += 1;
             let new_ch = if ch.is_lowercase() {
                 ch.to_uppercase().next().unwrap()
             } else {
                 ch.to_lowercase().next().unwrap()
             };
 
+            let line = &mut self.lines[self.cursor.0];
             let mut chars: Vec<char> = line.chars().collect();
             chars[self.cursor.1] = new_ch;
             *line = chars.into_iter().collect();
