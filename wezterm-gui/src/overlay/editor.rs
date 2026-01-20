@@ -6022,6 +6022,8 @@ impl<'a> EditorState<'a> {
         if self.yank_is_block {
             let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let start_row = self.cursor.0;
+            // For block paste, always insert at cursor.1 + 1, padding short lines
+            let target_insert_col = self.cursor.1 + 1;
 
             for (i, paste_line) in paste_lines.iter().enumerate() {
                 let target_row = start_row + i;
@@ -6030,13 +6032,8 @@ impl<'a> EditorState<'a> {
                 }
 
                 let mut chars: Vec<char> = self.lines[target_row].chars().collect();
-                let insert_pos = if chars.is_empty() {
-                    0
-                } else {
-                    (self.cursor.1 + 1).min(chars.len())
-                };
-
-                while chars.len() < insert_pos {
+                // Pad the line with spaces if it's shorter than the target column
+                while chars.len() < target_insert_col {
                     chars.push(' ');
                 }
 
@@ -6044,18 +6041,12 @@ impl<'a> EditorState<'a> {
                 let paste_chars: Vec<char> = repeated_paste.chars().collect();
 
                 for (j, c) in paste_chars.iter().enumerate() {
-                    chars.insert(insert_pos + j, *c);
+                    chars.insert(target_insert_col + j, *c);
                 }
                 self.lines[target_row] = chars.into_iter().collect();
             }
 
-            let first_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
-            let insert_pos = if first_line_chars.is_empty() {
-                0
-            } else {
-                (self.cursor.1 + 1).min(first_line_chars.len())
-            };
-            self.cursor.1 = insert_pos;
+            self.cursor.1 = target_insert_col;
         } else if self.yank_is_linewise {
             let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let mut all_lines: Vec<String> = Vec::new();
@@ -6138,7 +6129,8 @@ impl<'a> EditorState<'a> {
         if self.yank_is_block {
             let paste_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
             let start_row = self.cursor.0;
-            let insert_col = self.cursor.1;
+            // For block paste before, always insert at cursor.1, padding short lines
+            let target_insert_col = self.cursor.1;
 
             for (i, paste_line) in paste_lines.iter().enumerate() {
                 let target_row = start_row + i;
@@ -6147,9 +6139,8 @@ impl<'a> EditorState<'a> {
                 }
 
                 let mut chars: Vec<char> = self.lines[target_row].chars().collect();
-                let insert_pos = insert_col.min(chars.len());
-
-                while chars.len() < insert_pos {
+                // Pad the line with spaces if it's shorter than the target column
+                while chars.len() < target_insert_col {
                     chars.push(' ');
                 }
 
@@ -6157,7 +6148,7 @@ impl<'a> EditorState<'a> {
                 let paste_chars: Vec<char> = repeated_paste.chars().collect();
 
                 for (j, c) in paste_chars.iter().enumerate() {
-                    chars.insert(insert_pos + j, *c);
+                    chars.insert(target_insert_col + j, *c);
                 }
                 self.lines[target_row] = chars.into_iter().collect();
             }
