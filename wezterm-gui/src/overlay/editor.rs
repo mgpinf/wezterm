@@ -466,6 +466,8 @@ struct EditorState<'a> {
     sub_display_prefix: String,
     /// Marks: named positions (a-z) -> (row, col)
     marks: HashMap<char, (usize, usize)>,
+    /// Visual block mode: selection extends to end of line (set by $)
+    visual_block_extends_to_eol: bool,
 }
 
 impl<'a> EditorState<'a> {
@@ -544,6 +546,7 @@ impl<'a> EditorState<'a> {
             sub_line_range: None,
             sub_display_prefix: String::new(),
             marks: HashMap::new(),
+            visual_block_extends_to_eol: false,
         }
     }
 
@@ -4845,7 +4848,11 @@ impl<'a> EditorState<'a> {
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
                 } else if line_in_selection && self.mode == EditorMode::VisualBlock {
-                    let (min_col, max_col) = block_col_bounds.unwrap();
+                    let (min_col, mut max_col) = block_col_bounds.unwrap();
+                    // When $ was pressed, extend selection to end of each line
+                    if self.visual_block_extends_to_eol {
+                        max_col = line_len.saturating_sub(1);
+                    }
                     let (sel_start, sel_end) = selection.unwrap();
                     let is_edge_line = line_idx == sel_start.0 || line_idx == sel_end.0;
                     self.render_wrapped_segment_with_block_selection(
@@ -7255,13 +7262,18 @@ impl<'a> EditorState<'a> {
 
         if self.mode == EditorMode::VisualBlock {
             let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
+            let extends_to_eol = self.visual_block_extends_to_eol;
 
             let mut yanked_lines = Vec::new();
             for row in min_row..=max_row {
                 let chars: Vec<char> = self.lines[row].chars().collect();
                 let line_len = chars.len();
                 let sel_start = min_col.min(line_len);
-                let sel_end = (max_col + 1).min(line_len);
+                let sel_end = if extends_to_eol {
+                    line_len
+                } else {
+                    (max_col + 1).min(line_len)
+                };
                 if sel_start < sel_end {
                     yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
                 } else {
@@ -7277,7 +7289,11 @@ impl<'a> EditorState<'a> {
                 let chars: Vec<char> = self.lines[row].chars().collect();
                 let line_len = chars.len();
                 let sel_start = min_col.min(line_len);
-                let sel_end = (max_col + 1).min(line_len);
+                let sel_end = if extends_to_eol {
+                    line_len
+                } else {
+                    (max_col + 1).min(line_len)
+                };
                 if sel_start < sel_end {
                     let new_line: String =
                         chars[..sel_start].iter().chain(&chars[sel_end..]).collect();
@@ -7365,13 +7381,18 @@ impl<'a> EditorState<'a> {
 
         if self.mode == EditorMode::VisualBlock {
             let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
+            let extends_to_eol = self.visual_block_extends_to_eol;
 
             let mut yanked_lines = Vec::new();
             for row in min_row..=max_row {
                 let chars: Vec<char> = self.lines[row].chars().collect();
                 let line_len = chars.len();
                 let sel_start = min_col.min(line_len);
-                let sel_end = (max_col + 1).min(line_len);
+                let sel_end = if extends_to_eol {
+                    line_len
+                } else {
+                    (max_col + 1).min(line_len)
+                };
                 if sel_start < sel_end {
                     yanked_lines.push(chars[sel_start..sel_end].iter().collect::<String>());
                 } else {
@@ -7594,6 +7615,7 @@ impl<'a> EditorState<'a> {
                     }) => {
                         self.mode = EditorMode::VisualBlock;
                         self.visual_start = self.cursor;
+                        self.visual_block_extends_to_eol = false;
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
@@ -9767,6 +9789,7 @@ impl<'a> EditorState<'a> {
                                 self.mode = EditorMode::Normal;
                             } else {
                                 self.mode = EditorMode::VisualBlock;
+                                self.visual_block_extends_to_eol = false;
                             }
                         }
                         InputEvent::Key(KeyEvent {
@@ -10116,25 +10139,55 @@ impl<'a> EditorState<'a> {
                             } else {
                                 // No pending key - handle as normal keys
                                 match c {
-                                    // Movement keys extend selection
-                                    'h' => self.move_cursor(0, -1),
+                                    'h' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_cursor(0, -1);
+                                    }
                                     'j' => self.move_cursor(1, 0),
                                     'k' => self.move_cursor(-1, 0),
-                                    'l' => self.move_cursor(0, 1),
-                                    'w' => self.move_word_forward(WordType::Word),
-                                    'W' => self.move_word_forward(WordType::LongWord),
-                                    'b' => self.move_word_backward(WordType::Word),
-                                    'B' => self.move_word_backward(WordType::LongWord),
-                                    'e' => self.move_to_word_end(WordType::Word),
-                                    'E' => self.move_to_word_end(WordType::LongWord),
+                                    'l' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_cursor(0, 1);
+                                    }
+                                    'w' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_word_forward(WordType::Word);
+                                    }
+                                    'W' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_word_forward(WordType::LongWord);
+                                    }
+                                    'b' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_word_backward(WordType::Word);
+                                    }
+                                    'B' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_word_backward(WordType::LongWord);
+                                    }
+                                    'e' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_to_word_end(WordType::Word);
+                                    }
+                                    'E' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_to_word_end(WordType::LongWord);
+                                    }
                                     '0' => {
+                                        self.visual_block_extends_to_eol = false;
                                         self.cursor.1 = 0;
                                         self.update_desired_col();
                                     }
-                                    '^' => self.move_to_first_non_blank(),
+                                    '^' => {
+                                        self.visual_block_extends_to_eol = false;
+                                        self.move_to_first_non_blank();
+                                    }
                                     '$' => {
                                         self.cursor.1 = self.lines[self.cursor.0].chars().count();
                                         self.update_desired_col();
+                                        if self.mode == EditorMode::VisualBlock {
+                                            self.visual_block_extends_to_eol = true;
+                                        }
                                     }
                                     'G' => {
                                         self.cursor.0 = self.lines.len() - 1;
