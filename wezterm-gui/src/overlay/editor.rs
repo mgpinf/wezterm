@@ -5448,11 +5448,7 @@ impl<'a> EditorState<'a> {
 
                 self.cursor = start;
                 let line_len = self.lines[self.cursor.0].chars().count();
-                let max_col = if self.mode == EditorMode::Insert {
-                    line_len
-                } else {
-                    line_len.saturating_sub(1)
-                };
+                let max_col = line_len.saturating_sub(1);
                 if self.cursor.1 > max_col {
                     self.cursor.1 = max_col;
                 }
@@ -8950,11 +8946,7 @@ impl<'a> EditorState<'a> {
                                 self.cursor.0 = 0;
                                 // Use desired_col like vertical movement
                                 let line_len = self.lines[self.cursor.0].chars().count();
-                                let max_col = if self.mode == EditorMode::Insert {
-                                    line_len
-                                } else {
-                                    line_len.saturating_sub(1)
-                                };
+                                let max_col = line_len.saturating_sub(1);
                                 self.cursor.1 = self.desired_col.min(max_col);
                             } else if first == KeyCode::Char('g') && c == 'e' {
                                 // ge - move backward to end of previous word
@@ -9259,11 +9251,7 @@ impl<'a> EditorState<'a> {
                                 self.cursor.0 = target_line;
                                 // Use desired_col like vertical movement
                                 let line_len = self.lines[self.cursor.0].chars().count();
-                                let max_col = if self.mode == EditorMode::Insert {
-                                    line_len
-                                } else {
-                                    line_len.saturating_sub(1)
-                                };
+                                let max_col = line_len.saturating_sub(1);
                                 self.cursor.1 = self.desired_col.min(max_col);
                             }
                             'H' => {
