@@ -4,6 +4,7 @@ use config::{configuration, AnsiColor, ColorAttribute};
 use luahelper::impl_lua_conversion_dynamic;
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
+use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers};
 use termwiz::surface::{Change, CursorShape, CursorVisibility, Position};
@@ -463,6 +464,8 @@ struct EditorState<'a> {
     sub_line_range: Option<(usize, usize)>,
     /// Substitute preview: display prefix (e.g. ":s", ":%s", ":'<,'>s", ":.,.+4s")
     sub_display_prefix: String,
+    /// Marks: named positions (a-z) -> (row, col)
+    marks: HashMap<char, (usize, usize)>,
 }
 
 impl<'a> EditorState<'a> {
@@ -540,6 +543,7 @@ impl<'a> EditorState<'a> {
             sub_replace_count: 0,
             sub_line_range: None,
             sub_display_prefix: String::new(),
+            marks: HashMap::new(),
         }
     }
 
@@ -3170,6 +3174,47 @@ impl<'a> EditorState<'a> {
 
         self.clamp_cursor();
         self.record_change();
+    }
+
+    fn yank_range_multiline(&mut self, start: (usize, usize), end: (usize, usize)) {
+        let (start_row, start_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            start
+        } else {
+            end
+        };
+        let (end_row, end_col) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            end
+        } else {
+            start
+        };
+
+        // Inclusive yank (include end position)
+        let actual_end_col = end_col + 1;
+
+        if start_row == end_row {
+            let chars: Vec<char> = self.lines[start_row].chars().collect();
+            let end_clamped = actual_end_col.min(chars.len());
+            if start_col < end_clamped {
+                self.yank_buffer = chars[start_col..end_clamped].iter().collect();
+                self.yank_is_linewise = false;
+            }
+        } else {
+            let mut yanked = String::new();
+            let first_chars: Vec<char> = self.lines[start_row].chars().collect();
+            yanked.extend(&first_chars[start_col..]);
+            for row in (start_row + 1)..end_row {
+                yanked.push('\n');
+                yanked.push_str(&self.lines[row]);
+            }
+            if end_row > start_row {
+                yanked.push('\n');
+                let last_chars: Vec<char> = self.lines[end_row].chars().collect();
+                let end_clamped = actual_end_col.min(last_chars.len());
+                yanked.extend(&last_chars[..end_clamped]);
+            }
+            self.yank_buffer = yanked;
+            self.yank_is_linewise = false;
+        }
     }
 
     fn delete_to_matching_bracket(&mut self) {
@@ -6058,13 +6103,9 @@ impl<'a> EditorState<'a> {
                 );
             }
 
-            self.cursor.0 += paste_lines.len() - 1;
-            let last_paste_chars = paste_lines[paste_lines.len() - 1].chars().count();
-            self.cursor.1 = if last_paste_chars > 0 {
-                last_paste_chars - 1
-            } else {
-                0
-            };
+            // Cursor stays at first character of pasted text (Neovim behavior)
+            // insert_pos is where we started pasting on the original line
+            self.cursor.1 = insert_pos;
         } else {
             let repeated_buffer: String = self.yank_buffer.repeat(count);
             let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
@@ -6080,7 +6121,8 @@ impl<'a> EditorState<'a> {
             }
             self.lines[self.cursor.0] = chars.into_iter().collect();
 
-            self.cursor.1 = insert_pos + paste_chars.len().saturating_sub(1);
+            // Cursor stays at first character of pasted text (Neovim behavior)
+            self.cursor.1 = insert_pos;
         }
         self.clamp_cursor();
         self.record_change();
@@ -8101,6 +8143,89 @@ impl<'a> EditorState<'a> {
                                     ));
                                     self.delete_to_char_backward(c, false);
                                 }
+                            } else if first == KeyCode::Char('\'') && c.is_ascii_lowercase() {
+                                // d'a / c'a / y'a - operate to mark line (linewise)
+                                if let Some(&(mark_row, _)) = self.marks.get(&c) {
+                                    if mark_row < self.lines.len() {
+                                        let (start_row, end_row) = if mark_row < self.cursor.0 {
+                                            (mark_row, self.cursor.0)
+                                        } else {
+                                            (self.cursor.0, mark_row)
+                                        };
+                                        let count = end_row - start_row + 1;
+                                        self.cursor.0 = start_row;
+                                        if op == 'c' {
+                                            self.insert_buffer.clear();
+                                            self.substitute_lines(count);
+                                        } else if op == 'y' {
+                                            self.yank_lines(count);
+                                        } else {
+                                            self.delete_lines(count);
+                                        }
+                                    }
+                                }
+                            } else if first == KeyCode::Char('`') && c.is_ascii_lowercase() {
+                                // d`a / c`a / y`a - operate to exact mark position (charwise, exclusive)
+                                // If cursor before mark: operate [cursor, mark), skip mark char
+                                // If cursor after mark: operate [mark, cursor), skip cursor char
+                                if let Some(&(mark_row, mark_col)) = self.marks.get(&c) {
+                                    if mark_row < self.lines.len() {
+                                        let line_len = self.lines[mark_row].chars().count();
+                                        let mark_pos =
+                                            (mark_row, mark_col.min(line_len.saturating_sub(1)));
+                                        let cursor_pos = self.cursor;
+
+                                        // Determine order and set exclusive end
+                                        let (start, end) = if cursor_pos.0 < mark_pos.0
+                                            || (cursor_pos.0 == mark_pos.0
+                                                && cursor_pos.1 < mark_pos.1)
+                                        {
+                                            // Cursor before mark: exclude mark char
+                                            let exclusive_end = if mark_pos.1 > 0 {
+                                                (mark_pos.0, mark_pos.1 - 1)
+                                            } else if mark_pos.0 > 0 {
+                                                // Mark at start of line, go to end of prev line
+                                                let prev_len =
+                                                    self.lines[mark_pos.0 - 1].chars().count();
+                                                (mark_pos.0 - 1, prev_len.saturating_sub(1))
+                                            } else {
+                                                // At (0,0), nothing to delete
+                                                (0, 0)
+                                            };
+                                            (cursor_pos, exclusive_end)
+                                        } else {
+                                            // Cursor after mark: exclude cursor char
+                                            let exclusive_end = if cursor_pos.1 > 0 {
+                                                (cursor_pos.0, cursor_pos.1 - 1)
+                                            } else if cursor_pos.0 > 0 {
+                                                let prev_len =
+                                                    self.lines[cursor_pos.0 - 1].chars().count();
+                                                (cursor_pos.0 - 1, prev_len.saturating_sub(1))
+                                            } else {
+                                                (0, 0)
+                                            };
+                                            (mark_pos, exclusive_end)
+                                        };
+
+                                        // Only operate if there's actually a range
+                                        if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1)
+                                        {
+                                            self.save_undo_state();
+                                            if op == 'c' {
+                                                self.insert_buffer.clear();
+                                                self.delete_range_multiline(start, end, true);
+                                                self.mode = EditorMode::Insert;
+                                            } else if op == 'y' {
+                                                self.yank_range_multiline(start, end);
+                                                // Move cursor to start of yanked region
+                                                self.cursor = start;
+                                                self.update_desired_col();
+                                            } else {
+                                                self.delete_range_multiline(start, end, true);
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             self.render()?;
@@ -8366,8 +8491,8 @@ impl<'a> EditorState<'a> {
                                             true,
                                         );
                                     }
-                                    '[' | ']' | 'f' | 'F' | 't' | 'T' => {
-                                        // Wait for target char/bracket
+                                    '[' | ']' | 'f' | 'F' | 't' | 'T' | '\'' | '`' => {
+                                        // Wait for target char/bracket/mark
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('c');
                                         self.render()?;
@@ -8554,8 +8679,8 @@ impl<'a> EditorState<'a> {
                                         true,
                                         true,
                                     ),
-                                    '[' | ']' | 'f' | 'F' | 't' | 'T' => {
-                                        // Wait for target char/bracket
+                                    '[' | ']' | 'f' | 'F' | 't' | 'T' | '\'' | '`' => {
+                                        // Wait for target char/bracket/mark
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('d');
                                         self.render()?;
@@ -8665,8 +8790,8 @@ impl<'a> EditorState<'a> {
                                         |s| s.get_paragraph_forward_pos(),
                                         false,
                                     ),
-                                    '[' | ']' | 'f' | 'F' | 't' | 'T' => {
-                                        // Wait for target char/bracket
+                                    '[' | ']' | 'f' | 'F' | 't' | 'T' | '\'' | '`' => {
+                                        // Wait for target char/bracket/mark
                                         self.pending_keys.push(KeyCode::Char(c));
                                         self.pending_operator = Some('y');
                                         self.render()?;
@@ -8900,6 +9025,28 @@ impl<'a> EditorState<'a> {
                             } else if first == KeyCode::Char('r') {
                                 self.replace_char(c);
                                 self.last_change = LastChange::ReplaceChar(c);
+                            } else if first == KeyCode::Char('m') && c.is_ascii_lowercase() {
+                                // m{a-z} - set mark at current cursor position
+                                self.marks.insert(c, self.cursor);
+                            } else if first == KeyCode::Char('\'') && c.is_ascii_lowercase() {
+                                // '{a-z} - jump to mark line (first non-blank)
+                                if let Some(&(row, _)) = self.marks.get(&c) {
+                                    if row < self.lines.len() {
+                                        self.cursor.0 = row;
+                                        self.move_to_first_non_blank();
+                                        self.update_desired_col();
+                                    }
+                                }
+                            } else if first == KeyCode::Char('`') && c.is_ascii_lowercase() {
+                                // `{a-z} - jump to exact mark position
+                                if let Some(&(row, col)) = self.marks.get(&c) {
+                                    if row < self.lines.len() {
+                                        self.cursor.0 = row;
+                                        let line_len = self.lines[row].chars().count();
+                                        self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                        self.update_desired_col();
+                                    }
+                                }
                             }
                             self.pending_keys.clear();
                             self.render()?;
@@ -8916,6 +9063,9 @@ impl<'a> EditorState<'a> {
                             || c == 't'
                             || c == 'T'
                             || c == 'r'
+                            || c == 'm'
+                            || c == '\''
+                            || c == '`'
                         {
                             self.pending_keys.push(KeyCode::Char(c));
                             self.render()?;
@@ -9937,6 +10087,35 @@ impl<'a> EditorState<'a> {
                                         self.mode = EditorMode::Visual;
                                         true
                                     }
+                                    ('\'', mark) if mark.is_ascii_lowercase() => {
+                                        // 'a - extend selection to mark line (first non-blank)
+                                        if let Some(&(row, _)) = self.marks.get(&mark) {
+                                            if row < self.lines.len() {
+                                                self.cursor.0 = row;
+                                                // Move to first non-blank on that line
+                                                let line = &self.lines[row];
+                                                let first_non_blank = line
+                                                    .chars()
+                                                    .position(|ch| !ch.is_whitespace())
+                                                    .unwrap_or(0);
+                                                self.cursor.1 = first_non_blank;
+                                                self.update_desired_col();
+                                            }
+                                        }
+                                        true
+                                    }
+                                    ('`', mark) if mark.is_ascii_lowercase() => {
+                                        // `a - extend selection to exact mark position
+                                        if let Some(&(row, col)) = self.marks.get(&mark) {
+                                            if row < self.lines.len() {
+                                                self.cursor.0 = row;
+                                                let line_len = self.lines[row].chars().count();
+                                                self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                                self.update_desired_col();
+                                            }
+                                        }
+                                        true
+                                    }
                                     _ => false,
                                 };
                                 self.pending_keys.clear();
@@ -10268,6 +10447,10 @@ impl<'a> EditorState<'a> {
                                         let (start, end) = self.get_visual_selection();
                                         self.sub_line_range = Some((start.0, end.0));
                                         self.enter_command_mode();
+                                    }
+                                    // Mark motions - extend selection to mark
+                                    '\'' | '`' => {
+                                        self.pending_keys.push(KeyCode::Char(c));
                                     }
                                     _ => {
                                         // Clear pending keys on unrecognized input
