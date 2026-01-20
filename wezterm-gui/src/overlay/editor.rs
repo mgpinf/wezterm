@@ -581,6 +581,17 @@ impl<'a> EditorState<'a> {
         self.mode == EditorMode::Insert || self.mode == EditorMode::Replace
     }
 
+    fn allows_cursor_past_eol(&self) -> bool {
+        matches!(
+            self.mode,
+            EditorMode::Insert
+                | EditorMode::Replace
+                | EditorMode::Visual
+                | EditorMode::VisualLine
+                | EditorMode::VisualBlock
+        )
+    }
+
     fn replace_char_at_cursor(&mut self, c: char) -> Option<char> {
         let line = &self.lines[self.cursor.0];
         let chars: Vec<char> = line.chars().collect();
@@ -671,7 +682,7 @@ impl<'a> EditorState<'a> {
             .max(0)
             .min((self.lines.len() - 1) as isize) as usize;
         let line_len = self.lines[new_row].chars().count();
-        let max_col = if self.is_insert_like_mode() {
+        let max_col = if self.allows_cursor_past_eol() {
             line_len
         } else {
             line_len.saturating_sub(1)
@@ -696,7 +707,7 @@ impl<'a> EditorState<'a> {
             self.cursor.0 = self.lines.len().saturating_sub(1);
         }
         let line_len = self.lines[self.cursor.0].chars().count();
-        let max_col = if self.is_insert_like_mode() {
+        let max_col = if self.allows_cursor_past_eol() {
             line_len
         } else {
             line_len.saturating_sub(1)
@@ -10022,8 +10033,7 @@ impl<'a> EditorState<'a> {
                                         // gg - go to first line
                                         self.cursor.0 = 0;
                                         let line_len = self.lines[self.cursor.0].chars().count();
-                                        let max_col = line_len.saturating_sub(1);
-                                        self.cursor.1 = self.desired_col.min(max_col);
+                                        self.cursor.1 = self.desired_col.min(line_len);
                                         true
                                     }
                                     ('i', 'p') => {
@@ -10101,7 +10111,7 @@ impl<'a> EditorState<'a> {
                                             if row < self.lines.len() {
                                                 self.cursor.0 = row;
                                                 let line_len = self.lines[row].chars().count();
-                                                self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                                self.cursor.1 = col.min(line_len);
                                                 self.update_desired_col();
                                             }
                                         }
@@ -10135,22 +10145,13 @@ impl<'a> EditorState<'a> {
                                     }
                                     '^' => self.move_to_first_non_blank(),
                                     '$' => {
-                                        self.cursor.1 = self.lines[self.cursor.0]
-                                            .chars()
-                                            .count()
-                                            .saturating_sub(1);
+                                        self.cursor.1 = self.lines[self.cursor.0].chars().count();
                                         self.update_desired_col();
                                     }
                                     'G' => {
                                         self.cursor.0 = self.lines.len() - 1;
-                                        // Use desired_col like vertical movement
                                         let line_len = self.lines[self.cursor.0].chars().count();
-                                        let max_col = if self.mode == EditorMode::Insert {
-                                            line_len
-                                        } else {
-                                            line_len.saturating_sub(1)
-                                        };
-                                        self.cursor.1 = self.desired_col.min(max_col);
+                                        self.cursor.1 = self.desired_col.min(line_len);
                                     }
                                     '%' => {
                                         self.jump_to_matching_bracket();
