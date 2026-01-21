@@ -357,6 +357,14 @@ enum LastChange {
     InsertBlock(usize, String),
     /// (num_rows, col_offset, text)
     AppendBlock(usize, usize, String),
+    /// Indent lines
+    Indent,
+    /// Dedent lines
+    Dedent,
+    /// Indent block at cursor column (num_rows)
+    IndentBlock(usize),
+    /// Dedent block at cursor column (num_rows)
+    DedentBlock(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -934,6 +942,113 @@ impl<'a> EditorState<'a> {
         self.cursor.0 = start_row.min(self.lines.len() - 1);
         self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         self.update_desired_col();
+        self.record_change();
+    }
+
+    /// Indent a single line by inserting shiftwidth (4) spaces at the start
+    fn indent_line(&mut self, row: usize) {
+        const SHIFTWIDTH: usize = 4;
+        if row < self.lines.len() {
+            self.lines[row] = format!("{}{}", " ".repeat(SHIFTWIDTH), self.lines[row]);
+            self.lines_version += 1;
+        }
+    }
+
+    /// Dedent a single line by removing up to shiftwidth (4) leading spaces
+    fn dedent_line(&mut self, row: usize) {
+        const SHIFTWIDTH: usize = 4;
+        if row < self.lines.len() {
+            let line = &self.lines[row];
+            let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
+            let remove = leading_spaces.min(SHIFTWIDTH);
+            if remove > 0 {
+                self.lines[row] = self.lines[row][remove..].to_string();
+                self.lines_version += 1;
+            }
+        }
+    }
+
+    /// Indent a single line at a specific column (for visual block mode)
+    fn indent_line_at_col(&mut self, row: usize, col: usize) {
+        const SHIFTWIDTH: usize = 4;
+        if row < self.lines.len() {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let line_len = chars.len();
+            let insert_col = col.min(line_len);
+            let before: String = chars.iter().take(insert_col).collect();
+            let after: String = chars.iter().skip(insert_col).collect();
+            self.lines[row] = format!("{}{}{}", before, " ".repeat(SHIFTWIDTH), after);
+            self.lines_version += 1;
+        }
+    }
+
+    /// Dedent a single line at a specific column (for visual block mode)
+    fn dedent_line_at_col(&mut self, row: usize, col: usize) {
+        const SHIFTWIDTH: usize = 4;
+        if row < self.lines.len() {
+            let chars: Vec<char> = self.lines[row].chars().collect();
+            let line_len = chars.len();
+            if col >= line_len {
+                return;
+            }
+            // Count spaces starting at col
+            let spaces_at_col = chars.iter().skip(col).take_while(|c| **c == ' ').count();
+            let remove = spaces_at_col.min(SHIFTWIDTH);
+            if remove > 0 {
+                let before: String = chars.iter().take(col).collect();
+                let after: String = chars.iter().skip(col + remove).collect();
+                self.lines[row] = format!("{}{}", before, after);
+                self.lines_version += 1;
+            }
+        }
+    }
+
+    /// Indent N lines starting from cursor (for `[count]>>`)
+    fn indent_lines(&mut self, count: usize) {
+        self.save_undo_state();
+        let end = (self.cursor.0 + count).min(self.lines.len());
+        for row in self.cursor.0..end {
+            self.indent_line(row);
+        }
+        // Neovim: cursor stays in same position (doesn't adjust)
+        self.record_change();
+    }
+
+    /// Dedent N lines starting from cursor (for `[count]<<`)
+    fn dedent_lines(&mut self, count: usize) {
+        self.save_undo_state();
+        let end = (self.cursor.0 + count).min(self.lines.len());
+        for row in self.cursor.0..end {
+            self.dedent_line(row);
+        }
+        // Neovim: only adjust cursor if it's now past end of line
+        let line_len = self.lines[self.cursor.0].chars().count();
+        let max_col = line_len.saturating_sub(1);
+        if self.cursor.1 > max_col {
+            self.cursor.1 = max_col;
+        }
+        self.record_change();
+    }
+
+    /// Indent N lines at cursor column (for visual block repeat)
+    fn indent_block_at_cursor(&mut self, num_rows: usize) {
+        self.save_undo_state();
+        let col = self.cursor.1;
+        let end = (self.cursor.0 + num_rows).min(self.lines.len());
+        for row in self.cursor.0..end {
+            self.indent_line_at_col(row, col);
+        }
+        self.record_change();
+    }
+
+    /// Dedent N lines at cursor column (for visual block repeat)
+    fn dedent_block_at_cursor(&mut self, num_rows: usize) {
+        self.save_undo_state();
+        let col = self.cursor.1;
+        let end = (self.cursor.0 + num_rows).min(self.lines.len());
+        for row in self.cursor.0..end {
+            self.dedent_line_at_col(row, col);
+        }
         self.record_change();
     }
 
@@ -3475,6 +3590,18 @@ impl<'a> EditorState<'a> {
             }
             LastChange::AppendBlock(num_rows, col_offset, ref text) => {
                 self.insert_block_at_cursor_with_offset(num_rows, col_offset, text);
+            }
+            LastChange::Indent => {
+                self.indent_lines(use_count);
+            }
+            LastChange::Dedent => {
+                self.dedent_lines(use_count);
+            }
+            LastChange::IndentBlock(num_rows) => {
+                self.indent_block_at_cursor(num_rows);
+            }
+            LastChange::DedentBlock(num_rows) => {
+                self.dedent_block_at_cursor(num_rows);
             }
         }
     }
@@ -8967,6 +9094,28 @@ impl<'a> EditorState<'a> {
                                     }
                                     _ => {}
                                 }
+                            } else if op == '>' {
+                                // Indent operators
+                                match c {
+                                    '>' => {
+                                        // >> - indent current line(s)
+                                        let count = self.take_count();
+                                        self.indent_lines(count);
+                                        self.set_last_change(LastChange::Indent, count);
+                                    }
+                                    _ => {}
+                                }
+                            } else if op == '<' {
+                                // Dedent operators
+                                match c {
+                                    '<' => {
+                                        // << - dedent current line(s)
+                                        let count = self.take_count();
+                                        self.dedent_lines(count);
+                                        self.set_last_change(LastChange::Dedent, count);
+                                    }
+                                    _ => {}
+                                }
                             }
 
                             self.render()?;
@@ -9099,7 +9248,7 @@ impl<'a> EditorState<'a> {
                             continue;
                         }
 
-                        if c == 'c' || c == 'd' || c == 'y' {
+                        if c == 'c' || c == 'd' || c == 'y' || c == '>' || c == '<' {
                             self.pending_operator = Some(c);
                             self.render()?;
                             continue;
@@ -9588,9 +9737,23 @@ impl<'a> EditorState<'a> {
                         key: KeyCode::Char(c),
                         modifiers,
                     }) => {
-                        if !modifiers.contains(Modifiers::CTRL)
-                            && !modifiers.contains(Modifiers::ALT)
-                        {
+                        if modifiers.contains(Modifiers::CTRL) {
+                            match c {
+                                't' => {
+                                    // Ctrl-T: insert shiftwidth indent at line start
+                                    self.indent_line(self.cursor.0);
+                                    self.cursor.1 += 4; // Adjust cursor for added spaces
+                                }
+                                'd' => {
+                                    // Ctrl-D: remove shiftwidth indent from line start
+                                    let old_col = self.cursor.1;
+                                    self.dedent_line(self.cursor.0);
+                                    // Adjust cursor position (don't go below 0)
+                                    self.cursor.1 = old_col.saturating_sub(4);
+                                }
+                                _ => {}
+                            }
+                        } else if !modifiers.contains(Modifiers::ALT) {
                             self.insert_char(c);
                             self.insert_buffer.push(c);
                         }
@@ -10390,6 +10553,74 @@ impl<'a> EditorState<'a> {
                                         self.apply_visual_case_change(|c| {
                                             c.to_lowercase().next().unwrap_or(c)
                                         });
+                                    }
+                                    // Indent visual selection
+                                    '>' => {
+                                        let (start, end) = self.get_visual_selection();
+                                        let count = end.0 - start.0 + 1;
+                                        let is_block = self.mode == EditorMode::VisualBlock;
+                                        if is_block {
+                                            // Block mode: indent from left edge of block
+                                            let min_col = self.visual_start.1.min(self.cursor.1);
+                                            // Undo restores cursor to top-left of block
+                                            self.save_undo_state_with_cursor((start.0, min_col));
+                                            for row in start.0..=end.0 {
+                                                self.indent_line_at_col(row, min_col);
+                                            }
+                                            // Cursor at top-left of block
+                                            self.cursor = (start.0, min_col);
+                                        } else {
+                                            // Undo restores cursor to first row, first column
+                                            self.save_undo_state_with_cursor((start.0, 0));
+                                            // Neovim: row moves to first line, column preserved
+                                            self.cursor.0 = start.0;
+                                            for row in start.0..=end.0 {
+                                                self.indent_line(row);
+                                            }
+                                        }
+                                        self.clamp_cursor();
+                                        self.update_desired_col();
+                                        self.record_change();
+                                        if is_block {
+                                            self.set_last_change(LastChange::IndentBlock(count), 1);
+                                        } else {
+                                            self.set_last_change(LastChange::Indent, count);
+                                        }
+                                        self.mode = EditorMode::Normal;
+                                    }
+                                    // Dedent visual selection
+                                    '<' => {
+                                        let (start, end) = self.get_visual_selection();
+                                        let count = end.0 - start.0 + 1;
+                                        let is_block = self.mode == EditorMode::VisualBlock;
+                                        if is_block {
+                                            // Block mode: dedent from left edge of block
+                                            let min_col = self.visual_start.1.min(self.cursor.1);
+                                            // Undo restores cursor to top-left of block
+                                            self.save_undo_state_with_cursor((start.0, min_col));
+                                            for row in start.0..=end.0 {
+                                                self.dedent_line_at_col(row, min_col);
+                                            }
+                                            // Cursor at top-left of block
+                                            self.cursor = (start.0, min_col);
+                                        } else {
+                                            // Undo restores cursor to first row, first column
+                                            self.save_undo_state_with_cursor((start.0, 0));
+                                            // Neovim: row moves to first line, column preserved
+                                            self.cursor.0 = start.0;
+                                            for row in start.0..=end.0 {
+                                                self.dedent_line(row);
+                                            }
+                                        }
+                                        self.clamp_cursor();
+                                        self.update_desired_col();
+                                        self.record_change();
+                                        if is_block {
+                                            self.set_last_change(LastChange::DedentBlock(count), 1);
+                                        } else {
+                                            self.set_last_change(LastChange::Dedent, count);
+                                        }
+                                        self.mode = EditorMode::Normal;
                                     }
                                     // Switch visual modes
                                     'v' => {
