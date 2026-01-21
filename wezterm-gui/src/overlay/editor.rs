@@ -2233,6 +2233,10 @@ impl<'a> EditorState<'a> {
     fn find_pair_bounds(&self, pair_char: char) -> Option<((usize, usize), (usize, usize))> {
         let (open, close) = if pair_char == '"' || pair_char == '\'' || pair_char == '`' {
             (pair_char, pair_char)
+        } else if pair_char == 'b' {
+            ('(', ')')
+        } else if pair_char == 'B' {
+            ('{', '}')
         } else if Self::is_open_pair(pair_char) {
             (pair_char, Self::get_matching_pair(pair_char)?)
         } else {
@@ -7875,10 +7879,12 @@ impl<'a> EditorState<'a> {
                                 && matches!(
                                     c,
                                     '(' | ')'
+                                        | 'b'
                                         | '['
                                         | ']'
                                         | '{'
                                         | '}'
+                                        | 'B'
                                         | '<'
                                         | '>'
                                         | '"'
@@ -7904,10 +7910,12 @@ impl<'a> EditorState<'a> {
                                 && matches!(
                                     c,
                                     '(' | ')'
+                                        | 'b'
                                         | '['
                                         | ']'
                                         | '{'
                                         | '}'
+                                        | 'B'
                                         | '<'
                                         | '>'
                                         | '"'
@@ -11429,9 +11437,9 @@ mod tests {
 
         fn find_pair_bounds(&self, pair_char: char) -> Option<((usize, usize), (usize, usize))> {
             let (open, close) = match pair_char {
-                '(' | ')' => ('(', ')'),
+                '(' | ')' | 'b' => ('(', ')'),
                 '[' | ']' => ('[', ']'),
-                '{' | '}' => ('{', '}'),
+                '{' | '}' | 'B' => ('{', '}'),
                 '<' | '>' => ('<', '>'),
                 '"' => ('"', '"'),
                 '\'' => ('\'', '\''),
