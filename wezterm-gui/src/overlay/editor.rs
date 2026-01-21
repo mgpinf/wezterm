@@ -2245,22 +2245,19 @@ impl<'a> EditorState<'a> {
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
         if open == close {
-            let mut left = None;
-            for i in (0..=col).rev() {
-                if chars[i] == open {
-                    left = Some(i);
-                    break;
-                }
-            }
+            let left = chars
+                .iter()
+                .enumerate()
+                .take(col + 1)
+                .rev()
+                .find_map(|(idx, c)| (*c == open).then_some(idx));
 
-            let mut right = None;
             let start_search = if left == Some(col) { col + 1 } else { col };
-            for i in start_search..chars.len() {
-                if chars[i] == close {
-                    right = Some(i);
-                    break;
-                }
-            }
+            let right = chars
+                .into_iter()
+                .enumerate()
+                .skip(start_search)
+                .find_map(|(idx, c)| (c == close).then_some(idx));
 
             match (left, right) {
                 (Some(l), Some(r)) => Some(((cur_row, l), (cur_row, r))),
@@ -2310,12 +2307,12 @@ impl<'a> EditorState<'a> {
             let chars: Vec<char> = line.chars().collect();
             let end = search_end.min(chars.len());
 
-            for i in (0..end).rev() {
-                if chars[i] == close {
+            for (idx, c) in chars.into_iter().enumerate().take(end).rev() {
+                if c == close {
                     depth += 1;
-                } else if chars[i] == open {
+                } else if c == open {
                     if depth == 0 {
-                        return Some((row, i));
+                        return Some((row, idx));
                     }
                     depth -= 1;
                 }
@@ -2343,14 +2340,13 @@ impl<'a> EditorState<'a> {
 
         loop {
             let line = &self.lines[row];
-            let chars: Vec<char> = line.chars().collect();
 
-            for i in search_start..chars.len() {
-                if chars[i] == open {
+            for (idx, c) in line.chars().enumerate().skip(search_start) {
+                if c == open {
                     depth += 1;
-                } else if chars[i] == close {
+                } else if c == close {
                     if depth == 0 {
-                        return Some((row, i));
+                        return Some((row, idx));
                     }
                     depth -= 1;
                 }
@@ -2461,13 +2457,13 @@ impl<'a> EditorState<'a> {
                 chars.len()
             };
 
-            for i in (0..search_end).rev() {
-                if chars[i] == close {
+            for (idx, c) in chars.into_iter().enumerate().take(search_end).rev() {
+                if c == close {
                     depth += 1;
-                } else if chars[i] == open {
+                } else if c == open {
                     if depth == 0 {
                         self.cursor.0 = row;
-                        self.cursor.1 = i;
+                        self.cursor.1 = idx;
                         return;
                     }
                     depth -= 1;
@@ -2496,13 +2492,13 @@ impl<'a> EditorState<'a> {
                 0
             };
 
-            for i in search_start..chars.len() {
-                if chars[i] == open {
+            for (idx, c) in chars.into_iter().enumerate().skip(search_start) {
+                if c == open {
                     depth += 1;
-                } else if chars[i] == close {
+                } else if c == close {
                     if depth == 0 {
                         self.cursor.0 = row;
-                        self.cursor.1 = i;
+                        self.cursor.1 = idx;
                         return;
                     }
                     depth -= 1;
@@ -2528,12 +2524,14 @@ impl<'a> EditorState<'a> {
         let cur_char = chars[col];
 
         if !Self::is_matchable_bracket(cur_char) {
-            for i in col..chars.len() {
-                if Self::is_matchable_bracket(chars[i]) {
-                    self.cursor.1 = i;
-                    self.jump_to_matching_bracket();
-                    return;
-                }
+            if let Some((idx, _)) = chars
+                .into_iter()
+                .enumerate()
+                .skip(col)
+                .find(|(_, c)| Self::is_matchable_bracket(*c))
+            {
+                self.cursor.1 = idx;
+                self.jump_to_matching_bracket();
             }
             return;
         }
@@ -2557,13 +2555,13 @@ impl<'a> EditorState<'a> {
                     0
                 };
 
-                for i in search_start..chars.len() {
-                    if chars[i] == cur_char {
+                for (idx, c) in chars.into_iter().enumerate().skip(search_start) {
+                    if c == cur_char {
                         depth += 1;
-                    } else if chars[i] == matching {
+                    } else if c == matching {
                         if depth == 0 {
                             self.cursor.0 = row;
-                            self.cursor.1 = i;
+                            self.cursor.1 = idx;
                             return;
                         }
                         depth -= 1;
@@ -2589,13 +2587,13 @@ impl<'a> EditorState<'a> {
                     chars.len()
                 };
 
-                for i in (0..end).rev() {
-                    if chars[i] == cur_char {
+                for (idx, c) in chars.into_iter().enumerate().take(end).rev() {
+                    if c == cur_char {
                         depth += 1;
-                    } else if chars[i] == matching {
+                    } else if c == matching {
                         if depth == 0 {
                             self.cursor.0 = row;
-                            self.cursor.1 = i;
+                            self.cursor.1 = idx;
                             return;
                         }
                         depth -= 1;
@@ -3248,13 +3246,12 @@ impl<'a> EditorState<'a> {
         let bracket_col = if Self::is_matchable_bracket(cur_char) {
             col
         } else {
-            let mut found = None;
-            for i in col..chars.len() {
-                if Self::is_matchable_bracket(chars[i]) {
-                    found = Some(i);
-                    break;
-                }
-            }
+            let found = chars
+                .into_iter()
+                .enumerate()
+                .skip(col)
+                .find_map(|(idx, c)| Self::is_matchable_bracket(c).then_some(idx));
+
             match found {
                 Some(c) => c,
                 None => return,
@@ -3313,12 +3310,12 @@ impl<'a> EditorState<'a> {
             let chars: Vec<char> = line.chars().collect();
             let end = search_end.min(chars.len());
 
-            for i in (0..end).rev() {
-                if chars[i] == close {
+            for (idx, c) in chars.into_iter().enumerate().take(end).rev() {
+                if c == close {
                     depth += 1;
-                } else if chars[i] == open {
+                } else if c == open {
                     if depth == 0 {
-                        return Some((row, i));
+                        return Some((row, idx));
                     }
                     depth -= 1;
                 }
@@ -3342,12 +3339,12 @@ impl<'a> EditorState<'a> {
             let line = &self.lines[row];
             let chars: Vec<char> = line.chars().collect();
 
-            for i in search_start..chars.len() {
-                if chars[i] == open {
+            for (idx, c) in chars.into_iter().enumerate().skip(search_start) {
+                if c == open {
                     depth += 1;
-                } else if chars[i] == close {
+                } else if c == close {
                     if depth == 0 {
-                        return Some((row, i));
+                        return Some((row, idx));
                     }
                     depth -= 1;
                 }
@@ -11505,13 +11502,12 @@ mod tests {
                     line_chars.len()
                 };
 
-                for i in (0..search_end).rev() {
-                    let c = line_chars[i];
+                for (idx, c) in line_chars.into_iter().enumerate().take(search_end).rev() {
                     if c == close && open != close {
                         depth += 1;
                     } else if c == open {
                         if depth == 0 {
-                            return Some((row, i));
+                            return Some((row, idx));
                         }
                         depth -= 1;
                     }
@@ -11541,13 +11537,12 @@ mod tests {
                 let line_chars: Vec<char> = self.lines[row].chars().collect();
                 let start_idx = if row == start_row { col + 1 } else { 0 };
 
-                for i in start_idx..line_chars.len() {
-                    let c = line_chars[i];
+                for (idx, c) in line_chars.into_iter().enumerate().skip(start_idx) {
                     if c == open && open != close {
                         depth += 1;
                     } else if c == close {
                         if depth == 0 {
-                            return Some((row, i));
+                            return Some((row, idx));
                         }
                         depth -= 1;
                     }
