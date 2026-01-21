@@ -2392,12 +2392,9 @@ impl<'a> EditorState<'a> {
 
                 if is_change && has_content_lines {
                     self.lines.insert(open_row + 1, String::new());
-                    self.cursor.0 = open_row + 1;
-                    self.cursor.1 = 0;
-                } else {
-                    self.cursor.0 = open_row + 1;
-                    self.cursor.1 = 0;
                 }
+                self.cursor.0 = open_row + 1;
+                self.cursor.1 = 0;
             }
             self.clamp_cursor();
             self.update_desired_col();
@@ -2416,8 +2413,6 @@ impl<'a> EditorState<'a> {
             if open_row == close_row {
                 let line = &mut self.lines[open_row];
                 line.replace_range(open_col..=close_col, "");
-                self.cursor.0 = open_row;
-                self.cursor.1 = open_col;
             } else {
                 let first_line_prefix: String =
                     self.lines[open_row].chars().take(open_col).collect();
@@ -2429,10 +2424,9 @@ impl<'a> EditorState<'a> {
                 for _ in (open_row + 1)..=close_row {
                     self.lines.remove(open_row + 1);
                 }
-
-                self.cursor.0 = open_row;
-                self.cursor.1 = open_col;
             }
+            self.cursor.0 = open_row;
+            self.cursor.1 = open_col;
             self.clamp_cursor();
             self.update_desired_col();
             self.maybe_record_change();
@@ -2670,11 +2664,11 @@ impl<'a> EditorState<'a> {
 
         self.cursor.0 = row;
 
-        if row == last_row && !self.lines[row].trim().is_empty() {
-            self.cursor.1 = self.lines[row].chars().count().saturating_sub(1);
+        self.cursor.1 = if row == last_row && !self.lines[row].trim().is_empty() {
+            self.lines[row].chars().count().saturating_sub(1)
         } else {
-            self.cursor.1 = 0;
-        }
+            0
+        };
         self.update_desired_col();
     }
 
@@ -3152,8 +3146,6 @@ impl<'a> EditorState<'a> {
                     .chain(&chars[end_clamped..])
                     .collect();
             }
-            self.cursor.0 = start_row;
-            self.cursor.1 = start_col;
         } else {
             let mut yanked = String::new();
             let first_chars: Vec<char> = self.lines[start_row].chars().collect();
@@ -3179,11 +3171,10 @@ impl<'a> EditorState<'a> {
             for _ in (start_row + 1)..=end_row {
                 self.lines.remove(start_row + 1);
             }
-
-            self.cursor.0 = start_row;
-            self.cursor.1 = start_col;
         }
 
+        self.cursor.0 = start_row;
+        self.cursor.1 = start_col;
         self.clamp_cursor();
         self.record_change();
     }
