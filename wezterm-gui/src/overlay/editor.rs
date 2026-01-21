@@ -357,14 +357,18 @@ enum LastChange {
     InsertBlock(usize, String),
     /// (num_rows, col_offset, text)
     AppendBlock(usize, usize, String),
-    /// Indent lines
+    /// Indent lines (normal mode)
     Indent,
-    /// Dedent lines
+    /// Dedent lines (normal mode)
     Dedent,
+    /// Indent lines (visual mode, num_lines)
+    IndentVisualLines(usize),
+    /// Dedent lines (visual mode, num_lines)
+    DedentVisualLines(usize),
     /// Indent block at cursor column (num_rows)
-    IndentBlock(usize),
+    IndentVisualBlock(usize),
     /// Dedent block at cursor column (num_rows)
-    DedentBlock(usize),
+    DedentVisualBlock(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1030,24 +1034,58 @@ impl<'a> EditorState<'a> {
         self.record_change();
     }
 
+    /// Indent N lines at cursor for visual mode repeat
+    fn indent_lines_at_cursor(&mut self, num_lines: usize, repeat_count: usize) {
+        self.save_undo_state();
+        let end = (self.cursor.0 + num_lines).min(self.lines.len());
+        for _ in 0..repeat_count {
+            for row in self.cursor.0..end {
+                self.indent_line(row);
+            }
+        }
+        self.record_change();
+    }
+
+    /// Dedent N lines at cursor for visual mode repeat
+    fn dedent_lines_at_cursor(&mut self, num_lines: usize, repeat_count: usize) {
+        self.save_undo_state();
+        let end = (self.cursor.0 + num_lines).min(self.lines.len());
+        for _ in 0..repeat_count {
+            for row in self.cursor.0..end {
+                self.dedent_line(row);
+            }
+        }
+        // Adjust cursor if past end of line
+        let line_len = self.lines[self.cursor.0].chars().count();
+        let max_col = line_len.saturating_sub(1);
+        if self.cursor.1 > max_col {
+            self.cursor.1 = max_col;
+        }
+        self.record_change();
+    }
+
     /// Indent N lines at cursor column (for visual block repeat)
-    fn indent_block_at_cursor(&mut self, num_rows: usize) {
+    fn indent_block_at_cursor(&mut self, num_rows: usize, repeat_count: usize) {
         self.save_undo_state();
         let col = self.cursor.1;
         let end = (self.cursor.0 + num_rows).min(self.lines.len());
-        for row in self.cursor.0..end {
-            self.indent_line_at_col(row, col);
+        for _ in 0..repeat_count {
+            for row in self.cursor.0..end {
+                self.indent_line_at_col(row, col);
+            }
         }
         self.record_change();
     }
 
     /// Dedent N lines at cursor column (for visual block repeat)
-    fn dedent_block_at_cursor(&mut self, num_rows: usize) {
+    fn dedent_block_at_cursor(&mut self, num_rows: usize, repeat_count: usize) {
         self.save_undo_state();
         let col = self.cursor.1;
         let end = (self.cursor.0 + num_rows).min(self.lines.len());
-        for row in self.cursor.0..end {
-            self.dedent_line_at_col(row, col);
+        for _ in 0..repeat_count {
+            for row in self.cursor.0..end {
+                self.dedent_line_at_col(row, col);
+            }
         }
         self.record_change();
     }
@@ -3487,7 +3525,17 @@ impl<'a> EditorState<'a> {
     fn repeat_last_change(&mut self) {
         let has_explicit_count = self.count_prefix.is_some();
         let explicit_count = self.take_count();
-        let use_count = if has_explicit_count {
+
+        // Visual mode indent/dedent should never update last_count - always use original
+        let ignores_count = matches!(
+            self.last_change,
+            LastChange::IndentVisualLines(_)
+                | LastChange::DedentVisualLines(_)
+                | LastChange::IndentVisualBlock(_)
+                | LastChange::DedentVisualBlock(_)
+        );
+
+        let use_count = if has_explicit_count && !ignores_count {
             self.last_count = explicit_count;
             explicit_count
         } else {
@@ -3597,11 +3645,21 @@ impl<'a> EditorState<'a> {
             LastChange::Dedent => {
                 self.dedent_lines(use_count);
             }
-            LastChange::IndentBlock(num_rows) => {
-                self.indent_block_at_cursor(num_rows);
+            LastChange::IndentVisualLines(num_lines) => {
+                // Visual mode: always use stored count (not updated for repeat)
+                self.indent_lines_at_cursor(num_lines, self.last_count);
             }
-            LastChange::DedentBlock(num_rows) => {
-                self.dedent_block_at_cursor(num_rows);
+            LastChange::DedentVisualLines(num_lines) => {
+                // Visual mode: always use stored count (not updated for repeat)
+                self.dedent_lines_at_cursor(num_lines, self.last_count);
+            }
+            LastChange::IndentVisualBlock(num_rows) => {
+                // Visual block: always use stored count (not updated for repeat)
+                self.indent_block_at_cursor(num_rows, self.last_count);
+            }
+            LastChange::DedentVisualBlock(num_rows) => {
+                // Visual block: always use stored count (not updated for repeat)
+                self.dedent_block_at_cursor(num_rows, self.last_count);
             }
         }
     }
@@ -10264,6 +10322,12 @@ impl<'a> EditorState<'a> {
                                 }
                             } else {
                                 // No pending key - handle as normal keys
+                                // Handle digit prefix for count
+                                if c.is_ascii_digit() && (c != '0' || self.count_prefix.is_some()) {
+                                    self.add_count_digit(c);
+                                    self.render()?;
+                                    continue;
+                                }
                                 match c {
                                     'h' => {
                                         self.visual_block_extends_to_eol = false;
@@ -10557,15 +10621,18 @@ impl<'a> EditorState<'a> {
                                     // Indent visual selection
                                     '>' => {
                                         let (start, end) = self.get_visual_selection();
-                                        let count = end.0 - start.0 + 1;
+                                        let line_count = end.0 - start.0 + 1;
+                                        let repeat_count = self.take_count();
                                         let is_block = self.mode == EditorMode::VisualBlock;
                                         if is_block {
                                             // Block mode: indent from left edge of block
                                             let min_col = self.visual_start.1.min(self.cursor.1);
                                             // Undo restores cursor to top-left of block
                                             self.save_undo_state_with_cursor((start.0, min_col));
-                                            for row in start.0..=end.0 {
-                                                self.indent_line_at_col(row, min_col);
+                                            for _ in 0..repeat_count {
+                                                for row in start.0..=end.0 {
+                                                    self.indent_line_at_col(row, min_col);
+                                                }
                                             }
                                             // Cursor at top-left of block
                                             self.cursor = (start.0, min_col);
@@ -10574,32 +10641,43 @@ impl<'a> EditorState<'a> {
                                             self.save_undo_state_with_cursor((start.0, 0));
                                             // Neovim: row moves to first line, column preserved
                                             self.cursor.0 = start.0;
-                                            for row in start.0..=end.0 {
-                                                self.indent_line(row);
+                                            for _ in 0..repeat_count {
+                                                for row in start.0..=end.0 {
+                                                    self.indent_line(row);
+                                                }
                                             }
                                         }
                                         self.clamp_cursor();
                                         self.update_desired_col();
                                         self.record_change();
                                         if is_block {
-                                            self.set_last_change(LastChange::IndentBlock(count), 1);
+                                            self.set_last_change(
+                                                LastChange::IndentVisualBlock(line_count),
+                                                repeat_count,
+                                            );
                                         } else {
-                                            self.set_last_change(LastChange::Indent, count);
+                                            self.set_last_change(
+                                                LastChange::IndentVisualLines(line_count),
+                                                repeat_count,
+                                            );
                                         }
                                         self.mode = EditorMode::Normal;
                                     }
                                     // Dedent visual selection
                                     '<' => {
                                         let (start, end) = self.get_visual_selection();
-                                        let count = end.0 - start.0 + 1;
+                                        let line_count = end.0 - start.0 + 1;
+                                        let repeat_count = self.take_count();
                                         let is_block = self.mode == EditorMode::VisualBlock;
                                         if is_block {
                                             // Block mode: dedent from left edge of block
                                             let min_col = self.visual_start.1.min(self.cursor.1);
                                             // Undo restores cursor to top-left of block
                                             self.save_undo_state_with_cursor((start.0, min_col));
-                                            for row in start.0..=end.0 {
-                                                self.dedent_line_at_col(row, min_col);
+                                            for _ in 0..repeat_count {
+                                                for row in start.0..=end.0 {
+                                                    self.dedent_line_at_col(row, min_col);
+                                                }
                                             }
                                             // Cursor at top-left of block
                                             self.cursor = (start.0, min_col);
@@ -10608,17 +10686,25 @@ impl<'a> EditorState<'a> {
                                             self.save_undo_state_with_cursor((start.0, 0));
                                             // Neovim: row moves to first line, column preserved
                                             self.cursor.0 = start.0;
-                                            for row in start.0..=end.0 {
-                                                self.dedent_line(row);
+                                            for _ in 0..repeat_count {
+                                                for row in start.0..=end.0 {
+                                                    self.dedent_line(row);
+                                                }
                                             }
                                         }
                                         self.clamp_cursor();
                                         self.update_desired_col();
                                         self.record_change();
                                         if is_block {
-                                            self.set_last_change(LastChange::DedentBlock(count), 1);
+                                            self.set_last_change(
+                                                LastChange::DedentVisualBlock(line_count),
+                                                repeat_count,
+                                            );
                                         } else {
-                                            self.set_last_change(LastChange::Dedent, count);
+                                            self.set_last_change(
+                                                LastChange::DedentVisualLines(line_count),
+                                                repeat_count,
+                                            );
                                         }
                                         self.mode = EditorMode::Normal;
                                     }
