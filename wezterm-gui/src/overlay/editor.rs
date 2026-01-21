@@ -9814,7 +9814,7 @@ impl<'a> EditorState<'a> {
                             if let Some(KeyCode::Char(pending)) = self.pending_keys.first().copied()
                             {
                                 let handled = match (pending, c) {
-                                    ('i', '(' | ')') => {
+                                    ('i', '(' | ')' | 'b') => {
                                         if let Some((open_pos, close_pos)) =
                                             self.find_pair_bounds('(')
                                         {
@@ -9825,7 +9825,7 @@ impl<'a> EditorState<'a> {
                                         }
                                         true
                                     }
-                                    ('a', '(' | ')') => {
+                                    ('a', '(' | ')' | 'b') => {
                                         if let Some((
                                             (open_row, open_col),
                                             (close_row, close_col),
@@ -9858,7 +9858,7 @@ impl<'a> EditorState<'a> {
                                         }
                                         true
                                     }
-                                    ('i', '{' | '}') => {
+                                    ('i', '{' | '}' | 'B') => {
                                         if let Some((open_pos, close_pos)) =
                                             self.find_pair_bounds('{')
                                         {
@@ -9869,7 +9869,7 @@ impl<'a> EditorState<'a> {
                                         }
                                         true
                                     }
-                                    ('a', '{' | '}') => {
+                                    ('a', '{' | '}' | 'B') => {
                                         if let Some((
                                             (open_row, open_col),
                                             (close_row, close_col),
@@ -9990,54 +9990,6 @@ impl<'a> EditorState<'a> {
                                         let (start, end) = self.get_a_long_word_bounds();
                                         self.visual_start = (self.cursor.0, start);
                                         self.cursor.1 = end.saturating_sub(1);
-                                        true
-                                    }
-                                    ('i', 'b') => {
-                                        // ib is same as i(
-                                        if let Some((open_pos, close_pos)) =
-                                            self.find_pair_bounds('(')
-                                        {
-                                            let (start, end) = self
-                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
-                                            self.visual_start = start;
-                                            self.cursor = end;
-                                        }
-                                        true
-                                    }
-                                    ('a', 'b') => {
-                                        // ab is same as a(
-                                        if let Some((
-                                            (open_row, open_col),
-                                            (close_row, close_col),
-                                        )) = self.find_pair_bounds('(')
-                                        {
-                                            self.visual_start = (open_row, open_col);
-                                            self.cursor = (close_row, close_col);
-                                        }
-                                        true
-                                    }
-                                    ('i', 'B') => {
-                                        // iB is same as i{
-                                        if let Some((open_pos, close_pos)) =
-                                            self.find_pair_bounds('{')
-                                        {
-                                            let (start, end) = self
-                                                .get_inner_pair_visual_bounds(open_pos, close_pos);
-                                            self.visual_start = start;
-                                            self.cursor = end;
-                                        }
-                                        true
-                                    }
-                                    ('a', 'B') => {
-                                        // aB is same as a{
-                                        if let Some((
-                                            (open_row, open_col),
-                                            (close_row, close_col),
-                                        )) = self.find_pair_bounds('{')
-                                        {
-                                            self.visual_start = (open_row, open_col);
-                                            self.cursor = (close_row, close_col);
-                                        }
                                         true
                                     }
                                     ('g', 'g') => {
