@@ -2270,28 +2270,43 @@ impl<'a> EditorState<'a> {
         } else {
             let cur_char = if !chars.is_empty() { chars[col] } else { ' ' };
 
-            let open_pos: Option<(usize, usize)>;
-            let close_pos: Option<(usize, usize)>;
-
-            if cur_char == close {
-                close_pos = Some((cur_row, col));
-                open_pos = self.find_matching_open(open, close, cur_row, col);
+            let (open_pos, close_pos) = if cur_char == close {
+                (
+                    self.find_matching_open(open, close, cur_row, col),
+                    Some((cur_row, col)),
+                )
             } else if cur_char == open {
-                open_pos = Some((cur_row, col));
-                close_pos = self.find_matching_close(open, close, cur_row, col);
+                (
+                    Some((cur_row, col)),
+                    self.find_matching_close(open, close, cur_row, col),
+                )
             } else {
-                open_pos = self.find_matching_open(open, close, cur_row, col + 1);
-                if let Some((open_row, open_col)) = open_pos {
-                    close_pos = self.find_matching_close(open, close, open_row, open_col);
-                } else {
-                    close_pos = None;
-                }
-            }
+                // First try to find if we're inside a bracket pair
+                self.find_matching_open(open, close, cur_row, col + 1)
+                    .map(|(open_row, open_col)| {
+                        (
+                            Some((open_row, open_col)),
+                            self.find_matching_close(open, close, open_row, open_col),
+                        )
+                    })
+                    .or_else(|| {
+                        // Not inside brackets - search forward for next opening bracket
+                        chars
+                            .iter()
+                            .enumerate()
+                            .skip(col)
+                            .find_map(|(idx, c)| (*c == open).then_some(idx))
+                            .map(|open_col| {
+                                (
+                                    Some((cur_row, open_col)),
+                                    self.find_matching_close(open, close, cur_row, open_col),
+                                )
+                            })
+                    })
+                    .unwrap_or((None, None))
+            };
 
-            match (open_pos, close_pos) {
-                (Some(o), Some(c)) => Some((o, c)),
-                _ => None,
-            }
+            open_pos.zip(close_pos)
         }
     }
 
