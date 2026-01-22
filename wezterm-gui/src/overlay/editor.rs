@@ -2012,6 +2012,7 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn delete_text_object_on_line(&mut self, start: usize, end: usize) {
         let line_len = self.lines[self.cursor.0].len();
         if start < end && end <= line_len {
@@ -2105,9 +2106,9 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn delete_inner_word(&mut self) {
-        let (start, end) = self.get_inner_word_bounds();
-        self.delete_text_object_on_line(start, end);
+        self.delete_inner_word_with_count(1);
     }
 
     /// Delete inner word with count - saves undo once, then deletes count words
@@ -2137,9 +2138,9 @@ impl<'a> EditorState<'a> {
         self.maybe_record_change();
     }
 
+    #[allow(dead_code)]
     fn delete_a_word(&mut self) {
-        let (start, end) = self.get_a_word_bounds();
-        self.delete_text_object_on_line(start, end);
+        self.delete_a_word_with_count(1);
     }
 
     /// Delete around word with count - saves undo once, then deletes count words
@@ -2225,9 +2226,9 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn delete_inner_long_word(&mut self) {
-        let (start, end) = self.get_inner_long_word_bounds();
-        self.delete_text_object_on_line(start, end);
+        self.delete_inner_long_word_with_count(1);
     }
 
     /// Delete inner long word with count - saves undo once, then deletes count words
@@ -2256,9 +2257,9 @@ impl<'a> EditorState<'a> {
         self.maybe_record_change();
     }
 
+    #[allow(dead_code)]
     fn delete_a_long_word(&mut self) {
-        let (start, end) = self.get_a_long_word_bounds();
-        self.delete_text_object_on_line(start, end);
+        self.delete_a_long_word_with_count(1);
     }
 
     /// Delete around long word with count - saves undo once, then deletes count words
@@ -4236,8 +4237,8 @@ impl<'a> EditorState<'a> {
             EditTarget::ToEndOfLine => self.delete_to_end_of_line(),
             EditTarget::Inner(obj) => match obj {
                 TextObject::Word(wt) => match wt {
-                    WordType::Word => self.delete_inner_word(),
-                    WordType::LongWord => self.delete_inner_long_word(),
+                    WordType::Word => self.delete_inner_word_with_count(count),
+                    WordType::LongWord => self.delete_inner_long_word_with_count(count),
                 },
                 TextObject::Pair(c) => self.delete_inner_pair(*c, count),
                 TextObject::Paragraph => self.delete_paragraph(TextObjectKind::Inner),
@@ -4245,8 +4246,8 @@ impl<'a> EditorState<'a> {
             },
             EditTarget::Around(obj) => match obj {
                 TextObject::Word(wt) => match wt {
-                    WordType::Word => self.delete_a_word(),
-                    WordType::LongWord => self.delete_a_long_word(),
+                    WordType::Word => self.delete_a_word_with_count(count),
+                    WordType::LongWord => self.delete_a_long_word_with_count(count),
                 },
                 TextObject::Pair(c) => self.delete_around_pair(*c, count),
                 TextObject::Paragraph => self.delete_paragraph(TextObjectKind::Around),
@@ -4343,8 +4344,8 @@ impl<'a> EditorState<'a> {
                 TextObject::Word(wt) => {
                     self.mode = EditorMode::Insert;
                     match wt {
-                        WordType::Word => self.delete_inner_word(),
-                        WordType::LongWord => self.delete_inner_long_word(),
+                        WordType::Word => self.delete_inner_word_with_count(count),
+                        WordType::LongWord => self.delete_inner_long_word_with_count(count),
                     }
                 }
                 TextObject::Pair(c) => {
@@ -4362,8 +4363,8 @@ impl<'a> EditorState<'a> {
                 TextObject::Word(wt) => {
                     self.mode = EditorMode::Insert;
                     match wt {
-                        WordType::Word => self.delete_a_word(),
-                        WordType::LongWord => self.delete_a_long_word(),
+                        WordType::Word => self.delete_a_word_with_count(count),
+                        WordType::LongWord => self.delete_a_long_word_with_count(count),
                     }
                 }
                 TextObject::Pair(c) => {
