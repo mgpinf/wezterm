@@ -837,9 +837,8 @@ impl<'a> EditorState<'a> {
         self.yank_is_linewise = true;
 
         if self.lines.len() > actual_count {
-            for _ in 0..actual_count {
-                self.lines.remove(self.cursor.0);
-            }
+            self.lines
+                .drain(self.cursor.0..self.cursor.0 + actual_count);
             if self.cursor.0 >= self.lines.len() {
                 self.cursor.0 = self.lines.len() - 1;
             }
@@ -886,9 +885,7 @@ impl<'a> EditorState<'a> {
         self.yank_is_linewise = true;
 
         self.lines_version += 1;
-        for _ in 0..=self.cursor.0 {
-            self.lines.remove(0);
-        }
+        self.lines.drain(0..=self.cursor.0);
         if self.lines.is_empty() {
             self.lines.push(String::new());
         }
@@ -1287,9 +1284,7 @@ impl<'a> EditorState<'a> {
     fn change_to_start_of_file(&mut self) {
         self.save_undo_state();
         self.lines_version += 1;
-        for _ in 0..=self.cursor.0 {
-            self.lines.remove(0);
-        }
+        self.lines.drain(0..=self.cursor.0);
         self.lines.insert(0, String::new());
         self.cursor.0 = 0;
         self.cursor.1 = 0;
@@ -2095,10 +2090,9 @@ impl<'a> EditorState<'a> {
                 String::new()
             };
 
-            for _ in start_row + 1..=end_row {
-                if start_row + 1 < self.lines.len() {
-                    self.lines.remove(start_row + 1);
-                }
+            if start_row + 1 < self.lines.len() {
+                let drain_end = (end_row + 1).min(self.lines.len());
+                self.lines.drain(start_row + 1..drain_end);
             }
 
             self.lines[start_row] = before + &after;
@@ -2378,9 +2372,7 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        for _ in start_row..=end_row {
-            self.lines.remove(start_row);
-        }
+        self.lines.drain(start_row..=end_row);
 
         if self.lines.is_empty() {
             self.lines.push(String::new());
@@ -2427,9 +2419,7 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        for _ in start_row..=end_row {
-            self.lines.remove(start_row);
-        }
+        self.lines.drain(start_row..=end_row);
 
         self.lines.insert(start_row, String::new());
 
@@ -2891,8 +2881,8 @@ impl<'a> EditorState<'a> {
                 let last_line: String = self.lines[close_row].chars().skip(close_col).collect();
                 self.lines[close_row] = last_line;
 
-                for _ in (open_row + 1)..close_row {
-                    self.lines.remove(open_row + 1);
+                if open_row + 1 < close_row {
+                    self.lines.drain(open_row + 1..close_row);
                 }
 
                 // Only insert empty line for change operations when opening delimiter
@@ -2939,9 +2929,7 @@ impl<'a> EditorState<'a> {
 
                 self.lines[open_row] = first_line_prefix + &last_line_suffix;
 
-                for _ in (open_row + 1)..=close_row {
-                    self.lines.remove(open_row + 1);
-                }
+                self.lines.drain(open_row + 1..=close_row);
             }
             self.cursor.0 = open_row;
             self.cursor.1 = open_col;
@@ -3686,9 +3674,7 @@ impl<'a> EditorState<'a> {
 
             self.lines[start_row] = first_part + &last_part;
 
-            for _ in (start_row + 1)..=end_row {
-                self.lines.remove(start_row + 1);
-            }
+            self.lines.drain(start_row + 1..=end_row);
         }
 
         self.cursor.0 = start_row;
@@ -4462,11 +4448,8 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = yanked.join("\n");
         self.yank_is_linewise = true;
 
-        for _ in 0..actual_count {
-            if self.cursor.0 < self.lines.len() {
-                self.lines.remove(self.cursor.0);
-            }
-        }
+        let drain_end = (self.cursor.0 + actual_count).min(self.lines.len());
+        self.lines.drain(self.cursor.0..drain_end);
         let indent_len = indent.len();
         self.lines.insert(self.cursor.0, indent);
 
@@ -5917,8 +5900,8 @@ impl<'a> EditorState<'a> {
 
                 self.lines[start.0] = start_suffix;
 
-                for _ in (end.0 + 1)..start.0 {
-                    self.lines.remove(end.0 + 1);
+                if end.0 + 1 < start.0 {
+                    self.lines.drain(end.0 + 1..start.0);
                 }
 
                 self.cursor.0 = end.0;
@@ -5943,9 +5926,7 @@ impl<'a> EditorState<'a> {
 
                 let new_line = format!("{}{}", end_prefix, start_suffix);
 
-                for _ in end.0..start.0 {
-                    self.lines.remove(end.0 + 1);
-                }
+                self.lines.drain(end.0 + 1..=start.0);
                 self.lines[end.0] = new_line;
 
                 self.cursor.0 = end.0;
@@ -5993,8 +5974,8 @@ impl<'a> EditorState<'a> {
 
                 self.lines[start.0] = start_prefix;
 
-                for _ in (start.0 + 1)..end.0 {
-                    self.lines.remove(start.0 + 1);
+                if start.0 + 1 < end.0 {
+                    self.lines.drain(start.0 + 1..end.0);
                 }
 
                 self.cursor = start;
@@ -6014,9 +5995,7 @@ impl<'a> EditorState<'a> {
                 self.yank_is_linewise = true;
 
                 if delete_empty_lines {
-                    for _ in start.0..end.0 {
-                        self.lines.remove(start.0);
-                    }
+                    self.lines.drain(start.0..end.0);
 
                     if self.lines.is_empty() {
                         self.lines.push(String::new());
@@ -6027,8 +6006,8 @@ impl<'a> EditorState<'a> {
                 } else {
                     self.lines[start.0] = String::new();
 
-                    for _ in (start.0 + 1)..end.0 {
-                        self.lines.remove(start.0 + 1);
+                    if start.0 + 1 < end.0 {
+                        self.lines.drain(start.0 + 1..end.0);
                     }
 
                     self.cursor.0 = start.0;
@@ -6061,9 +6040,7 @@ impl<'a> EditorState<'a> {
                 let new_line = format!("{}{}", start_prefix, end_suffix);
                 let new_line_empty = new_line.is_empty();
 
-                for _ in start.0..end.0 {
-                    self.lines.remove(start.0 + 1);
-                }
+                self.lines.drain(start.0 + 1..=end.0);
                 self.lines[start.0] = new_line;
 
                 self.cursor = start;
@@ -7987,9 +7964,7 @@ impl<'a> EditorState<'a> {
                 let first_part_len = first_part.chars().count();
                 let last_part: String = last_chars[sel_end..].iter().collect();
                 self.lines[start.0] = first_part + &last_part;
-                for _ in (start.0 + 1)..=end.0 {
-                    self.lines.remove(start.0 + 1);
-                }
+                self.lines.drain(start.0 + 1..=end.0);
                 let merged_line_len = self.lines[start.0].chars().count();
                 if first_part_len < merged_line_len {
                     self.cursor = (start.0, first_part_len);
@@ -12828,8 +12803,8 @@ mod tests {
                     self.yank_buffer = start_chars[start.1..].iter().collect::<String>();
                     self.yank_is_linewise = false;
                     self.lines[start.0] = start_prefix;
-                    for _ in (start.0 + 1)..end.0 {
-                        self.lines.remove(start.0 + 1);
+                    if start.0 + 1 < end.0 {
+                        self.lines.drain(start.0 + 1..end.0);
                     }
                     self.cursor = start;
                 } else {
@@ -12840,9 +12815,7 @@ mod tests {
                     let end_suffix: String = end_chars[end.1..].iter().collect();
 
                     self.lines[start.0] = start_prefix + &end_suffix;
-                    for _ in start.0 + 1..=end.0 {
-                        self.lines.remove(start.0 + 1);
-                    }
+                    self.lines.drain(start.0 + 1..=end.0);
                     self.cursor = start;
                 }
             } else if end.0 == start.0 && end.1 > start.1 {
