@@ -592,6 +592,28 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    // =========================================================================
+    // Line character access helpers (reduce repeated chars().collect() calls)
+    // =========================================================================
+
+    /// Get characters of a line as a Vec<char>
+    #[inline]
+    fn line_chars(&self, row: usize) -> Vec<char> {
+        self.lines[row].chars().collect()
+    }
+
+    /// Get character count of a line
+    #[inline]
+    fn line_char_count(&self, row: usize) -> usize {
+        self.lines[row].chars().count()
+    }
+
+    /// Get characters of current cursor line
+    #[inline]
+    fn current_line_chars(&self) -> Vec<char> {
+        self.lines[self.cursor.0].chars().collect()
+    }
+
     fn take_count(&mut self) -> usize {
         self.count_prefix.take().unwrap_or(1)
     }
@@ -638,8 +660,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn replace_char_at_cursor(&mut self, c: char) -> Option<char> {
-        let line = &self.lines[self.cursor.0];
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 < chars.len() {
             let original = chars[self.cursor.1];
             let mut new_chars = chars;
@@ -655,8 +676,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn restore_char_at_cursor(&mut self, orig_char: char) {
-        let line = &self.lines[self.cursor.0];
-        let mut chars: Vec<char> = line.chars().collect();
+        let mut chars = self.current_line_chars();
         if self.cursor.1 < chars.len() {
             chars[self.cursor.1] = orig_char;
             self.lines[self.cursor.0] = chars.into_iter().collect();
@@ -726,7 +746,7 @@ impl<'a> EditorState<'a> {
         let new_row = (self.cursor.0 as isize + row)
             .max(0)
             .min((self.lines.len() - 1) as isize) as usize;
-        let line_len = self.lines[new_row].chars().count();
+        let line_len = self.line_char_count(new_row);
         let max_col = if self.allows_cursor_past_eol() {
             line_len
         } else {
@@ -751,7 +771,7 @@ impl<'a> EditorState<'a> {
         if self.cursor.0 >= self.lines.len() {
             self.cursor.0 = self.lines.len().saturating_sub(1);
         }
-        let line_len = self.lines[self.cursor.0].chars().count();
+        let line_len = self.line_char_count(self.cursor.0);
         let max_col = if self.allows_cursor_past_eol() {
             line_len
         } else {
@@ -770,7 +790,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn insert_char_no_undo(&mut self, c: char) {
-        let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let mut chars = self.current_line_chars();
         if self.cursor.1 >= chars.len() {
             chars.push(c);
         } else {
@@ -789,7 +809,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn delete_char_no_undo(&mut self) {
-        let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let mut chars = self.current_line_chars();
         if !chars.is_empty() && self.cursor.1 < chars.len() {
             self.yank_buffer = chars[self.cursor.1].to_string();
             self.yank_is_linewise = false;
@@ -809,7 +829,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn insert_newline_no_undo(&mut self) {
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         let (before, after): (String, String) = if self.cursor.1 < chars.len() {
             (
                 chars[..self.cursor.1].iter().collect(),
@@ -1000,7 +1020,7 @@ impl<'a> EditorState<'a> {
     /// Indent a single line at a specific column (for visual block mode)
     fn indent_line_at_col(&mut self, row: usize, col: usize) {
         if row < self.lines.len() {
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars = self.line_chars(row);
             let line_len = chars.len();
             let insert_col = col.min(line_len);
             let before: String = chars.iter().take(insert_col).collect();
@@ -1013,7 +1033,7 @@ impl<'a> EditorState<'a> {
     /// Dedent a single line at a specific column (for visual block mode)
     fn dedent_line_at_col(&mut self, row: usize, col: usize) {
         if row < self.lines.len() {
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars = self.line_chars(row);
             let line_len = chars.len();
             if col >= line_len {
                 return;
@@ -1049,7 +1069,7 @@ impl<'a> EditorState<'a> {
             self.dedent_line(row);
         }
         // Neovim: only adjust cursor if it's now past end of line
-        let line_len = self.lines[self.cursor.0].chars().count();
+        let line_len = self.line_char_count(self.cursor.0);
         let max_col = line_len.saturating_sub(1);
         if self.cursor.1 > max_col {
             self.cursor.1 = max_col;
@@ -1079,7 +1099,7 @@ impl<'a> EditorState<'a> {
             }
         }
         // Adjust cursor if past end of line
-        let line_len = self.lines[self.cursor.0].chars().count();
+        let line_len = self.line_char_count(self.cursor.0);
         let max_col = line_len.saturating_sub(1);
         if self.cursor.1 > max_col {
             self.cursor.1 = max_col;
@@ -1354,7 +1374,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_to_end_of_line(&mut self) {
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 < chars.len() {
             self.yank_buffer = chars[self.cursor.1..].iter().collect();
         } else {
@@ -1401,7 +1421,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_char_right_pos(&self) -> (usize, usize) {
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 < chars.len() {
             (self.cursor.0, self.cursor.1 + 1)
         } else {
@@ -1410,7 +1430,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn get_word_forward_pos(&self, word_type: WordType) -> (usize, usize) {
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 >= chars.len() {
             if self.cursor.0 < self.lines.len() - 1 {
                 return (self.cursor.0 + 1, 0);
@@ -1511,7 +1531,7 @@ impl<'a> EditorState<'a> {
         if self.cursor.1 == 0 {
             if self.cursor.0 > 0 {
                 let prev_line = self.cursor.0 - 1;
-                let chars: Vec<char> = self.lines[prev_line].chars().collect();
+                let chars = self.line_chars(prev_line);
                 if chars.is_empty() {
                     return (prev_line, 0);
                 }
@@ -1523,7 +1543,7 @@ impl<'a> EditorState<'a> {
             return self.cursor;
         }
 
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         let mut idx = self.cursor.1 - 1;
 
         while idx > 0 && chars[idx].is_whitespace() {
@@ -1533,7 +1553,7 @@ impl<'a> EditorState<'a> {
         if idx == 0 && chars[idx].is_whitespace() {
             if self.cursor.0 > 0 {
                 let prev_line = self.cursor.0 - 1;
-                let prev_chars: Vec<char> = self.lines[prev_line].chars().collect();
+                let prev_chars = self.line_chars(prev_line);
                 if prev_chars.is_empty() {
                     return (prev_line, 0);
                 }
@@ -1641,17 +1661,17 @@ impl<'a> EditorState<'a> {
             col -= 1;
         } else if row > 0 {
             row -= 1;
-            col = self.lines[row].chars().count().saturating_sub(1);
+            col = self.line_char_count(row).saturating_sub(1);
         } else {
             return (0, 0);
         }
 
         loop {
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
             if chars.is_empty() {
                 if row > 0 {
                     row -= 1;
-                    col = self.lines[row].chars().count().saturating_sub(1);
+                    col = self.line_char_count(row).saturating_sub(1);
                     continue;
                 }
                 return (0, 0);
@@ -1663,7 +1683,7 @@ impl<'a> EditorState<'a> {
                     continue;
                 } else if row > 0 {
                     row -= 1;
-                    col = self.lines[row].chars().count().saturating_sub(1);
+                    col = self.line_char_count(row).saturating_sub(1);
                     continue;
                 }
                 return (0, 0);
@@ -1679,7 +1699,7 @@ impl<'a> EditorState<'a> {
             let curr_type = char_type(curr_c, word_type);
 
             if orig_type != 0 && row == self.cursor.0 {
-                let chars: Vec<char> = self.lines[row].chars().collect();
+                let chars: Vec<char> = self.line_chars(row);
                 let mut still_same_word = true;
 
                 for i in (col + 1)..=self.cursor.1 {
@@ -1721,17 +1741,17 @@ impl<'a> EditorState<'a> {
                         col -= 1;
                     } else if row > 0 {
                         row -= 1;
-                        col = self.lines[row].chars().count().saturating_sub(1);
+                        col = self.line_char_count(row).saturating_sub(1);
                     } else {
                         return (0, 0);
                     }
 
                     loop {
-                        let chars: Vec<char> = self.lines[row].chars().collect();
+                        let chars: Vec<char> = self.line_chars(row);
                         if chars.is_empty() {
                             if row > 0 {
                                 row -= 1;
-                                col = self.lines[row].chars().count().saturating_sub(1);
+                                col = self.line_char_count(row).saturating_sub(1);
                                 continue;
                             }
                             return (0, 0);
@@ -1743,7 +1763,7 @@ impl<'a> EditorState<'a> {
                                 continue;
                             } else if row > 0 {
                                 row -= 1;
-                                col = self.lines[row].chars().count().saturating_sub(1);
+                                col = self.line_char_count(row).saturating_sub(1);
                                 continue;
                             }
                             return (0, 0);
@@ -1796,7 +1816,7 @@ impl<'a> EditorState<'a> {
         while line_idx < self.lines.len() && visual_row < content_rows {
             visible_lines.push(line_idx);
             let line_visual_rows =
-                Self::wrapped_line_rows(self.lines[line_idx].chars().count(), content_width);
+                Self::wrapped_line_rows(self.line_char_count(line_idx), content_width);
             visual_row += line_visual_rows;
             line_idx += 1;
         }
@@ -1938,7 +1958,7 @@ impl<'a> EditorState<'a> {
         } else {
             // Multi-line: start after opening bracket, end before closing bracket
             // Keep positions on the bracket lines to ensure proper multi-line deletion
-            let open_line_len = self.lines[open_row].chars().count();
+            let open_line_len = self.line_char_count(open_row);
 
             // Start position: right after opening bracket
             // If bracket is at end of line, use that position (past end) to indicate
@@ -1951,7 +1971,7 @@ impl<'a> EditorState<'a> {
                 (close_row, close_col - 1)
             } else {
                 // Closing bracket at column 0 - end at last char of previous line
-                let prev_line_len = self.lines[close_row - 1].chars().count();
+                let prev_line_len = self.line_char_count(close_row - 1);
                 if prev_line_len > 0 {
                     (close_row - 1, prev_line_len - 1)
                 } else {
@@ -1976,7 +1996,7 @@ impl<'a> EditorState<'a> {
             return (0, 0);
         }
 
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
         let is_word_char = |c: char| !c.is_whitespace() && !c.is_ascii_punctuation();
@@ -2010,7 +2030,7 @@ impl<'a> EditorState<'a> {
             return (0, 0);
         }
 
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         let (word_start, word_end) = self.get_inner_word_bounds();
 
         let mut end = word_end;
@@ -2065,7 +2085,7 @@ impl<'a> EditorState<'a> {
     ) -> String {
         let mut yanked = String::new();
         for row in start_row..=end_row {
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars = self.line_chars(row);
             let start = if row == start_row { start_col } else { 0 };
             let end = if row == end_row {
                 (end_col + 1).min(chars.len())
@@ -2090,15 +2110,15 @@ impl<'a> EditorState<'a> {
         end_col: usize,
     ) {
         if start_row == end_row {
-            let mut chars: Vec<char> = self.lines[start_row].chars().collect();
+            let mut chars: Vec<char> = self.line_chars(start_row);
             let delete_end = (end_col + 1).min(chars.len());
             if start_col < delete_end {
                 chars.drain(start_col..delete_end);
                 self.lines[start_row] = chars.into_iter().collect();
             }
         } else {
-            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
-            let end_chars: Vec<char> = self.lines[end_row].chars().collect();
+            let start_chars: Vec<char> = self.line_chars(start_row);
+            let end_chars: Vec<char> = self.line_chars(end_row);
 
             let before: String = start_chars[..start_col.min(start_chars.len())]
                 .iter()
@@ -2191,7 +2211,7 @@ impl<'a> EditorState<'a> {
             return (0, 0);
         }
 
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
         if chars[col].is_whitespace() {
@@ -2223,7 +2243,7 @@ impl<'a> EditorState<'a> {
             return (0, 0);
         }
 
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         let (word_start, word_end) = self.get_inner_long_word_bounds();
 
         let mut end = word_end;
@@ -2471,7 +2491,7 @@ impl<'a> EditorState<'a> {
             start_col = 0;
         }
         if start_row < self.lines.len() {
-            let chars: Vec<char> = self.lines[start_row].chars().collect();
+            let chars: Vec<char> = self.line_chars(start_row);
             while start_col < chars.len() && chars[start_col].is_whitespace() {
                 start_col += 1;
             }
@@ -2481,7 +2501,7 @@ impl<'a> EditorState<'a> {
         let mut end_col = self.cursor.1;
 
         loop {
-            let chars: Vec<char> = self.lines[end_row].chars().collect();
+            let chars: Vec<char> = self.line_chars(end_row);
 
             while end_col < chars.len() {
                 if Self::is_valid_sentence_end(&chars, end_col) {
@@ -2517,7 +2537,7 @@ impl<'a> EditorState<'a> {
         let mut new_end_row = end_row;
         let mut new_end_col = end_col;
 
-        let chars: Vec<char> = self.lines[new_end_row].chars().collect();
+        let chars: Vec<char> = self.line_chars(new_end_row);
         let mut next_col = new_end_col + 1;
 
         while next_col < chars.len() && chars[next_col].is_whitespace() {
@@ -2530,7 +2550,7 @@ impl<'a> EditorState<'a> {
         }
 
         if new_end_row < self.lines.len() - 1 && !is_blank(&self.lines[new_end_row + 1]) {
-            let next_chars: Vec<char> = self.lines[new_end_row + 1].chars().collect();
+            let next_chars: Vec<char> = self.line_chars(new_end_row + 1);
             if !next_chars.is_empty() && next_chars[0].is_whitespace() {
                 new_end_row += 1;
                 new_end_col = 0;
@@ -2544,7 +2564,7 @@ impl<'a> EditorState<'a> {
         }
 
         if start_col > 0 {
-            let start_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let start_chars: Vec<char> = self.line_chars(start_row);
             let mut new_start_col = start_col;
             while new_start_col > 0 && start_chars[new_start_col - 1].is_whitespace() {
                 new_start_col -= 1;
@@ -2615,7 +2635,7 @@ impl<'a> EditorState<'a> {
         self.yank_buffer = self.yank_char_range(start_row, start_col, end_row, end_col);
 
         if kind == TextObjectKind::Around {
-            let end_line_len = self.lines[end_row].chars().count();
+            let end_line_len = self.line_char_count(end_row);
             self.yank_is_linewise =
                 start_col == 0 && end_col + 1 >= end_line_len && end_row < self.lines.len() - 1;
         } else {
@@ -2663,7 +2683,7 @@ impl<'a> EditorState<'a> {
 
         let cur_row = self.cursor.0;
         let line = &self.lines[cur_row];
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
         if open == close {
@@ -2798,8 +2818,7 @@ impl<'a> EditorState<'a> {
         let mut search_end = start_col;
 
         loop {
-            let line = &self.lines[row];
-            let chars: Vec<char> = line.chars().collect();
+            let chars = self.line_chars(row);
             let end = search_end.min(chars.len());
 
             for (idx, c) in chars.into_iter().enumerate().take(end).rev() {
@@ -2817,7 +2836,7 @@ impl<'a> EditorState<'a> {
                 break;
             }
             row -= 1;
-            search_end = self.lines[row].chars().count();
+            search_end = self.line_char_count(row);
         }
         None
     }
@@ -2862,7 +2881,7 @@ impl<'a> EditorState<'a> {
         {
             // Check if there's actual content to delete
             let has_content = open_row != close_row || open_col + 1 < close_col;
-            let open_line_len = self.lines[open_row].chars().count();
+            let open_line_len = self.line_char_count(open_row);
             // Check if there's content after opening delimiter on same line
             let has_content_after_open = open_col + 1 < open_line_len;
 
@@ -2968,8 +2987,7 @@ impl<'a> EditorState<'a> {
         let mut start_col = self.cursor.1;
 
         loop {
-            let line = &self.lines[row];
-            let chars: Vec<char> = line.chars().collect();
+            let chars = self.line_chars(row);
             let search_end = if row == self.cursor.0 {
                 start_col.min(chars.len())
             } else {
@@ -3003,8 +3021,7 @@ impl<'a> EditorState<'a> {
         let mut start_col = self.cursor.1;
 
         loop {
-            let line = &self.lines[row];
-            let chars: Vec<char> = line.chars().collect();
+            let chars = self.line_chars(row);
             let search_start = if row == self.cursor.0 {
                 (start_col + 1).min(chars.len())
             } else {
@@ -3038,7 +3055,7 @@ impl<'a> EditorState<'a> {
             return;
         }
 
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
         let cur_char = chars[col];
 
@@ -3154,7 +3171,7 @@ impl<'a> EditorState<'a> {
         }
 
         if row == last_row && !is_blank(&self.lines[row]) {
-            (row, self.lines[row].chars().count())
+            (row, self.line_char_count(row))
         } else {
             (row, 0)
         }
@@ -3190,7 +3207,7 @@ impl<'a> EditorState<'a> {
         self.cursor.0 = row;
 
         self.cursor.1 = if row == last_row && !is_blank(&self.lines[row]) {
-            self.lines[row].chars().count().saturating_sub(1)
+            self.line_char_count(row).saturating_sub(1)
         } else {
             0
         };
@@ -3234,7 +3251,7 @@ impl<'a> EditorState<'a> {
             start_col - 1
         } else if start_row > 0 {
             row = start_row - 1;
-            self.lines[row].chars().count().saturating_sub(1)
+            self.line_char_count(row).saturating_sub(1)
         } else {
             return (0, 0);
         };
@@ -3248,14 +3265,14 @@ impl<'a> EditorState<'a> {
                 // Started on blank line, continue searching in previous paragraph
                 if row > 0 {
                     row -= 1;
-                    col = self.lines[row].chars().count().saturating_sub(1);
+                    col = self.line_char_count(row).saturating_sub(1);
                     continue;
                 } else {
                     return (0, 0);
                 }
             }
 
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
 
             // Search backward through current line
             loop {
@@ -3294,7 +3311,7 @@ impl<'a> EditorState<'a> {
                     }
                 }
                 row -= 1;
-                col = self.lines[row].chars().count().saturating_sub(1);
+                col = self.line_char_count(row).saturating_sub(1);
             } else {
                 return (0, 0);
             }
@@ -3314,14 +3331,14 @@ impl<'a> EditorState<'a> {
             if is_blank(&self.lines[row]) {
                 return (last_row, 0);
             }
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
             let start_col = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
             return (row, start_col);
         }
 
         // Check if we're in whitespace/closing chars after a sentence end
         // If so, just skip to the next sentence start
-        let chars: Vec<char> = self.lines[row].chars().collect();
+        let chars: Vec<char> = self.line_chars(row);
         if col < chars.len()
             && (chars[col].is_whitespace() || Self::is_sentence_closing_char(chars[col]))
         {
@@ -3338,7 +3355,7 @@ impl<'a> EditorState<'a> {
             // Check if what's before is sentence-ending punctuation
             // Also check previous line if we're at the start of a line
             let prev_line_ends_sentence = if check_col == 0 && row > 0 {
-                let prev_chars: Vec<char> = self.lines[row - 1].chars().collect();
+                let prev_chars: Vec<char> = self.line_chars(row - 1);
                 if !prev_chars.is_empty() {
                     // Find the last non-whitespace character on previous line
                     let mut prev_col = prev_chars.len() - 1;
@@ -3376,20 +3393,20 @@ impl<'a> EditorState<'a> {
                     if is_blank(&self.lines[next_row]) {
                         return (next_row, 0);
                     }
-                    let next_chars: Vec<char> = self.lines[next_row].chars().collect();
+                    let next_chars: Vec<char> = self.line_chars(next_row);
                     let start = next_chars
                         .iter()
                         .position(|ch| !ch.is_whitespace())
                         .unwrap_or(0);
                     return (next_row, start);
                 } else {
-                    return (last_row, self.lines[last_row].chars().count());
+                    return (last_row, self.line_char_count(last_row));
                 }
             }
         }
 
         loop {
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
 
             // Search forward through current line for sentence end
             while col < chars.len() {
@@ -3402,7 +3419,7 @@ impl<'a> EditorState<'a> {
 
                     // Skip whitespace (including across lines)
                     loop {
-                        let cur_chars: Vec<char> = self.lines[row].chars().collect();
+                        let cur_chars: Vec<char> = self.line_chars(row);
                         while col < cur_chars.len()
                             && Self::is_sentence_closing_char(cur_chars[col])
                         {
@@ -3422,7 +3439,7 @@ impl<'a> EditorState<'a> {
                             }
                         } else {
                             // End of file - return position past last character for exclusive motions
-                            return (last_row, self.lines[last_row].chars().count());
+                            return (last_row, self.line_char_count(last_row));
                         }
                     }
                 }
@@ -3438,7 +3455,7 @@ impl<'a> EditorState<'a> {
                 }
             } else {
                 // End of file - return position past last character for exclusive motions
-                return (last_row, self.lines[last_row].chars().count());
+                return (last_row, self.line_char_count(last_row));
             }
         }
     }
@@ -3451,7 +3468,7 @@ impl<'a> EditorState<'a> {
         let mut r = from_row;
         let mut c = from_col;
         loop {
-            let chars: Vec<char> = self.lines[r].chars().collect();
+            let chars: Vec<char> = self.line_chars(r);
             while c < chars.len() && Self::is_sentence_closing_char(chars[c]) {
                 c += 1;
             }
@@ -3474,7 +3491,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn find_line_start(&self, row: usize) -> usize {
-        let chars: Vec<char> = self.lines[row].chars().collect();
+        let chars = self.line_chars(row);
         chars.iter().position(|c| !c.is_whitespace()).unwrap_or(0)
     }
 
@@ -3484,13 +3501,13 @@ impl<'a> EditorState<'a> {
             end_col - 1
         } else if end_row > 0 {
             r = end_row - 1;
-            self.lines[r].chars().count().saturating_sub(1)
+            self.line_char_count(r).saturating_sub(1)
         } else {
             return (0, 0);
         };
 
         loop {
-            let chars: Vec<char> = self.lines[r].chars().collect();
+            let chars: Vec<char> = self.line_chars(r);
             loop {
                 if Self::is_valid_sentence_end(&chars, c) {
                     if let Some(pos) = self.find_sentence_start_after_pos(r, c + 1) {
@@ -3508,7 +3525,7 @@ impl<'a> EditorState<'a> {
                     return (r, self.find_line_start(r));
                 }
                 r -= 1;
-                c = self.lines[r].chars().count().saturating_sub(1);
+                c = self.line_char_count(r).saturating_sub(1);
             } else {
                 return (0, 0);
             }
@@ -3528,8 +3545,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn find_char_forward(&self, target: char) -> Option<usize> {
-        let line = &self.lines[self.cursor.0];
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         chars
             .iter()
             .enumerate()
@@ -3539,8 +3555,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn find_char_backward(&self, target: char) -> Option<usize> {
-        let line = &self.lines[self.cursor.0];
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         (0..self.cursor.1).rev().find(|&i| chars[i] == target)
     }
 
@@ -3661,7 +3676,7 @@ impl<'a> EditorState<'a> {
         let actual_end_col = if inclusive { end_col + 1 } else { end_col };
 
         if start_row == end_row {
-            let chars: Vec<char> = self.lines[start_row].chars().collect();
+            let chars: Vec<char> = self.line_chars(start_row);
             let end_clamped = actual_end_col.min(chars.len());
             if start_col < end_clamped {
                 self.yank_buffer = chars[start_col..end_clamped].iter().collect();
@@ -3673,7 +3688,7 @@ impl<'a> EditorState<'a> {
             }
         } else {
             let mut yanked = String::new();
-            let first_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let first_chars: Vec<char> = self.line_chars(start_row);
             yanked.extend(&first_chars[start_col..]);
             for row in (start_row + 1)..end_row {
                 yanked.push('\n');
@@ -3681,7 +3696,7 @@ impl<'a> EditorState<'a> {
             }
             if end_row > start_row {
                 yanked.push('\n');
-                let last_chars: Vec<char> = self.lines[end_row].chars().collect();
+                let last_chars: Vec<char> = self.line_chars(end_row);
                 let end_clamped = actual_end_col.min(last_chars.len());
                 yanked.extend(&last_chars[..end_clamped]);
             }
@@ -3718,7 +3733,7 @@ impl<'a> EditorState<'a> {
         let actual_end_col = end_col + 1;
 
         if start_row == end_row {
-            let chars: Vec<char> = self.lines[start_row].chars().collect();
+            let chars: Vec<char> = self.line_chars(start_row);
             let end_clamped = actual_end_col.min(chars.len());
             if start_col < end_clamped {
                 self.yank_buffer = chars[start_col..end_clamped].iter().collect();
@@ -3726,7 +3741,7 @@ impl<'a> EditorState<'a> {
             }
         } else {
             let mut yanked = String::new();
-            let first_chars: Vec<char> = self.lines[start_row].chars().collect();
+            let first_chars: Vec<char> = self.line_chars(start_row);
             yanked.extend(&first_chars[start_col..]);
             for row in (start_row + 1)..end_row {
                 yanked.push('\n');
@@ -3734,7 +3749,7 @@ impl<'a> EditorState<'a> {
             }
             if end_row > start_row {
                 yanked.push('\n');
-                let last_chars: Vec<char> = self.lines[end_row].chars().collect();
+                let last_chars: Vec<char> = self.line_chars(end_row);
                 let end_clamped = actual_end_col.min(last_chars.len());
                 yanked.extend(&last_chars[..end_clamped]);
             }
@@ -3748,11 +3763,10 @@ impl<'a> EditorState<'a> {
         let start = (self.cursor.0, self.cursor.1);
 
         // Find the target position
-        let line = &self.lines[self.cursor.0];
-        if line.is_empty() {
+        let chars = self.current_line_chars();
+        if chars.is_empty() {
             return;
         }
-        let chars: Vec<char> = line.chars().collect();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
         let cur_char = chars[col];
 
@@ -4035,7 +4049,7 @@ impl<'a> EditorState<'a> {
             if row >= self.lines.len() {
                 break;
             }
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
             let line_len = chars.len();
             let sel_start = start_col.min(line_len);
             let sel_end = end_col.min(line_len);
@@ -4054,7 +4068,7 @@ impl<'a> EditorState<'a> {
             if row >= self.lines.len() {
                 break;
             }
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
             let line_len = chars.len();
             let sel_start = start_col.min(line_len);
             let sel_end = end_col.min(line_len);
@@ -4082,7 +4096,7 @@ impl<'a> EditorState<'a> {
             if row >= self.lines.len() {
                 break;
             }
-            let mut chars: Vec<char> = self.lines[row].chars().collect();
+            let mut chars: Vec<char> = self.line_chars(row);
             let line_len = chars.len();
             let sel_start = start_col.min(line_len);
             let sel_end = end_col.min(line_len);
@@ -4119,7 +4133,7 @@ impl<'a> EditorState<'a> {
             if row >= self.lines.len() {
                 break;
             }
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
 
             if chars.len() < insert_col {
                 continue;
@@ -4160,7 +4174,7 @@ impl<'a> EditorState<'a> {
             if row >= self.lines.len() {
                 break;
             }
-            let mut chars: Vec<char> = self.lines[row].chars().collect();
+            let mut chars: Vec<char> = self.line_chars(row);
 
             while chars.len() < insert_col {
                 chars.push(' ');
@@ -4412,7 +4426,7 @@ impl<'a> EditorState<'a> {
     fn delete_to_end_of_line(&mut self) {
         self.save_undo_state();
         self.lines_version += 1;
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 < chars.len() {
             self.yank_buffer = chars[self.cursor.1..].iter().collect();
             self.yank_is_linewise = false;
@@ -4427,7 +4441,7 @@ impl<'a> EditorState<'a> {
         self.save_undo_state();
         self.lines_version += 1;
 
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 < chars.len() {
             self.yank_buffer = chars[self.cursor.1..].iter().collect();
             self.yank_is_linewise = false;
@@ -4647,7 +4661,7 @@ impl<'a> EditorState<'a> {
         } else if self.mode == EditorMode::VisualBlock {
             let (min_row, max_row, min_col, max_col) = self.get_visual_block_bounds();
             for row in min_row..=max_row {
-                let chars: Vec<char> = self.lines[row].chars().collect();
+                let chars: Vec<char> = self.line_chars(row);
                 let col_start = min_col;
                 let col_end = (max_col + 1).min(chars.len());
                 let transformed: String = chars
@@ -4666,7 +4680,7 @@ impl<'a> EditorState<'a> {
         } else {
             // Character-wise (Visual mode)
             for row in start.0..=end.0 {
-                let chars: Vec<char> = self.lines[row].chars().collect();
+                let chars: Vec<char> = self.line_chars(row);
                 let col_start = if row == start.0 { start.1 } else { 0 };
                 let col_end = if row == end.0 {
                     (end.1 + 1).min(chars.len())
@@ -4711,7 +4725,7 @@ impl<'a> EditorState<'a> {
                         // For exclusive motions, go back one character
                         // If at column 0, go to end of previous line
                         let adj_end = if end.1 == 0 && end.0 > start.0 {
-                            let prev_line_len = self.lines[end.0 - 1].chars().count();
+                            let prev_line_len = self.line_char_count(end.0 - 1);
                             (end.0 - 1, prev_line_len.saturating_sub(1))
                         } else {
                             (end.0, end.1.saturating_sub(1))
@@ -4725,7 +4739,7 @@ impl<'a> EditorState<'a> {
                         // For exclusive backward motions, go back one character
                         // If at column 0, go to end of previous line
                         let adj_start = if start.1 == 0 && start.0 > end.0 {
-                            let prev_line_len = self.lines[start.0 - 1].chars().count();
+                            let prev_line_len = self.line_char_count(start.0 - 1);
                             (start.0 - 1, prev_line_len.saturating_sub(1))
                         } else {
                             (start.0, start.1.saturating_sub(1))
@@ -4780,7 +4794,7 @@ impl<'a> EditorState<'a> {
                     // For exclusive motions, go back one character
                     // If at column 0, go to end of previous line
                     let adj_end = if end.1 == 0 && end.0 > start.0 {
-                        let prev_line_len = self.lines[end.0 - 1].chars().count();
+                        let prev_line_len = self.line_char_count(end.0 - 1);
                         (end.0 - 1, prev_line_len.saturating_sub(1))
                     } else {
                         (end.0, end.1.saturating_sub(1))
@@ -4794,7 +4808,7 @@ impl<'a> EditorState<'a> {
                     // For exclusive backward motions, go back one character
                     // If at column 0, go to end of previous line
                     let adj_start = if start.1 == 0 && start.0 > end.0 {
-                        let prev_line_len = self.lines[start.0 - 1].chars().count();
+                        let prev_line_len = self.line_char_count(start.0 - 1);
                         (start.0 - 1, prev_line_len.saturating_sub(1))
                     } else {
                         (start.0, start.1.saturating_sub(1))
@@ -4816,7 +4830,7 @@ impl<'a> EditorState<'a> {
 
     fn case_change_line(&mut self, op: char) {
         let row = self.cursor.0;
-        let line_len = self.lines[row].chars().count();
+        let line_len = self.line_char_count(row);
         if line_len > 0 {
             let start = (row, 0);
             let end = (row, line_len - 1);
@@ -4831,7 +4845,7 @@ impl<'a> EditorState<'a> {
 
     fn find_number_at_cursor(&self) -> Option<NumberAtCursor> {
         let line = &self.lines[self.cursor.0];
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         if chars.is_empty() {
             return None;
         }
@@ -4971,11 +4985,10 @@ impl<'a> EditorState<'a> {
 
         self.save_undo_state();
         self.lines_version += 1;
-        let line = &mut self.lines[self.cursor.0];
-        let chars: Vec<char> = line.chars().collect();
+        let chars = self.current_line_chars();
         let before: String = chars[..num.start].iter().collect();
         let after: String = chars[num.end..].iter().collect();
-        *line = format!("{}{}{}", before, new_num_str, after);
+        self.lines[self.cursor.0] = format!("{}{}{}", before, new_num_str, after);
 
         let new_end = num.start + new_num_str.chars().count();
         self.cursor.1 = new_end.saturating_sub(1);
@@ -5256,7 +5269,7 @@ impl<'a> EditorState<'a> {
         let mut wrap_row_offset: usize = 0;
 
         if content_width > 0 {
-            let cursor_line_chars = self.lines[self.cursor.0].chars().count();
+            let cursor_line_chars = self.line_char_count(self.cursor.0);
             let cursor_line_visual_rows = Self::wrapped_line_rows(cursor_line_chars, content_width);
             let (cursor_row_in_line, _) =
                 Self::cursor_visual_position(self.cursor.1, content_width);
@@ -5269,7 +5282,7 @@ impl<'a> EditorState<'a> {
                 loop {
                     let mut visual_rows_before_cursor = 0;
                     for line_idx in self.viewport_top..self.cursor.0 {
-                        let char_count = self.lines[line_idx].chars().count();
+                        let char_count = self.line_char_count(line_idx);
                         visual_rows_before_cursor +=
                             Self::wrapped_line_rows(char_count, content_width);
                     }
@@ -5326,7 +5339,7 @@ impl<'a> EditorState<'a> {
         let mut line_idx = self.viewport_top;
 
         while visual_row < content_rows && line_idx < self.lines.len() {
-            let chars: Vec<char> = self.lines[line_idx].chars().collect();
+            let chars: Vec<char> = self.line_chars(line_idx);
             let line_len = chars.len();
             let line_visual_rows = Self::wrapped_line_rows(line_len, content_width);
 
@@ -5916,7 +5929,7 @@ impl<'a> EditorState<'a> {
                     deleted_text.push('\n');
                 }
 
-                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let start_chars: Vec<char> = self.line_chars(start.0);
                 deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
                 let start_suffix: String = start_chars[start.1..].iter().collect();
 
@@ -5932,7 +5945,7 @@ impl<'a> EditorState<'a> {
                 self.cursor.0 = end.0;
                 self.cursor.1 = 0;
             } else {
-                let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let end_chars: Vec<char> = self.line_chars(end.0);
                 let end_prefix: String = end_chars[..end.1].iter().collect();
                 deleted_text.push_str(&end_chars[end.1..].iter().collect::<String>());
 
@@ -5941,7 +5954,7 @@ impl<'a> EditorState<'a> {
                     deleted_text.push_str(&self.lines[row]);
                 }
 
-                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let start_chars: Vec<char> = self.line_chars(start.0);
                 deleted_text.push('\n');
                 deleted_text.push_str(&start_chars[..start.1].iter().collect::<String>());
                 let start_suffix: String = start_chars[start.1..].iter().collect();
@@ -5960,11 +5973,11 @@ impl<'a> EditorState<'a> {
         } else if end.0 == start.0 && end.1 < start.1 {
             let range_start = end.1;
             let range_end = if is_inclusive {
-                (start.1 + 1).min(self.lines[start.0].chars().count())
+                (start.1 + 1).min(self.line_char_count(start.0))
             } else {
                 start.1
             };
-            let mut chars: Vec<char> = self.lines[start.0].chars().collect();
+            let mut chars: Vec<char> = self.line_chars(start.0);
             if range_start < range_end && range_end <= chars.len() {
                 self.yank_buffer = chars[range_start..range_end].iter().collect();
                 self.yank_is_linewise = false;
@@ -5985,7 +5998,7 @@ impl<'a> EditorState<'a> {
                 };
 
             if end.1 == 0 && !cursor_qualifies_for_linewise {
-                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let start_chars: Vec<char> = self.line_chars(start.0);
                 let start_prefix: String = start_chars[..start.1].iter().collect();
                 deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
 
@@ -6004,7 +6017,7 @@ impl<'a> EditorState<'a> {
                 }
 
                 self.cursor = start;
-                let line_len = self.lines[self.cursor.0].chars().count();
+                let line_len = self.line_char_count(self.cursor.0);
                 let max_col = line_len.saturating_sub(1);
                 if self.cursor.1 > max_col {
                     self.cursor.1 = max_col;
@@ -6039,7 +6052,7 @@ impl<'a> EditorState<'a> {
                     self.cursor.1 = 0;
                 }
             } else {
-                let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let start_chars: Vec<char> = self.line_chars(start.0);
                 let start_line_was_blank = start_chars.iter().all(|c| c.is_whitespace());
                 let start_prefix: String = start_chars[..start.1].iter().collect();
                 deleted_text.push_str(&start_chars[start.1..].iter().collect::<String>());
@@ -6049,7 +6062,7 @@ impl<'a> EditorState<'a> {
                     deleted_text.push_str(&self.lines[row]);
                 }
 
-                let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let end_chars: Vec<char> = self.line_chars(end.0);
                 let end_col = if is_inclusive {
                     (end.1 + 1).min(end_chars.len())
                 } else {
@@ -6086,7 +6099,7 @@ impl<'a> EditorState<'a> {
             if is_inclusive {
                 range_end += 1;
             }
-            let mut chars: Vec<char> = self.lines[start.0].chars().collect();
+            let mut chars: Vec<char> = self.line_chars(start.0);
             if range_end > chars.len() {
                 range_end = chars.len();
             }
@@ -6123,8 +6136,8 @@ impl<'a> EditorState<'a> {
             let is_linewise = end.1 == 0 && cursor_qualifies_for_linewise;
 
             let mut yanked_text = String::new();
-            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            let end_chars: Vec<char> = self.line_chars(end.0);
+            let start_chars: Vec<char> = self.line_chars(start.0);
 
             if is_linewise {
                 yanked_text.push_str(&end_chars.iter().collect::<String>());
@@ -6154,7 +6167,7 @@ impl<'a> EditorState<'a> {
             self.cursor = end;
             self.update_desired_col();
         } else if end.0 == start.0 && end.1 < start.1 {
-            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            let chars: Vec<char> = self.line_chars(start.0);
             let yank_end = if is_inclusive {
                 (start.1 + 1).min(chars.len())
             } else {
@@ -6168,7 +6181,7 @@ impl<'a> EditorState<'a> {
             self.cursor.1 = end.1;
             self.update_desired_col();
         } else if end.0 > start.0 {
-            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            let end_chars: Vec<char> = self.line_chars(end.0);
             let end_col = if is_inclusive {
                 (end.1 + 1).min(end_chars.len())
             } else {
@@ -6185,7 +6198,7 @@ impl<'a> EditorState<'a> {
             let is_linewise = cursor_qualifies_for_linewise && end_col == 0;
 
             let mut yanked_text = String::new();
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            let start_chars: Vec<char> = self.line_chars(start.0);
 
             if is_linewise {
                 yanked_text.push_str(&start_chars.iter().collect::<String>());
@@ -6211,7 +6224,7 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked_text;
             self.yank_is_linewise = is_linewise;
         } else {
-            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            let chars: Vec<char> = self.line_chars(start.0);
             let mut range_end = end.1;
             if is_inclusive {
                 range_end += 1;
@@ -6260,8 +6273,8 @@ impl<'a> EditorState<'a> {
             let is_linewise = end.1 == 0 && cursor_qualifies_for_linewise;
 
             let mut yanked_text = String::new();
-            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            let end_chars: Vec<char> = self.line_chars(end.0);
+            let start_chars: Vec<char> = self.line_chars(start.0);
 
             if is_linewise {
                 yanked_text.push_str(&end_chars.iter().collect::<String>());
@@ -6291,7 +6304,7 @@ impl<'a> EditorState<'a> {
             self.cursor = end;
             self.update_desired_col();
         } else if end.0 == start.0 && end.1 < start.1 {
-            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            let chars: Vec<char> = self.line_chars(start.0);
             let yank_end = if is_inclusive {
                 (start.1 + 1).min(chars.len())
             } else {
@@ -6305,7 +6318,7 @@ impl<'a> EditorState<'a> {
             self.cursor.1 = end.1;
             self.update_desired_col();
         } else if end.0 > start.0 {
-            let end_chars: Vec<char> = self.lines[end.0].chars().collect();
+            let end_chars: Vec<char> = self.line_chars(end.0);
             let end_col = if is_inclusive {
                 (end.1 + 1).min(end_chars.len())
             } else {
@@ -6322,7 +6335,7 @@ impl<'a> EditorState<'a> {
             let is_linewise = cursor_qualifies_for_linewise && end_col == 0;
 
             let mut yanked_text = String::new();
-            let start_chars: Vec<char> = self.lines[start.0].chars().collect();
+            let start_chars: Vec<char> = self.line_chars(start.0);
 
             if is_linewise {
                 yanked_text.push_str(&start_chars.iter().collect::<String>());
@@ -6348,7 +6361,7 @@ impl<'a> EditorState<'a> {
             self.yank_buffer = yanked_text;
             self.yank_is_linewise = is_linewise;
         } else {
-            let chars: Vec<char> = self.lines[start.0].chars().collect();
+            let chars: Vec<char> = self.line_chars(start.0);
             let mut range_end = end.1;
             if is_inclusive {
                 range_end += 1;
@@ -6364,7 +6377,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_text_object_on_line(&mut self, start: usize, end: usize) {
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if start < end && end <= chars.len() {
             self.yank_buffer = chars[start..end].iter().collect();
             self.yank_is_linewise = false;
@@ -6464,7 +6477,7 @@ impl<'a> EditorState<'a> {
             self.find_pair_bounds_with_count(pair_char, count)
         {
             if open_row == close_row {
-                let chars: Vec<char> = self.lines[open_row].chars().collect();
+                let chars: Vec<char> = self.line_chars(open_row);
                 if open_col + 1 < close_col {
                     self.yank_buffer = chars[open_col + 1..close_col].iter().collect();
                 } else {
@@ -6475,7 +6488,7 @@ impl<'a> EditorState<'a> {
                 let mut yanked = String::new();
 
                 // Skip whitespace-only content after open bracket
-                let first_chars: Vec<char> = self.lines[open_row].chars().collect();
+                let first_chars: Vec<char> = self.line_chars(open_row);
                 let after_open: String = first_chars[open_col + 1..].iter().collect();
                 let has_first_line_content = !is_blank(&after_open);
                 if has_first_line_content {
@@ -6491,7 +6504,7 @@ impl<'a> EditorState<'a> {
 
                 // Skip whitespace-only content before close bracket
                 if close_row > open_row {
-                    let last_chars: Vec<char> = self.lines[close_row].chars().collect();
+                    let last_chars: Vec<char> = self.line_chars(close_row);
                     let before_close: String = last_chars[..close_col].iter().collect();
                     let has_last_line_content = !is_blank(&before_close);
                     if has_last_line_content {
@@ -6508,7 +6521,7 @@ impl<'a> EditorState<'a> {
             // Move cursor to start of yanked content (neovim behavior)
             // - Same line: cursor at position after opening delimiter
             // - Multi-line: cursor on next line if nothing after delimiter
-            let open_line_len = self.lines[open_row].chars().count();
+            let open_line_len = self.line_char_count(open_row);
             let has_content_after_open = open_col + 1 < open_line_len;
             if open_row == close_row || has_content_after_open {
                 self.cursor = (open_row, open_col + 1);
@@ -6525,12 +6538,12 @@ impl<'a> EditorState<'a> {
             self.find_pair_bounds_with_count(pair_char, count)
         {
             if open_row == close_row {
-                let chars: Vec<char> = self.lines[open_row].chars().collect();
+                let chars: Vec<char> = self.line_chars(open_row);
                 self.yank_buffer = chars[open_col..=close_col].iter().collect();
                 self.yank_is_linewise = false;
             } else {
                 let mut yanked = String::new();
-                let first_chars: Vec<char> = self.lines[open_row].chars().collect();
+                let first_chars: Vec<char> = self.line_chars(open_row);
                 yanked.extend(&first_chars[open_col..]);
                 for row in (open_row + 1)..close_row {
                     yanked.push('\n');
@@ -6538,7 +6551,7 @@ impl<'a> EditorState<'a> {
                 }
                 if close_row > open_row {
                     yanked.push('\n');
-                    let last_chars: Vec<char> = self.lines[close_row].chars().collect();
+                    let last_chars: Vec<char> = self.line_chars(close_row);
                     yanked.extend(&last_chars[..=close_col]);
                 }
                 self.yank_buffer = yanked;
@@ -6552,7 +6565,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_to_char_forward(&mut self, target: char, inclusive: bool) {
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 + 1 < chars.len() {
             if let Some(rel_pos) = chars[self.cursor.1 + 1..].iter().position(|&c| c == target) {
                 let target_col = self.cursor.1 + 1 + rel_pos;
@@ -6568,7 +6581,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn yank_to_char_backward(&mut self, target: char, inclusive: bool) {
-        let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+        let chars = self.current_line_chars();
         if self.cursor.1 > 0 {
             if let Some(rel_pos) = chars[..self.cursor.1].iter().rposition(|&c| c == target) {
                 let start_col = if inclusive { rel_pos } else { rel_pos + 1 };
@@ -6591,7 +6604,7 @@ impl<'a> EditorState<'a> {
                 } else {
                     (end.1, saved_cursor.1 + 1)
                 };
-                let chars: Vec<char> = self.lines[saved_cursor.0].chars().collect();
+                let chars: Vec<char> = self.line_chars(saved_cursor.0);
                 if end_col <= chars.len() {
                     self.yank_buffer = chars[start_col..end_col].iter().collect();
                     self.yank_is_linewise = false;
@@ -6607,14 +6620,14 @@ impl<'a> EditorState<'a> {
                     (end, saved_cursor)
                 };
                 let mut yanked = String::new();
-                let first_chars: Vec<char> = self.lines[start_pos.0].chars().collect();
+                let first_chars: Vec<char> = self.line_chars(start_pos.0);
                 yanked.extend(&first_chars[start_pos.1..]);
                 for row in (start_pos.0 + 1)..end_pos.0 {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
                 yanked.push('\n');
-                let last_chars: Vec<char> = self.lines[end_pos.0].chars().collect();
+                let last_chars: Vec<char> = self.line_chars(end_pos.0);
                 yanked.extend(&last_chars[..=end_pos.1]);
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
@@ -6630,7 +6643,7 @@ impl<'a> EditorState<'a> {
         if self.cursor != saved_cursor {
             let target = self.cursor;
             if target.0 == saved_cursor.0 {
-                let chars: Vec<char> = self.lines[target.0].chars().collect();
+                let chars: Vec<char> = self.line_chars(target.0);
                 if target.1 < saved_cursor.1 && saved_cursor.1 <= chars.len() {
                     self.yank_buffer = chars[target.1 + 1..saved_cursor.1].iter().collect();
                     self.yank_is_linewise = false;
@@ -6647,7 +6660,7 @@ impl<'a> EditorState<'a> {
             let target = self.cursor;
             self.cursor = saved_cursor;
             if saved_cursor.0 == target.0 {
-                let chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+                let chars = self.current_line_chars();
                 if saved_cursor.1 < target.1 && target.1 <= chars.len() {
                     self.yank_buffer = chars[saved_cursor.1..target.1].iter().collect();
                     self.yank_is_linewise = false;
@@ -6675,7 +6688,7 @@ impl<'a> EditorState<'a> {
                     self.lines.push(String::new());
                 }
 
-                let mut chars: Vec<char> = self.lines[target_row].chars().collect();
+                let mut chars: Vec<char> = self.line_chars(target_row);
                 // Pad the line with spaces if it's shorter than the target column
                 while chars.len() < target_insert_col {
                     chars.push(' ');
@@ -6743,7 +6756,7 @@ impl<'a> EditorState<'a> {
             self.cursor.1 = insert_pos;
         } else {
             let repeated_buffer: String = self.yank_buffer.repeat(count);
-            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let mut chars = self.current_line_chars();
             let insert_pos = if chars.is_empty() {
                 0
             } else {
@@ -6782,7 +6795,7 @@ impl<'a> EditorState<'a> {
                     self.lines.push(String::new());
                 }
 
-                let mut chars: Vec<char> = self.lines[target_row].chars().collect();
+                let mut chars: Vec<char> = self.line_chars(target_row);
                 // Pad the line with spaces if it's shorter than the target column
                 while chars.len() < target_insert_col {
                     chars.push(' ');
@@ -6843,7 +6856,7 @@ impl<'a> EditorState<'a> {
             };
         } else {
             let repeated_buffer: String = self.yank_buffer.repeat(count);
-            let mut chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
+            let mut chars = self.current_line_chars();
             let insert_pos = self.cursor.1.min(chars.len());
             let paste_chars: Vec<char> = repeated_buffer.chars().collect();
 
@@ -7896,7 +7909,7 @@ impl<'a> EditorState<'a> {
 
             let mut yanked_lines = Vec::new();
             for row in min_row..=max_row {
-                let chars: Vec<char> = self.lines[row].chars().collect();
+                let chars: Vec<char> = self.line_chars(row);
                 let line_len = chars.len();
                 let sel_start = min_col.min(line_len);
                 let sel_end = if extends_to_eol {
@@ -7916,7 +7929,7 @@ impl<'a> EditorState<'a> {
 
             self.lines_version += 1;
             for row in min_row..=max_row {
-                let chars: Vec<char> = self.lines[row].chars().collect();
+                let chars: Vec<char> = self.line_chars(row);
                 let line_len = chars.len();
                 let sel_start = min_col.min(line_len);
                 let sel_end = if extends_to_eol {
@@ -7971,14 +7984,14 @@ impl<'a> EditorState<'a> {
                 self.cursor = start;
             } else {
                 let mut yanked = String::new();
-                let first_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let first_chars: Vec<char> = self.line_chars(start.0);
                 yanked.extend(&first_chars[start.1..]);
                 for row in (start.0 + 1)..end.0 {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
                 yanked.push('\n');
-                let last_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let last_chars: Vec<char> = self.line_chars(end.0);
                 let sel_end = (end.1 + 1).min(last_chars.len());
                 yanked.extend(&last_chars[..sel_end]);
                 self.yank_buffer = yanked;
@@ -7990,7 +8003,7 @@ impl<'a> EditorState<'a> {
                 let last_part: String = last_chars[sel_end..].iter().collect();
                 self.lines[start.0] = first_part + &last_part;
                 self.lines.drain(start.0 + 1..=end.0);
-                let merged_line_len = self.lines[start.0].chars().count();
+                let merged_line_len = self.line_char_count(start.0);
                 if first_part_len < merged_line_len {
                     self.cursor = (start.0, first_part_len);
                 } else if start.0 + 1 < self.lines.len() {
@@ -8013,7 +8026,7 @@ impl<'a> EditorState<'a> {
 
             let mut yanked_lines = Vec::new();
             for row in min_row..=max_row {
-                let chars: Vec<char> = self.lines[row].chars().collect();
+                let chars: Vec<char> = self.line_chars(row);
                 let line_len = chars.len();
                 let sel_start = min_col.min(line_len);
                 let sel_end = if extends_to_eol {
@@ -8043,20 +8056,20 @@ impl<'a> EditorState<'a> {
         } else {
             self.yank_is_block = false;
             if start.0 == end.0 {
-                let chars: Vec<char> = self.lines[start.0].chars().collect();
+                let chars: Vec<char> = self.line_chars(start.0);
                 let sel_end = (end.1 + 1).min(chars.len());
                 self.yank_buffer = chars[start.1..sel_end].iter().collect();
                 self.yank_is_linewise = false;
             } else {
                 let mut yanked = String::new();
-                let first_chars: Vec<char> = self.lines[start.0].chars().collect();
+                let first_chars: Vec<char> = self.line_chars(start.0);
                 yanked.extend(&first_chars[start.1..]);
                 for row in (start.0 + 1)..end.0 {
                     yanked.push('\n');
                     yanked.push_str(&self.lines[row]);
                 }
                 yanked.push('\n');
-                let last_chars: Vec<char> = self.lines[end.0].chars().collect();
+                let last_chars: Vec<char> = self.line_chars(end.0);
                 let sel_end = (end.1 + 1).min(last_chars.len());
                 yanked.extend(&last_chars[..sel_end]);
                 self.yank_buffer = yanked;
@@ -8123,7 +8136,7 @@ impl<'a> EditorState<'a> {
 
         let mut yanked_lines = Vec::new();
         for row in start.0..=end.0 {
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
             if min_col < chars.len() {
                 yanked_lines.push(chars[min_col..].iter().collect::<String>());
                 self.lines[row] = chars[..min_col].iter().collect();
@@ -8150,7 +8163,7 @@ impl<'a> EditorState<'a> {
 
         let mut yanked_lines = Vec::new();
         for row in start.0..=end.0 {
-            let chars: Vec<char> = self.lines[row].chars().collect();
+            let chars: Vec<char> = self.line_chars(row);
             if min_col < chars.len() {
                 yanked_lines.push(chars[min_col..].iter().collect::<String>());
                 self.lines[row] = chars[..min_col].iter().collect();
@@ -9035,7 +9048,7 @@ impl<'a> EditorState<'a> {
                                 // If cursor after mark: operate [mark, cursor), skip cursor char
                                 if let Some(&(mark_row, mark_col)) = self.marks.get(&c) {
                                     if mark_row < self.lines.len() {
-                                        let line_len = self.lines[mark_row].chars().count();
+                                        let line_len = self.line_char_count(mark_row);
                                         let mark_pos =
                                             (mark_row, mark_col.min(line_len.saturating_sub(1)));
                                         let cursor_pos = self.cursor;
@@ -9050,8 +9063,7 @@ impl<'a> EditorState<'a> {
                                                 (mark_pos.0, mark_pos.1 - 1)
                                             } else if mark_pos.0 > 0 {
                                                 // Mark at start of line, go to end of prev line
-                                                let prev_len =
-                                                    self.lines[mark_pos.0 - 1].chars().count();
+                                                let prev_len = self.line_char_count(mark_pos.0 - 1);
                                                 (mark_pos.0 - 1, prev_len.saturating_sub(1))
                                             } else {
                                                 // At (0,0), nothing to delete
@@ -9064,7 +9076,7 @@ impl<'a> EditorState<'a> {
                                                 (cursor_pos.0, cursor_pos.1 - 1)
                                             } else if cursor_pos.0 > 0 {
                                                 let prev_len =
-                                                    self.lines[cursor_pos.0 - 1].chars().count();
+                                                    self.line_char_count(cursor_pos.0 - 1);
                                                 (cursor_pos.0 - 1, prev_len.saturating_sub(1))
                                             } else {
                                                 (0, 0)
@@ -9725,7 +9737,7 @@ impl<'a> EditorState<'a> {
                                         );
                                     }
                                     '$' => {
-                                        let line_len = self.lines[self.cursor.0].chars().count();
+                                        let line_len = self.line_char_count(self.cursor.0);
                                         if line_len > 0 {
                                             let start = self.cursor;
                                             let end = (self.cursor.0, line_len - 1);
@@ -9776,7 +9788,7 @@ impl<'a> EditorState<'a> {
                                         let start = self.cursor;
                                         let last_row = self.lines.len().saturating_sub(1);
                                         let last_col =
-                                            self.lines[last_row].chars().count().saturating_sub(1);
+                                            self.line_char_count(last_row).saturating_sub(1);
                                         let end = (last_row, last_col);
                                         match op {
                                             'u' => self.lowercase_range(start, end),
@@ -9848,7 +9860,7 @@ impl<'a> EditorState<'a> {
                             if first == KeyCode::Char('g') && c == 'g' {
                                 self.cursor.0 = 0;
                                 // Use desired_col like vertical movement
-                                let line_len = self.lines[self.cursor.0].chars().count();
+                                let line_len = self.line_char_count(self.cursor.0);
                                 let max_col = line_len.saturating_sub(1);
                                 self.cursor.1 = self.desired_col.min(max_col);
                             } else if first == KeyCode::Char('g') && c == 'e' {
@@ -9939,7 +9951,7 @@ impl<'a> EditorState<'a> {
                                 if let Some(&(row, col)) = self.marks.get(&c) {
                                     if row < self.lines.len() {
                                         self.cursor.0 = row;
-                                        let line_len = self.lines[row].chars().count();
+                                        let line_len = self.line_char_count(row);
                                         self.cursor.1 = col.min(line_len.saturating_sub(1));
                                         self.update_desired_col();
                                     }
@@ -10140,7 +10152,7 @@ impl<'a> EditorState<'a> {
                             }
                             '$' => {
                                 self.cursor.1 =
-                                    self.lines[self.cursor.0].chars().count().saturating_sub(1);
+                                    self.line_char_count(self.cursor.0).saturating_sub(1);
                                 self.update_desired_col();
                             }
                             'G' => {
@@ -10153,7 +10165,7 @@ impl<'a> EditorState<'a> {
                                 };
                                 self.cursor.0 = target_line;
                                 // Use desired_col like vertical movement
-                                let line_len = self.lines[self.cursor.0].chars().count();
+                                let line_len = self.line_char_count(self.cursor.0);
                                 let max_col = line_len.saturating_sub(1);
                                 self.cursor.1 = self.desired_col.min(max_col);
                             }
@@ -10354,7 +10366,7 @@ impl<'a> EditorState<'a> {
                                     if row >= self.lines.len() {
                                         break;
                                     }
-                                    let chars: Vec<char> = self.lines[row].chars().collect();
+                                    let chars: Vec<char> = self.line_chars(row);
 
                                     // For I (Insert): skip lines shorter than insert_col
                                     // For A (Append): pad with spaces to reach insert_col
@@ -10890,7 +10902,7 @@ impl<'a> EditorState<'a> {
                                     ('g', 'g') => {
                                         // gg - go to first line
                                         self.cursor.0 = 0;
-                                        let line_len = self.lines[self.cursor.0].chars().count();
+                                        let line_len = self.line_char_count(self.cursor.0);
                                         self.cursor.1 = self.desired_col.min(line_len);
                                         true
                                     }
@@ -10900,10 +10912,8 @@ impl<'a> EditorState<'a> {
                                             self.get_paragraph_bounds(TextObjectKind::Inner)
                                         {
                                             self.visual_start = (start_row, 0);
-                                            let end_col = self.lines[end_row]
-                                                .chars()
-                                                .count()
-                                                .saturating_sub(1);
+                                            let end_col =
+                                                self.line_char_count(end_row).saturating_sub(1);
                                             self.cursor = (end_row, end_col);
                                             // Switch to linewise visual mode for paragraph selection
                                             self.mode = EditorMode::VisualLine;
@@ -10916,10 +10926,8 @@ impl<'a> EditorState<'a> {
                                             self.get_paragraph_bounds(TextObjectKind::Around)
                                         {
                                             self.visual_start = (start_row, 0);
-                                            let end_col = self.lines[end_row]
-                                                .chars()
-                                                .count()
-                                                .saturating_sub(1);
+                                            let end_col =
+                                                self.line_char_count(end_row).saturating_sub(1);
                                             self.cursor = (end_row, end_col);
                                             // Switch to linewise visual mode for paragraph selection
                                             self.mode = EditorMode::VisualLine;
@@ -10968,7 +10976,7 @@ impl<'a> EditorState<'a> {
                                         if let Some(&(row, col)) = self.marks.get(&mark) {
                                             if row < self.lines.len() {
                                                 self.cursor.0 = row;
-                                                let line_len = self.lines[row].chars().count();
+                                                let line_len = self.line_char_count(row);
                                                 self.cursor.1 = col.min(line_len);
                                                 self.update_desired_col();
                                             }
@@ -11036,7 +11044,7 @@ impl<'a> EditorState<'a> {
                                         self.move_to_first_non_blank();
                                     }
                                     '$' => {
-                                        self.cursor.1 = self.lines[self.cursor.0].chars().count();
+                                        self.cursor.1 = self.line_char_count(self.cursor.0);
                                         self.update_desired_col();
                                         if self.mode == EditorMode::VisualBlock {
                                             self.visual_block_extends_to_eol = true;
@@ -11044,7 +11052,7 @@ impl<'a> EditorState<'a> {
                                     }
                                     'G' => {
                                         self.cursor.0 = self.lines.len() - 1;
-                                        let line_len = self.lines[self.cursor.0].chars().count();
+                                        let line_len = self.line_char_count(self.cursor.0);
                                         self.cursor.1 = self.desired_col.min(line_len);
                                     }
                                     '%' => {
@@ -11214,8 +11222,7 @@ impl<'a> EditorState<'a> {
                                             let (min_row, max_row, min_col, max_col) =
                                                 self.get_visual_block_bounds();
                                             for row in min_row..=max_row {
-                                                let chars: Vec<char> =
-                                                    self.lines[row].chars().collect();
+                                                let chars: Vec<char> = self.line_chars(row);
                                                 let col_start = min_col;
                                                 let col_end = (max_col + 1).min(chars.len());
                                                 let toggled: String = chars
@@ -11238,8 +11245,7 @@ impl<'a> EditorState<'a> {
                                         } else {
                                             // Character-wise toggle (Visual mode)
                                             for row in start.0..=end.0 {
-                                                let chars: Vec<char> =
-                                                    self.lines[row].chars().collect();
+                                                let chars: Vec<char> = self.line_chars(row);
                                                 let col_start =
                                                     if row == start.0 { start.1 } else { 0 };
                                                 let col_end = if row == end.0 {
