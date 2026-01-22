@@ -1,46 +1,37 @@
----
-title: wezterm.password
-tags:
- - utility
- - password
----
-
-# `wezterm.password`
+# `wezterm.password` module
 
 {{since('nightly')}}
 
-The `wezterm.password` module provides cross-platform access to the operating
-system's credential store:
+The `wezterm.password` module provides functions for securely storing and
+retrieving passwords using the operating system's native credential store:
 
 * **macOS**: Keychain
 * **Windows**: Credential Manager
-* **Linux/FreeBSD**: Secret Service (GNOME Keyring, KWallet)
+* **Linux**: Secret Service API (via libsecret)
 
-This is useful for securely storing and retrieving secrets such as API tokens,
-SSH passphrases, or unlock passwords without hardcoding them in your config.
+This is useful for storing sensitive data like SSH passphrases, API tokens,
+or any credentials that your Lua configuration needs to access without
+hardcoding them in plain text.
 
-## Functions
+## Available functions
 
-| Function | Purpose |
-|----------|---------|
-| [get(service, account)](get.md) | Retrieve a password |
-| [set(service, account, password)](set.md) | Store a password |
-| [delete(service, account)](delete.md) | Delete a password |
+  - [delete](delete.md) - Delete a stored password
+  - [get](get.md) - Retrieve a stored password
+  - [set](set.md) - Store a password
 
-## Example
+## Example: SSH passphrase helper
 
 ```lua
 local wezterm = require 'wezterm'
 
--- Retrieve a stored password
-local token = wezterm.password.get('myapp', 'api_token')
-if token then
-  wezterm.log_info 'Token retrieved successfully'
-end
+-- Store a passphrase (run once, or via a key binding)
+-- wezterm.password.set('wezterm-ssh', 'my-key', 'my-passphrase')
 
--- Store a new password
-wezterm.password.set('myapp', 'api_token', 'secret123')
-
--- Delete a password
-wezterm.password.delete('myapp', 'api_token')
+-- Later, retrieve it for use
+wezterm.on('mux-startup', function()
+  local passphrase = wezterm.password.get('wezterm-ssh', 'my-key')
+  if passphrase then
+    -- Use passphrase for SSH connections
+  end
+end)
 ```
