@@ -396,6 +396,7 @@ const LINE_CONTINUES_ABOVE: &str = "  <<< ";
 const RESERVED_ROWS: usize = 2;
 const PENDING_KEYS_PADDING: usize = 11;
 const POSITION_WIDTH: usize = 18;
+const SHIFTWIDTH: usize = 4;
 
 struct EditorState<'a> {
     args: &'a InputText,
@@ -955,7 +956,6 @@ impl<'a> EditorState<'a> {
 
     /// Indent a single line by inserting shiftwidth (4) spaces at the start
     fn indent_line(&mut self, row: usize) {
-        const SHIFTWIDTH: usize = 4;
         if row < self.lines.len() {
             self.lines[row] = format!("{}{}", " ".repeat(SHIFTWIDTH), self.lines[row]);
             self.lines_version += 1;
@@ -964,7 +964,6 @@ impl<'a> EditorState<'a> {
 
     /// Dedent a single line by removing up to shiftwidth (4) leading spaces
     fn dedent_line(&mut self, row: usize) {
-        const SHIFTWIDTH: usize = 4;
         if row < self.lines.len() {
             let line = &self.lines[row];
             let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
@@ -978,7 +977,6 @@ impl<'a> EditorState<'a> {
 
     /// Indent a single line at a specific column (for visual block mode)
     fn indent_line_at_col(&mut self, row: usize, col: usize) {
-        const SHIFTWIDTH: usize = 4;
         if row < self.lines.len() {
             let chars: Vec<char> = self.lines[row].chars().collect();
             let line_len = chars.len();
@@ -992,7 +990,6 @@ impl<'a> EditorState<'a> {
 
     /// Dedent a single line at a specific column (for visual block mode)
     fn dedent_line_at_col(&mut self, row: usize, col: usize) {
-        const SHIFTWIDTH: usize = 4;
         if row < self.lines.len() {
             let chars: Vec<char> = self.lines[row].chars().collect();
             let line_len = chars.len();
