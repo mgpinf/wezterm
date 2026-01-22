@@ -1149,8 +1149,10 @@ impl<'a> EditorState<'a> {
     }
 
     /// Indent inner/around pair text object
-    fn indent_pair(&mut self, pair_char: char, kind: TextObjectKind) {
-        if let Some(((start_row, _), (end_row, _))) = self.find_pair_bounds(pair_char) {
+    fn indent_pair(&mut self, pair_char: char, kind: TextObjectKind, count: usize) {
+        if let Some(((start_row, _), (end_row, _))) =
+            self.find_pair_bounds_with_count(pair_char, count)
+        {
             // For inner, only indent the content lines (excluding the delimiter lines)
             // For around, indent all lines including delimiters
             let (actual_start, actual_end) = match kind {
@@ -1172,8 +1174,10 @@ impl<'a> EditorState<'a> {
     }
 
     /// Dedent inner/around pair text object
-    fn dedent_pair(&mut self, pair_char: char, kind: TextObjectKind) {
-        if let Some(((start_row, _), (end_row, _))) = self.find_pair_bounds(pair_char) {
+    fn dedent_pair(&mut self, pair_char: char, kind: TextObjectKind, count: usize) {
+        if let Some(((start_row, _), (end_row, _))) =
+            self.find_pair_bounds_with_count(pair_char, count)
+        {
             let (actual_start, actual_end) = match kind {
                 TextObjectKind::Inner => {
                     if start_row == end_row {
@@ -1203,20 +1207,20 @@ impl<'a> EditorState<'a> {
     }
 
     /// Indent text object
-    fn indent_text_object(&mut self, kind: TextObjectKind, obj: &TextObject) {
+    fn indent_text_object(&mut self, kind: TextObjectKind, obj: &TextObject, count: usize) {
         match obj {
             TextObject::Word(wt) => self.indent_word(*wt, kind),
-            TextObject::Pair(c) => self.indent_pair(*c, kind),
+            TextObject::Pair(c) => self.indent_pair(*c, kind, count),
             TextObject::Paragraph => self.indent_paragraph(kind),
             TextObject::Sentence => self.indent_sentence(kind),
         }
     }
 
     /// Dedent text object
-    fn dedent_text_object(&mut self, kind: TextObjectKind, obj: &TextObject) {
+    fn dedent_text_object(&mut self, kind: TextObjectKind, obj: &TextObject, count: usize) {
         match obj {
             TextObject::Word(wt) => self.dedent_word(*wt, kind),
-            TextObject::Pair(c) => self.dedent_pair(*c, kind),
+            TextObject::Pair(c) => self.dedent_pair(*c, kind, count),
             TextObject::Paragraph => self.dedent_paragraph(kind),
             TextObject::Sentence => self.dedent_sentence(kind),
         }
@@ -2023,6 +2027,17 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Delete text object on line without saving undo state (for use in loops)
+    fn delete_text_object_on_line_no_undo(&mut self, start: usize, end: usize) {
+        let line_len = self.lines[self.cursor.0].len();
+        if start < end && end <= line_len {
+            self.lines[self.cursor.0].replace_range(start..end, "");
+            self.cursor.1 = start;
+            self.clamp_cursor();
+            self.update_desired_col();
+        }
+    }
+
     fn yank_char_range(
         &self,
         start_row: usize,
@@ -2095,9 +2110,62 @@ impl<'a> EditorState<'a> {
         self.delete_text_object_on_line(start, end);
     }
 
+    /// Delete inner word with count - saves undo once, then deletes count words
+    fn delete_inner_word_with_count(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.save_undo_state();
+        self.lines_version += 1;
+        // Collect all text that will be deleted for yank buffer
+        let mut yanked = String::new();
+        for i in 0..count {
+            let (start, end) = self.get_inner_word_bounds();
+            let line_len = self.lines[self.cursor.0].len();
+            if start < end && end <= line_len {
+                if i > 0 && !yanked.is_empty() {
+                    yanked.push(' ');
+                }
+                yanked.push_str(&self.lines[self.cursor.0][start..end]);
+                self.delete_text_object_on_line_no_undo(start, end);
+            } else {
+                break;
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        self.maybe_record_change();
+    }
+
     fn delete_a_word(&mut self) {
         let (start, end) = self.get_a_word_bounds();
         self.delete_text_object_on_line(start, end);
+    }
+
+    /// Delete around word with count - saves undo once, then deletes count words
+    fn delete_a_word_with_count(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.save_undo_state();
+        self.lines_version += 1;
+        let mut yanked = String::new();
+        for i in 0..count {
+            let (start, end) = self.get_a_word_bounds();
+            let line_len = self.lines[self.cursor.0].len();
+            if start < end && end <= line_len {
+                if i > 0 && !yanked.is_empty() {
+                    yanked.push(' ');
+                }
+                yanked.push_str(&self.lines[self.cursor.0][start..end]);
+                self.delete_text_object_on_line_no_undo(start, end);
+            } else {
+                break;
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        self.maybe_record_change();
     }
 
     fn get_inner_long_word_bounds(&self) -> (usize, usize) {
@@ -2162,9 +2230,61 @@ impl<'a> EditorState<'a> {
         self.delete_text_object_on_line(start, end);
     }
 
+    /// Delete inner long word with count - saves undo once, then deletes count words
+    fn delete_inner_long_word_with_count(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.save_undo_state();
+        self.lines_version += 1;
+        let mut yanked = String::new();
+        for i in 0..count {
+            let (start, end) = self.get_inner_long_word_bounds();
+            let line_len = self.lines[self.cursor.0].len();
+            if start < end && end <= line_len {
+                if i > 0 && !yanked.is_empty() {
+                    yanked.push(' ');
+                }
+                yanked.push_str(&self.lines[self.cursor.0][start..end]);
+                self.delete_text_object_on_line_no_undo(start, end);
+            } else {
+                break;
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        self.maybe_record_change();
+    }
+
     fn delete_a_long_word(&mut self) {
         let (start, end) = self.get_a_long_word_bounds();
         self.delete_text_object_on_line(start, end);
+    }
+
+    /// Delete around long word with count - saves undo once, then deletes count words
+    fn delete_a_long_word_with_count(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.save_undo_state();
+        self.lines_version += 1;
+        let mut yanked = String::new();
+        for i in 0..count {
+            let (start, end) = self.get_a_long_word_bounds();
+            let line_len = self.lines[self.cursor.0].len();
+            if start < end && end <= line_len {
+                if i > 0 && !yanked.is_empty() {
+                    yanked.push(' ');
+                }
+                yanked.push_str(&self.lines[self.cursor.0][start..end]);
+                self.delete_text_object_on_line_no_undo(start, end);
+            } else {
+                break;
+            }
+        }
+        self.yank_buffer = yanked;
+        self.yank_is_linewise = false;
+        self.maybe_record_change();
     }
 
     fn get_paragraph_bounds(&self, kind: TextObjectKind) -> Option<(usize, usize)> {
@@ -2595,6 +2715,64 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    /// Find pair bounds with count support for nested pairs.
+    /// Count of 1 finds the immediate enclosing pair, count of 2 finds the pair
+    /// enclosing that, etc. This matches neovim behavior for commands like `2di(`.
+    fn find_pair_bounds_with_count(
+        &self,
+        pair_char: char,
+        count: usize,
+    ) -> Option<((usize, usize), (usize, usize))> {
+        if count == 0 {
+            return None;
+        }
+
+        let (open, close) = if pair_char == '"' || pair_char == '\'' || pair_char == '`' {
+            (pair_char, pair_char)
+        } else if pair_char == 'b' {
+            ('(', ')')
+        } else if pair_char == 'B' {
+            ('{', '}')
+        } else if Self::is_open_pair(pair_char) {
+            (pair_char, Self::get_matching_pair(pair_char)?)
+        } else {
+            (Self::get_matching_pair(pair_char)?, pair_char)
+        };
+
+        // For quote characters, we can't really nest, so just return the first match
+        if open == close {
+            return self.find_pair_bounds(pair_char);
+        }
+
+        // Start with the innermost pair
+        let mut current_bounds = self.find_pair_bounds(pair_char)?;
+
+        // For each additional count, find the next enclosing pair
+        for _ in 1..count {
+            let (open_pos, _) = current_bounds;
+
+            // Search for the next opening bracket before the current one
+            let next_open = self.find_matching_open(open, close, open_pos.0, open_pos.1);
+
+            if let Some((next_open_row, next_open_col)) = next_open {
+                // Find the matching close for this outer open
+                if let Some(next_close) =
+                    self.find_matching_close(open, close, next_open_row, next_open_col)
+                {
+                    current_bounds = ((next_open_row, next_open_col), next_close);
+                } else {
+                    // No matching close found, can't go further
+                    return None;
+                }
+            } else {
+                // No more enclosing pairs found
+                return None;
+            }
+        }
+
+        Some(current_bounds)
+    }
+
     fn find_matching_open(
         &self,
         open: char,
@@ -2665,9 +2843,9 @@ impl<'a> EditorState<'a> {
         None
     }
 
-    fn delete_inner_pair(&mut self, pair_char: char) {
+    fn delete_inner_pair(&mut self, pair_char: char, count: usize) {
         if let Some(((open_row, open_col), (close_row, close_col))) =
-            self.find_pair_bounds(pair_char)
+            self.find_pair_bounds_with_count(pair_char, count)
         {
             // Check if there's actual content to delete
             let has_content = open_row != close_row || open_col + 1 < close_col;
@@ -2676,7 +2854,7 @@ impl<'a> EditorState<'a> {
             let has_content_after_open = open_col + 1 < open_line_len;
 
             if has_content {
-                self.yank_inner_pair(pair_char);
+                self.yank_inner_pair(pair_char, count);
 
                 // Save undo state with cursor at the start of where deleted content was
                 // This matches neovim behavior:
@@ -2735,11 +2913,11 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn delete_around_pair(&mut self, pair_char: char) {
+    fn delete_around_pair(&mut self, pair_char: char, count: usize) {
         if let Some(((open_row, open_col), (close_row, close_col))) =
-            self.find_pair_bounds(pair_char)
+            self.find_pair_bounds_with_count(pair_char, count)
         {
-            self.yank_around_pair(pair_char);
+            self.yank_around_pair(pair_char, count);
 
             // Save undo state with cursor at position of opening delimiter
             // This matches neovim behavior where undo positions cursor at the start
@@ -3826,10 +4004,10 @@ impl<'a> EditorState<'a> {
                 self.dedent_block_at_cursor(num_rows, self.last_count);
             }
             LastChange::IndentTextObject(kind, ref obj) => {
-                self.indent_text_object(kind, obj);
+                self.indent_text_object(kind, obj, self.last_count);
             }
             LastChange::DedentTextObject(kind, ref obj) => {
-                self.dedent_text_object(kind, obj);
+                self.dedent_text_object(kind, obj, self.last_count);
             }
         }
     }
@@ -4061,7 +4239,7 @@ impl<'a> EditorState<'a> {
                     WordType::Word => self.delete_inner_word(),
                     WordType::LongWord => self.delete_inner_long_word(),
                 },
-                TextObject::Pair(c) => self.delete_inner_pair(*c),
+                TextObject::Pair(c) => self.delete_inner_pair(*c, count),
                 TextObject::Paragraph => self.delete_paragraph(TextObjectKind::Inner),
                 TextObject::Sentence => self.delete_sentence(TextObjectKind::Inner),
             },
@@ -4070,7 +4248,7 @@ impl<'a> EditorState<'a> {
                     WordType::Word => self.delete_a_word(),
                     WordType::LongWord => self.delete_a_long_word(),
                 },
-                TextObject::Pair(c) => self.delete_around_pair(*c),
+                TextObject::Pair(c) => self.delete_around_pair(*c, count),
                 TextObject::Paragraph => self.delete_paragraph(TextObjectKind::Around),
                 TextObject::Sentence => self.delete_sentence(TextObjectKind::Around),
             },
@@ -4171,7 +4349,7 @@ impl<'a> EditorState<'a> {
                 }
                 TextObject::Pair(c) => {
                     self.mode = EditorMode::Insert;
-                    self.delete_inner_pair(*c);
+                    self.delete_inner_pair(*c, count);
                 }
                 TextObject::Paragraph => {
                     self.change_paragraph(TextObjectKind::Inner);
@@ -4190,7 +4368,7 @@ impl<'a> EditorState<'a> {
                 }
                 TextObject::Pair(c) => {
                     self.mode = EditorMode::Insert;
-                    self.delete_around_pair(*c);
+                    self.delete_around_pair(*c, count);
                 }
                 TextObject::Paragraph => {
                     self.change_paragraph(TextObjectKind::Around);
@@ -6192,9 +6370,45 @@ impl<'a> EditorState<'a> {
         self.yank_text_object_on_line(start, end);
     }
 
+    /// Yank inner word with count - yanks count consecutive words
+    fn yank_inner_word_with_count(&mut self, count: usize) {
+        if count <= 1 {
+            self.yank_inner_word();
+            return;
+        }
+        // Get the start of the first word
+        let (start, _) = self.get_inner_word_bounds();
+        let original_cursor = self.cursor;
+        // Move forward through count words to find the end
+        for _ in 0..count - 1 {
+            self.move_word_forward(WordType::Word);
+        }
+        let (_, end) = self.get_inner_word_bounds();
+        // Yank from start to end
+        self.yank_text_object_on_line(start, end);
+        // Restore cursor to start of yanked region
+        self.cursor = (original_cursor.0, start);
+    }
+
     fn yank_a_word(&mut self) {
         let (start, end) = self.get_a_word_bounds();
         self.yank_text_object_on_line(start, end);
+    }
+
+    /// Yank around word with count - yanks count consecutive words with surrounding whitespace
+    fn yank_a_word_with_count(&mut self, count: usize) {
+        if count <= 1 {
+            self.yank_a_word();
+            return;
+        }
+        let (start, _) = self.get_a_word_bounds();
+        let original_cursor = self.cursor;
+        for _ in 0..count - 1 {
+            self.move_word_forward(WordType::Word);
+        }
+        let (_, end) = self.get_a_word_bounds();
+        self.yank_text_object_on_line(start, end);
+        self.cursor = (original_cursor.0, start);
     }
 
     fn yank_inner_long_word(&mut self) {
@@ -6202,14 +6416,46 @@ impl<'a> EditorState<'a> {
         self.yank_text_object_on_line(start, end);
     }
 
+    /// Yank inner long word with count
+    fn yank_inner_long_word_with_count(&mut self, count: usize) {
+        if count <= 1 {
+            self.yank_inner_long_word();
+            return;
+        }
+        let (start, _) = self.get_inner_long_word_bounds();
+        let original_cursor = self.cursor;
+        for _ in 0..count - 1 {
+            self.move_word_forward(WordType::LongWord);
+        }
+        let (_, end) = self.get_inner_long_word_bounds();
+        self.yank_text_object_on_line(start, end);
+        self.cursor = (original_cursor.0, start);
+    }
+
     fn yank_a_long_word(&mut self) {
         let (start, end) = self.get_a_long_word_bounds();
         self.yank_text_object_on_line(start, end);
     }
 
-    fn yank_inner_pair(&mut self, pair_char: char) {
+    /// Yank around long word with count
+    fn yank_a_long_word_with_count(&mut self, count: usize) {
+        if count <= 1 {
+            self.yank_a_long_word();
+            return;
+        }
+        let (start, _) = self.get_a_long_word_bounds();
+        let original_cursor = self.cursor;
+        for _ in 0..count - 1 {
+            self.move_word_forward(WordType::LongWord);
+        }
+        let (_, end) = self.get_a_long_word_bounds();
+        self.yank_text_object_on_line(start, end);
+        self.cursor = (original_cursor.0, start);
+    }
+
+    fn yank_inner_pair(&mut self, pair_char: char, count: usize) {
         if let Some(((open_row, open_col), (close_row, close_col))) =
-            self.find_pair_bounds(pair_char)
+            self.find_pair_bounds_with_count(pair_char, count)
         {
             if open_row == close_row {
                 let chars: Vec<char> = self.lines[open_row].chars().collect();
@@ -6268,9 +6514,9 @@ impl<'a> EditorState<'a> {
         }
     }
 
-    fn yank_around_pair(&mut self, pair_char: char) {
+    fn yank_around_pair(&mut self, pair_char: char, count: usize) {
         if let Some(((open_row, open_col), (close_row, close_col))) =
-            self.find_pair_bounds(pair_char)
+            self.find_pair_bounds_with_count(pair_char, count)
         {
             if open_row == close_row {
                 let chars: Vec<char> = self.lines[open_row].chars().collect();
@@ -8147,15 +8393,18 @@ impl<'a> EditorState<'a> {
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
                                 // diw / ciw / yiw / guiw / gUiw / g~iw / >iw / <iw
+                                // Count repeats the operation N times (e.g., 3diw = diw 3 times)
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::Change(EditTarget::Inner(
                                         TextObject::Word(WordType::Word),
                                     ));
-                                    self.delete_inner_word();
+                                    self.delete_inner_word_with_count(count);
                                 } else if op == 'y' {
-                                    self.yank_inner_word();
+                                    // For yank with count, we yank the combined text
+                                    self.yank_inner_word_with_count(count);
                                 } else if op == 'u' || op == 'U' || op == '~' {
                                     self.save_undo_state();
                                     let (start_col, end_col) = self.get_inner_word_bounds();
@@ -8176,6 +8425,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Word(WordType::Word),
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8185,24 +8435,27 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Word(WordType::Word),
+                                        1,
                                     );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Word(WordType::Word),
                                     ));
-                                    self.delete_inner_word();
+                                    self.delete_inner_word_with_count(count);
                                 }
                             } else if first == KeyCode::Char('a') && c == 'w' {
                                 // daw / caw / yaw / guaw / gUaw / g~aw / >aw / <aw
+                                // Count repeats the operation N times
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::Change(EditTarget::Around(
                                         TextObject::Word(WordType::Word),
                                     ));
-                                    self.delete_a_word();
+                                    self.delete_a_word_with_count(count);
                                 } else if op == 'y' {
-                                    self.yank_a_word();
+                                    self.yank_a_word_with_count(count);
                                 } else if op == 'u' || op == 'U' || op == '~' {
                                     self.save_undo_state();
                                     let (start_col, end_col) = self.get_a_word_bounds();
@@ -8223,6 +8476,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Word(WordType::Word),
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8232,24 +8486,27 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Word(WordType::Word),
+                                        1,
                                     );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Word(WordType::Word),
                                     ));
-                                    self.delete_a_word();
+                                    self.delete_a_word_with_count(count);
                                 }
                             } else if first == KeyCode::Char('i') && c == 'W' {
                                 // diW / ciW / yiW / guiW / gUiW / g~iW / >iW / <iW
+                                // Count repeats the operation N times
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::Change(EditTarget::Inner(
                                         TextObject::Word(WordType::LongWord),
                                     ));
-                                    self.delete_inner_long_word();
+                                    self.delete_inner_long_word_with_count(count);
                                 } else if op == 'y' {
-                                    self.yank_inner_long_word();
+                                    self.yank_inner_long_word_with_count(count);
                                 } else if op == 'u' || op == 'U' || op == '~' {
                                     self.save_undo_state();
                                     let (start_col, end_col) = self.get_inner_long_word_bounds();
@@ -8270,6 +8527,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Word(WordType::LongWord),
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8279,24 +8537,27 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Word(WordType::LongWord),
+                                        1,
                                     );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Word(WordType::LongWord),
                                     ));
-                                    self.delete_inner_long_word();
+                                    self.delete_inner_long_word_with_count(count);
                                 }
                             } else if first == KeyCode::Char('a') && c == 'W' {
                                 // daW / caW / yaW / guaW / gUaW / g~aW / >aW / <aW
+                                // Count repeats the operation N times
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change = LastChange::Change(EditTarget::Around(
                                         TextObject::Word(WordType::LongWord),
                                     ));
-                                    self.delete_a_long_word();
+                                    self.delete_a_long_word_with_count(count);
                                 } else if op == 'y' {
-                                    self.yank_a_long_word();
+                                    self.yank_a_long_word_with_count(count);
                                 } else if op == 'u' || op == 'U' || op == '~' {
                                     self.save_undo_state();
                                     let (start_col, end_col) = self.get_a_long_word_bounds();
@@ -8317,6 +8578,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Word(WordType::LongWord),
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8326,12 +8588,13 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Word(WordType::LongWord),
+                                        1,
                                     );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Word(WordType::LongWord),
                                     ));
-                                    self.delete_a_long_word();
+                                    self.delete_a_long_word_with_count(count);
                                 }
                             } else if first == KeyCode::Char('i')
                                 && matches!(
@@ -8351,14 +8614,16 @@ impl<'a> EditorState<'a> {
                                 )
                             {
                                 // di( di) di[ di] di{ di} di< di> di" di' di` etc. / >i{ / <i{
+                                // Count selects the Nth level of nesting (e.g., 2di( to delete inside 2nd level)
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change =
                                         LastChange::Change(EditTarget::Inner(TextObject::Pair(c)));
-                                    self.delete_inner_pair(c);
+                                    self.delete_inner_pair(c, count);
                                 } else if op == 'y' {
-                                    self.yank_inner_pair(c);
+                                    self.yank_inner_pair(c, count);
                                 } else if op == '>' {
                                     self.last_change = LastChange::IndentTextObject(
                                         TextObjectKind::Inner,
@@ -8367,6 +8632,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Pair(c),
+                                        count,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8376,11 +8642,12 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Pair(c),
+                                        count,
                                     );
                                 } else {
                                     self.last_change =
                                         LastChange::Delete(EditTarget::Inner(TextObject::Pair(c)));
-                                    self.delete_inner_pair(c);
+                                    self.delete_inner_pair(c, count);
                                 }
                             } else if first == KeyCode::Char('a')
                                 && matches!(
@@ -8400,14 +8667,16 @@ impl<'a> EditorState<'a> {
                                 )
                             {
                                 // da( da) da[ da] da{ da} da< da> da" da' da` etc. / >a{ / <a{
+                                // Also handles count prefix e.g., 2da( to delete around 2nd level of nesting
+                                let count = self.take_count();
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
                                     self.last_change =
                                         LastChange::Change(EditTarget::Around(TextObject::Pair(c)));
-                                    self.delete_around_pair(c);
+                                    self.delete_around_pair(c, count);
                                 } else if op == 'y' {
-                                    self.yank_around_pair(c);
+                                    self.yank_around_pair(c, count);
                                 } else if op == '>' {
                                     self.last_change = LastChange::IndentTextObject(
                                         TextObjectKind::Around,
@@ -8416,6 +8685,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Pair(c),
+                                        count,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8425,11 +8695,12 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Pair(c),
+                                        count,
                                     );
                                 } else {
                                     self.last_change =
                                         LastChange::Delete(EditTarget::Around(TextObject::Pair(c)));
-                                    self.delete_around_pair(c);
+                                    self.delete_around_pair(c, count);
                                 }
                             } else if first == KeyCode::Char('i') && c == 'p' {
                                 // dip / cip / yip / >ip / <ip - delete/change/yank/indent/dedent inner paragraph
@@ -8449,6 +8720,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Paragraph,
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8458,6 +8730,7 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Paragraph,
+                                        1,
                                     );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
@@ -8483,6 +8756,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Paragraph,
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8492,6 +8766,7 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Paragraph,
+                                        1,
                                     );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
@@ -8516,6 +8791,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Sentence,
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8525,6 +8801,7 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Inner,
                                         &TextObject::Sentence,
+                                        1,
                                     );
                                 } else {
                                     self.last_change =
@@ -8549,6 +8826,7 @@ impl<'a> EditorState<'a> {
                                     self.indent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Sentence,
+                                        1,
                                     );
                                 } else if op == '<' {
                                     self.last_change = LastChange::DedentTextObject(
@@ -8558,6 +8836,7 @@ impl<'a> EditorState<'a> {
                                     self.dedent_text_object(
                                         TextObjectKind::Around,
                                         &TextObject::Sentence,
+                                        1,
                                     );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
