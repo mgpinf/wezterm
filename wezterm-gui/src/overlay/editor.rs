@@ -2669,13 +2669,32 @@ impl<'a> EditorState<'a> {
         if let Some(((open_row, open_col), (close_row, close_col))) =
             self.find_pair_bounds(pair_char)
         {
-            self.yank_inner_pair(pair_char);
+            // Check if there's actual content to delete
+            let has_content = open_row != close_row || open_col + 1 < close_col;
+            let open_line_len = self.lines[open_row].chars().count();
+            // Check if there's content after opening delimiter on same line
+            let has_content_after_open = open_col + 1 < open_line_len;
 
-            self.save_undo_state();
-            self.lines_version += 1;
+            if has_content {
+                self.yank_inner_pair(pair_char);
+
+                // Save undo state with cursor at the start of where deleted content was
+                // This matches neovim behavior:
+                // - Same line: cursor at position after opening delimiter
+                // - Multi-line: cursor at start of content (next line if nothing after delimiter)
+                let undo_cursor = if open_row == close_row || has_content_after_open {
+                    (open_row, open_col + 1)
+                } else {
+                    // Content starts on the next line
+                    (open_row + 1, 0)
+                };
+                self.save_undo_state_with_cursor(undo_cursor);
+                self.lines_version += 1;
+            }
+
             if open_row == close_row {
-                let line = &mut self.lines[open_row];
                 if open_col + 1 < close_col {
+                    let line = &mut self.lines[open_row];
                     line.replace_range((open_col + 1)..close_col, "");
                 }
                 self.cursor.0 = open_row;
@@ -2694,11 +2713,21 @@ impl<'a> EditorState<'a> {
                     self.lines.remove(open_row + 1);
                 }
 
-                if is_change && has_content_lines {
+                // Only insert empty line for change operations when opening delimiter
+                // is alone on its line (no content after it)
+                if is_change && has_content_lines && !has_content_after_open {
                     self.lines.insert(open_row + 1, String::new());
                 }
-                self.cursor.0 = open_row + 1;
-                self.cursor.1 = 0;
+
+                // Cursor position: stay on same line if there was content after delimiter,
+                // otherwise go to next line
+                if has_content_after_open {
+                    self.cursor.0 = open_row;
+                    self.cursor.1 = open_col + 1;
+                } else {
+                    self.cursor.0 = open_row + 1;
+                    self.cursor.1 = 0;
+                }
             }
             self.clamp_cursor();
             self.update_desired_col();
@@ -2712,7 +2741,10 @@ impl<'a> EditorState<'a> {
         {
             self.yank_around_pair(pair_char);
 
-            self.save_undo_state();
+            // Save undo state with cursor at position of opening delimiter
+            // This matches neovim behavior where undo positions cursor at the start
+            // of where the deleted content was
+            self.save_undo_state_with_cursor((open_row, open_col));
             self.lines_version += 1;
             if open_row == close_row {
                 let line = &mut self.lines[open_row];
