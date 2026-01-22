@@ -491,6 +491,8 @@ struct EditorState<'a> {
     marks: HashMap<char, (usize, usize)>,
     /// Visual block mode: selection extends to end of line (set by $)
     visual_block_extends_to_eol: bool,
+    /// Render optimization: pre-allocated buffer for Change objects
+    render_changes: Vec<Change>,
 }
 
 impl<'a> EditorState<'a> {
@@ -570,6 +572,23 @@ impl<'a> EditorState<'a> {
             sub_display_prefix: String::new(),
             marks: HashMap::new(),
             visual_block_extends_to_eol: false,
+            render_changes: Vec::with_capacity(512),
+        }
+    }
+
+    /// Add multiple changes to the render buffer (avoids repeated Vec allocations)
+    #[inline]
+    fn add_changes_batch(&mut self, changes: impl IntoIterator<Item = Change>) {
+        self.render_changes.extend(changes);
+    }
+
+    /// Flush accumulated render changes to the terminal buffer
+    fn flush_render_changes(&mut self) {
+        if !self.render_changes.is_empty() {
+            self.buf
+                .add_changes(std::mem::take(&mut self.render_changes));
+            // Restore capacity for next render
+            self.render_changes.reserve(512);
         }
     }
 
@@ -4996,7 +5015,11 @@ impl<'a> EditorState<'a> {
 
     fn render(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
-        self.buf.add_changes(vec![
+
+        // Clear the render buffer for this frame
+        self.render_changes.clear();
+
+        self.add_changes_batch([
             Change::ClearScreen(ColorAttribute::Default),
             Change::CursorVisibility(CursorVisibility::Hidden),
         ]);
@@ -5057,7 +5080,7 @@ impl<'a> EditorState<'a> {
         let position = format!("{}{}", position_text, " ".repeat(position_padding));
         let middle_width = cols.saturating_sub(mode_len + POSITION_WIDTH);
 
-        self.buf.add_changes(vec![
+        self.add_changes_batch([
             Change::CursorPosition {
                 x: Position::Absolute(0),
                 y: Position::Absolute(rows - 2),
@@ -5080,7 +5103,7 @@ impl<'a> EditorState<'a> {
                 Direction::Backward => "?",
             };
             let search_text = format!("{}{}", prompt, self.search_input);
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
@@ -5092,7 +5115,7 @@ impl<'a> EditorState<'a> {
         } else if self.mode == EditorMode::Command {
             // Render command line at the bottom
             let cmd_display = format!(":{}", self.cmd_input);
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
@@ -5103,7 +5126,7 @@ impl<'a> EditorState<'a> {
             ]);
         } else if let Some(ref error) = self.cmd_error {
             // Display error message from failed command
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
@@ -5160,7 +5183,7 @@ impl<'a> EditorState<'a> {
                     )
                 }
             };
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
@@ -5194,7 +5217,7 @@ impl<'a> EditorState<'a> {
             };
             let left_width = cols.saturating_sub(pending_with_padding.len());
 
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
@@ -5213,7 +5236,7 @@ impl<'a> EditorState<'a> {
         let content_start_row;
 
         if let Some(title) = &self.args.title {
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(0),
@@ -5334,7 +5357,7 @@ impl<'a> EditorState<'a> {
                     EMPTY_GUTTER.to_string()
                 };
 
-                self.buf.add_changes(vec![
+                self.add_changes_batch([
                     Change::CursorPosition {
                         x: Position::Absolute(0),
                         y: Position::Absolute(content_start_row + visual_row),
@@ -5364,7 +5387,7 @@ impl<'a> EditorState<'a> {
                     .unwrap_or(false);
 
                 if line_in_selection && self.mode == EditorMode::VisualLine {
-                    self.buf.add_changes(vec![
+                    self.add_changes_batch([
                         Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                         Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
                         Change::Text(if segment.is_empty() && wrap_row == 0 {
@@ -5482,7 +5505,7 @@ impl<'a> EditorState<'a> {
             CursorVisibility::Hidden
         };
 
-        self.buf.add_changes(vec![
+        self.add_changes_batch([
             Change::CursorPosition {
                 x: Position::Absolute(cursor_screen_x),
                 y: Position::Absolute(cursor_screen_y),
@@ -5491,6 +5514,8 @@ impl<'a> EditorState<'a> {
             Change::CursorShape(cursor_shape),
         ]);
 
+        // Flush all accumulated changes to terminal buffer
+        self.flush_render_changes();
         self.buf.flush()?;
 
         Ok(())
@@ -5503,7 +5528,7 @@ impl<'a> EditorState<'a> {
         start_col: usize,
     ) {
         if !self.search_highlight || self.search_pattern.is_empty() {
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(segment.to_string()),
             ]);
@@ -5535,7 +5560,7 @@ impl<'a> EditorState<'a> {
         }
 
         if matches.is_empty() {
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(segment.to_string()),
             ]);
@@ -5554,7 +5579,7 @@ impl<'a> EditorState<'a> {
             // Text before match (within segment)
             if seg_match_start > last_pos {
                 let before: String = segment_chars[last_pos..seg_match_start].iter().collect();
-                self.buf.add_changes(vec![
+                self.add_changes_batch([
                     Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                     Change::Text(before),
                 ]);
@@ -5576,7 +5601,7 @@ impl<'a> EditorState<'a> {
                 } else {
                     (self.colors.search_match_bg, self.colors.search_match_fg)
                 };
-                self.buf.add_changes(vec![
+                self.add_changes_batch([
                     Change::Attribute(AttributeChange::Background(match_bg)),
                     Change::Attribute(AttributeChange::Foreground(match_fg)),
                     Change::Text(matched),
@@ -5589,7 +5614,7 @@ impl<'a> EditorState<'a> {
 
         if last_pos < segment_chars.len() {
             let after: String = segment_chars[last_pos..].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(after),
             ]);
@@ -5634,7 +5659,7 @@ impl<'a> EditorState<'a> {
         }
 
         if pattern_matches.is_empty() && replacement_matches.is_empty() {
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(segment.to_string()),
             ]);
@@ -5662,7 +5687,7 @@ impl<'a> EditorState<'a> {
             // Text before match
             if seg_match_start > last_pos {
                 let before: String = segment_chars[last_pos..seg_match_start].iter().collect();
-                self.buf.add_changes(vec![
+                self.add_changes_batch([
                     Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                     Change::Text(before),
                 ]);
@@ -5682,7 +5707,7 @@ impl<'a> EditorState<'a> {
                         self.colors.substitute_match_fg,
                     )
                 };
-                self.buf.add_changes(vec![
+                self.add_changes_batch([
                     Change::Attribute(AttributeChange::Background(match_bg)),
                     Change::Attribute(AttributeChange::Foreground(match_fg)),
                     Change::Text(matched),
@@ -5695,7 +5720,7 @@ impl<'a> EditorState<'a> {
 
         if last_pos < segment_chars.len() {
             let after: String = segment_chars[last_pos..].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(after),
             ]);
@@ -5729,7 +5754,7 @@ impl<'a> EditorState<'a> {
 
         if start_col < seg_sel_start {
             let before: String = chars[start_col..seg_sel_start].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(before),
             ]);
@@ -5737,14 +5762,14 @@ impl<'a> EditorState<'a> {
 
         if seg_sel_start < seg_sel_end {
             let selected: String = chars[seg_sel_start..seg_sel_end].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
                 Change::Text(selected),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if chars.is_empty() && start_col == 0 {
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
                 Change::Text(" ".to_string()),
@@ -5754,7 +5779,7 @@ impl<'a> EditorState<'a> {
 
         if seg_sel_end < end_col {
             let after: String = chars[seg_sel_end..end_col].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(after),
             ]);
@@ -5781,7 +5806,7 @@ impl<'a> EditorState<'a> {
 
         if start_col < seg_sel_start {
             let before: String = chars[start_col..seg_sel_start].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(before),
             ]);
@@ -5789,14 +5814,14 @@ impl<'a> EditorState<'a> {
 
         if seg_sel_start < seg_sel_end {
             let selected: String = chars[seg_sel_start..seg_sel_end].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.selection_fg)),
                 Change::Text(selected),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if chars.is_empty() && is_edge_line {
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Background(self.colors.selection_bg)),
                 Change::Text(" ".to_string()),
                 Change::AllAttributes(CellAttributes::default()),
@@ -5805,7 +5830,7 @@ impl<'a> EditorState<'a> {
 
         if seg_sel_end < end_col {
             let after: String = chars[seg_sel_end..end_col].iter().collect();
-            self.buf.add_changes(vec![
+            self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(after),
             ]);
