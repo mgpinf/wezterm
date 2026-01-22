@@ -6253,6 +6253,18 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
             }
+            // Move cursor to start of yanked content (neovim behavior)
+            // - Same line: cursor at position after opening delimiter
+            // - Multi-line: cursor on next line if nothing after delimiter
+            let open_line_len = self.lines[open_row].chars().count();
+            let has_content_after_open = open_col + 1 < open_line_len;
+            if open_row == close_row || has_content_after_open {
+                self.cursor = (open_row, open_col + 1);
+            } else {
+                self.cursor = (open_row + 1, 0);
+            }
+            self.clamp_cursor();
+            self.update_desired_col();
         }
     }
 
@@ -6280,6 +6292,10 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = yanked;
                 self.yank_is_linewise = false;
             }
+            // Move cursor to opening delimiter (neovim behavior)
+            self.cursor = (open_row, open_col);
+            self.clamp_cursor();
+            self.update_desired_col();
         }
     }
 
