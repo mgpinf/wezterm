@@ -369,6 +369,10 @@ enum LastChange {
     IndentVisualBlock(usize),
     /// Dedent block at cursor column (num_rows)
     DedentVisualBlock(usize),
+    /// Indent text object
+    IndentTextObject(TextObjectKind, TextObject),
+    /// Dedent text object
+    DedentTextObject(TextObjectKind, TextObject),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1088,6 +1092,134 @@ impl<'a> EditorState<'a> {
             }
         }
         self.record_change();
+    }
+
+    /// Indent a range of lines from start_row to end_row (inclusive)
+    fn indent_line_range(&mut self, start_row: usize, end_row: usize) {
+        self.save_undo_state();
+        for row in start_row..=end_row.min(self.lines.len().saturating_sub(1)) {
+            self.indent_line(row);
+        }
+        // Move cursor to first non-blank of first line in range
+        self.cursor.0 = start_row;
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    /// Dedent a range of lines from start_row to end_row (inclusive)
+    fn dedent_line_range(&mut self, start_row: usize, end_row: usize) {
+        self.save_undo_state();
+        for row in start_row..=end_row.min(self.lines.len().saturating_sub(1)) {
+            self.dedent_line(row);
+        }
+        // Move cursor to first non-blank of first line in range
+        self.cursor.0 = start_row;
+        self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
+        self.clamp_cursor();
+        self.update_desired_col();
+        self.record_change();
+    }
+
+    /// Indent paragraph text object
+    fn indent_paragraph(&mut self, kind: TextObjectKind) {
+        if let Some((start_row, end_row)) = self.get_paragraph_bounds(kind) {
+            self.indent_line_range(start_row, end_row);
+        }
+    }
+
+    /// Dedent paragraph text object
+    fn dedent_paragraph(&mut self, kind: TextObjectKind) {
+        if let Some((start_row, end_row)) = self.get_paragraph_bounds(kind) {
+            self.dedent_line_range(start_row, end_row);
+        }
+    }
+
+    /// Indent sentence text object
+    fn indent_sentence(&mut self, kind: TextObjectKind) {
+        let (start_row, _, end_row, _) = self.get_sentence_bounds(kind);
+        self.indent_line_range(start_row, end_row);
+    }
+
+    /// Dedent sentence text object
+    fn dedent_sentence(&mut self, kind: TextObjectKind) {
+        let (start_row, _, end_row, _) = self.get_sentence_bounds(kind);
+        self.dedent_line_range(start_row, end_row);
+    }
+
+    /// Indent inner/around pair text object
+    fn indent_pair(&mut self, pair_char: char, kind: TextObjectKind) {
+        if let Some(((start_row, _), (end_row, _))) = self.find_pair_bounds(pair_char) {
+            // For inner, only indent the content lines (excluding the delimiter lines)
+            // For around, indent all lines including delimiters
+            let (actual_start, actual_end) = match kind {
+                TextObjectKind::Inner => {
+                    // If delimiters are on same line, just indent that line
+                    if start_row == end_row {
+                        (start_row, end_row)
+                    } else {
+                        // Otherwise, indent the lines between delimiters
+                        (start_row + 1, end_row.saturating_sub(1))
+                    }
+                }
+                TextObjectKind::Around => (start_row, end_row),
+            };
+            if actual_start <= actual_end {
+                self.indent_line_range(actual_start, actual_end);
+            }
+        }
+    }
+
+    /// Dedent inner/around pair text object
+    fn dedent_pair(&mut self, pair_char: char, kind: TextObjectKind) {
+        if let Some(((start_row, _), (end_row, _))) = self.find_pair_bounds(pair_char) {
+            let (actual_start, actual_end) = match kind {
+                TextObjectKind::Inner => {
+                    if start_row == end_row {
+                        (start_row, end_row)
+                    } else {
+                        (start_row + 1, end_row.saturating_sub(1))
+                    }
+                }
+                TextObjectKind::Around => (start_row, end_row),
+            };
+            if actual_start <= actual_end {
+                self.dedent_line_range(actual_start, actual_end);
+            }
+        }
+    }
+
+    /// Indent word text object (indents the line containing the word)
+    fn indent_word(&mut self, _word_type: WordType, _kind: TextObjectKind) {
+        // Words are always on a single line, so just indent the current line
+        self.indent_line_range(self.cursor.0, self.cursor.0);
+    }
+
+    /// Dedent word text object (dedents the line containing the word)
+    fn dedent_word(&mut self, _word_type: WordType, _kind: TextObjectKind) {
+        // Words are always on a single line, so just dedent the current line
+        self.dedent_line_range(self.cursor.0, self.cursor.0);
+    }
+
+    /// Indent text object
+    fn indent_text_object(&mut self, kind: TextObjectKind, obj: &TextObject) {
+        match obj {
+            TextObject::Word(wt) => self.indent_word(*wt, kind),
+            TextObject::Pair(c) => self.indent_pair(*c, kind),
+            TextObject::Paragraph => self.indent_paragraph(kind),
+            TextObject::Sentence => self.indent_sentence(kind),
+        }
+    }
+
+    /// Dedent text object
+    fn dedent_text_object(&mut self, kind: TextObjectKind, obj: &TextObject) {
+        match obj {
+            TextObject::Word(wt) => self.dedent_word(*wt, kind),
+            TextObject::Pair(c) => self.dedent_pair(*c, kind),
+            TextObject::Paragraph => self.dedent_paragraph(kind),
+            TextObject::Sentence => self.dedent_sentence(kind),
+        }
     }
 
     fn change_line_and_below(&mut self) {
@@ -3660,6 +3792,12 @@ impl<'a> EditorState<'a> {
             LastChange::DedentVisualBlock(num_rows) => {
                 // Visual block: always use stored count (not updated for repeat)
                 self.dedent_block_at_cursor(num_rows, self.last_count);
+            }
+            LastChange::IndentTextObject(kind, ref obj) => {
+                self.indent_text_object(kind, obj);
+            }
+            LastChange::DedentTextObject(kind, ref obj) => {
+                self.dedent_text_object(kind, obj);
             }
         }
     }
@@ -7960,7 +8098,7 @@ impl<'a> EditorState<'a> {
                                     );
                                 }
                             } else if first == KeyCode::Char('i') && c == 'w' {
-                                // diw / ciw / yiw / guiw / gUiw / g~iw
+                                // diw / ciw / yiw / guiw / gUiw / g~iw / >iw / <iw
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -7982,6 +8120,24 @@ impl<'a> EditorState<'a> {
                                         '~' => self.toggle_case_range(start, end),
                                         _ => {}
                                     }
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Word(WordType::Word),
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Word(WordType::Word),
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Word(WordType::Word),
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Word(WordType::Word),
+                                    );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Word(WordType::Word),
@@ -7989,7 +8145,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_inner_word();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'w' {
-                                // daw / caw / yaw / guaw / gUaw / g~aw
+                                // daw / caw / yaw / guaw / gUaw / g~aw / >aw / <aw
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -8011,6 +8167,24 @@ impl<'a> EditorState<'a> {
                                         '~' => self.toggle_case_range(start, end),
                                         _ => {}
                                     }
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Word(WordType::Word),
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Word(WordType::Word),
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Word(WordType::Word),
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Word(WordType::Word),
+                                    );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Word(WordType::Word),
@@ -8018,7 +8192,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_a_word();
                                 }
                             } else if first == KeyCode::Char('i') && c == 'W' {
-                                // diW / ciW / yiW / guiW / gUiW / g~iW
+                                // diW / ciW / yiW / guiW / gUiW / g~iW / >iW / <iW
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -8040,6 +8214,24 @@ impl<'a> EditorState<'a> {
                                         '~' => self.toggle_case_range(start, end),
                                         _ => {}
                                     }
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Word(WordType::LongWord),
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Word(WordType::LongWord),
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Word(WordType::LongWord),
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Word(WordType::LongWord),
+                                    );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Word(WordType::LongWord),
@@ -8047,7 +8239,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_inner_long_word();
                                 }
                             } else if first == KeyCode::Char('a') && c == 'W' {
-                                // daW / caW / yaW / guaW / gUaW / g~aW
+                                // daW / caW / yaW / guaW / gUaW / g~aW / >aW / <aW
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -8069,6 +8261,24 @@ impl<'a> EditorState<'a> {
                                         '~' => self.toggle_case_range(start, end),
                                         _ => {}
                                     }
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Word(WordType::LongWord),
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Word(WordType::LongWord),
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Word(WordType::LongWord),
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Word(WordType::LongWord),
+                                    );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Word(WordType::LongWord),
@@ -8092,7 +8302,7 @@ impl<'a> EditorState<'a> {
                                         | '`'
                                 )
                             {
-                                // di( di) di[ di] di{ di} di< di> di" di' di` etc.
+                                // di( di) di[ di] di{ di} di< di> di" di' di` etc. / >i{ / <i{
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -8101,6 +8311,24 @@ impl<'a> EditorState<'a> {
                                     self.delete_inner_pair(c);
                                 } else if op == 'y' {
                                     self.yank_inner_pair(c);
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Pair(c),
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Pair(c),
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Pair(c),
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Pair(c),
+                                    );
                                 } else {
                                     self.last_change =
                                         LastChange::Delete(EditTarget::Inner(TextObject::Pair(c)));
@@ -8123,7 +8351,7 @@ impl<'a> EditorState<'a> {
                                         | '`'
                                 )
                             {
-                                // da( da) da[ da] da{ da} da< da> da" da' da` etc.
+                                // da( da) da[ da] da{ da} da< da> da" da' da` etc. / >a{ / <a{
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.mode = EditorMode::Insert;
@@ -8132,13 +8360,31 @@ impl<'a> EditorState<'a> {
                                     self.delete_around_pair(c);
                                 } else if op == 'y' {
                                     self.yank_around_pair(c);
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Pair(c),
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Pair(c),
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Pair(c),
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Pair(c),
+                                    );
                                 } else {
                                     self.last_change =
                                         LastChange::Delete(EditTarget::Around(TextObject::Pair(c)));
                                     self.delete_around_pair(c);
                                 }
                             } else if first == KeyCode::Char('i') && c == 'p' {
-                                // dip / cip / yip - delete/change/yank inner paragraph
+                                // dip / cip / yip / >ip / <ip - delete/change/yank/indent/dedent inner paragraph
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.last_change = LastChange::Change(EditTarget::Inner(
@@ -8147,6 +8393,24 @@ impl<'a> EditorState<'a> {
                                     self.change_paragraph(TextObjectKind::Inner);
                                 } else if op == 'y' {
                                     self.yank_paragraph(TextObjectKind::Inner);
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Paragraph,
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Paragraph,
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Paragraph,
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Paragraph,
+                                    );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Inner(
                                         TextObject::Paragraph,
@@ -8154,7 +8418,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_paragraph(TextObjectKind::Inner);
                                 }
                             } else if first == KeyCode::Char('a') && c == 'p' {
-                                // dap / cap / yap - delete/change/yank a paragraph
+                                // dap / cap / yap / >ap / <ap - delete/change/yank/indent/dedent a paragraph
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.last_change = LastChange::Change(EditTarget::Around(
@@ -8163,6 +8427,24 @@ impl<'a> EditorState<'a> {
                                     self.change_paragraph(TextObjectKind::Around);
                                 } else if op == 'y' {
                                     self.yank_paragraph(TextObjectKind::Around);
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Paragraph,
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Paragraph,
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Paragraph,
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Paragraph,
+                                    );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Paragraph,
@@ -8170,7 +8452,7 @@ impl<'a> EditorState<'a> {
                                     self.delete_paragraph(TextObjectKind::Around);
                                 }
                             } else if first == KeyCode::Char('i') && c == 's' {
-                                // dis / cis / yis - delete/change/yank inner sentence
+                                // dis / cis / yis / >is / <is - delete/change/yank/indent/dedent inner sentence
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.last_change =
@@ -8178,13 +8460,31 @@ impl<'a> EditorState<'a> {
                                     self.change_sentence(TextObjectKind::Inner);
                                 } else if op == 'y' {
                                     self.yank_sentence(TextObjectKind::Inner);
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Sentence,
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Sentence,
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Inner,
+                                        TextObject::Sentence,
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Inner,
+                                        &TextObject::Sentence,
+                                    );
                                 } else {
                                     self.last_change =
                                         LastChange::Delete(EditTarget::Inner(TextObject::Sentence));
                                     self.delete_sentence(TextObjectKind::Inner);
                                 }
                             } else if first == KeyCode::Char('a') && c == 's' {
-                                // das / cas / yas - delete/change/yank a sentence
+                                // das / cas / yas / >as / <as - delete/change/yank/indent/dedent a sentence
                                 if op == 'c' {
                                     self.insert_buffer.clear();
                                     self.last_change = LastChange::Change(EditTarget::Around(
@@ -8193,6 +8493,24 @@ impl<'a> EditorState<'a> {
                                     self.change_sentence(TextObjectKind::Around);
                                 } else if op == 'y' {
                                     self.yank_sentence(TextObjectKind::Around);
+                                } else if op == '>' {
+                                    self.last_change = LastChange::IndentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Sentence,
+                                    );
+                                    self.indent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Sentence,
+                                    );
+                                } else if op == '<' {
+                                    self.last_change = LastChange::DedentTextObject(
+                                        TextObjectKind::Around,
+                                        TextObject::Sentence,
+                                    );
+                                    self.dedent_text_object(
+                                        TextObjectKind::Around,
+                                        &TextObject::Sentence,
+                                    );
                                 } else {
                                     self.last_change = LastChange::Delete(EditTarget::Around(
                                         TextObject::Sentence,
@@ -9161,6 +9479,13 @@ impl<'a> EditorState<'a> {
                                         self.indent_lines(count);
                                         self.set_last_change(LastChange::Indent, count);
                                     }
+                                    'i' | 'a' => {
+                                        // Wait for text object (e.g., 'p' for >ip/>ap)
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some('>');
+                                        self.render()?;
+                                        continue;
+                                    }
                                     _ => {}
                                 }
                             } else if op == '<' {
@@ -9171,6 +9496,13 @@ impl<'a> EditorState<'a> {
                                         let count = self.take_count();
                                         self.dedent_lines(count);
                                         self.set_last_change(LastChange::Dedent, count);
+                                    }
+                                    'i' | 'a' => {
+                                        // Wait for text object (e.g., 'p' for <ip/<ap)
+                                        self.pending_keys.push(KeyCode::Char(c));
+                                        self.pending_operator = Some('<');
+                                        self.render()?;
+                                        continue;
                                     }
                                     _ => {}
                                 }
