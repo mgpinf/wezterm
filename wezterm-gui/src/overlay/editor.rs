@@ -614,20 +614,24 @@ impl<'a> EditorState<'a> {
         self.lines[self.cursor.0].chars().collect()
     }
 
+    #[inline]
     fn take_count(&mut self) -> usize {
         self.count_prefix.take().unwrap_or(1)
     }
 
+    #[inline]
     fn add_count_digit(&mut self, digit: char) {
         let d = digit.to_digit(10).unwrap_or(0) as usize;
         self.count_prefix = Some(self.count_prefix.unwrap_or(0) * 10 + d);
     }
 
+    #[inline]
     fn set_last_change(&mut self, change: LastChange, count: usize) {
         self.last_change = change;
         self.last_count = count;
     }
 
+    #[inline]
     fn wrapped_line_rows(char_count: usize, content_width: usize) -> usize {
         if content_width == 0 || char_count == 0 {
             1
@@ -636,6 +640,7 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    #[inline]
     fn cursor_visual_position(cursor_col: usize, content_width: usize) -> (usize, usize) {
         if content_width == 0 {
             (0, cursor_col)
@@ -644,10 +649,12 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    #[inline]
     fn is_insert_like_mode(&self) -> bool {
         self.mode == EditorMode::Insert || self.mode == EditorMode::Replace
     }
 
+    #[inline]
     fn allows_cursor_past_eol(&self) -> bool {
         matches!(
             self.mode,
@@ -763,10 +770,12 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    #[inline]
     fn update_desired_col(&mut self) {
         self.desired_col = self.cursor.1;
     }
 
+    #[inline]
     fn clamp_cursor(&mut self) {
         if self.cursor.0 >= self.lines.len() {
             self.cursor.0 = self.lines.len().saturating_sub(1);
@@ -1809,7 +1818,7 @@ impl<'a> EditorState<'a> {
             return Vec::new();
         }
 
-        let mut visible_lines = Vec::new();
+        let mut visible_lines = Vec::with_capacity(content_rows);
         let mut visual_row = 0;
         let mut line_idx = self.viewport_top;
 
@@ -2682,7 +2691,6 @@ impl<'a> EditorState<'a> {
         };
 
         let cur_row = self.cursor.0;
-        let line = &self.lines[cur_row];
         let chars = self.current_line_chars();
         let col = self.cursor.1.min(chars.len().saturating_sub(1));
 
@@ -4844,7 +4852,6 @@ impl<'a> EditorState<'a> {
     }
 
     fn find_number_at_cursor(&self) -> Option<NumberAtCursor> {
-        let line = &self.lines[self.cursor.0];
         let chars = self.current_line_chars();
         if chars.is_empty() {
             return None;
