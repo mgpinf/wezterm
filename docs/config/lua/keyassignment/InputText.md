@@ -141,6 +141,8 @@ Operators can be combined with motions or text objects:
 | `d{motion}` | Delete |
 | `c{motion}` | Change (delete + insert) |
 | `y{motion}` | Yank (copy) |
+| `>{motion}` | Indent |
+| `<{motion}` | Dedent |
 | `gu{motion}` | Lowercase text covered by motion |
 | `gU{motion}` | Uppercase text covered by motion |
 | `g~{motion}` | Toggle case of text covered by motion |
@@ -156,18 +158,20 @@ Examples:
 * `guu` - Lowercase entire line
 * `gUU` - Uppercase entire line
 * `g~~` - Toggle case of entire line
+* `>ip` - Indent inner paragraph
+* `<i{` - Dedent inside braces
 
 ### Text Objects
 
-Used with operators (`d`, `c`, `y`, `gu`, `gU`, `g~`) or in Visual mode:
+Used with operators (`d`, `c`, `y`, `>`, `<`, `gu`, `gU`, `g~`) or in Visual mode:
 
 | Text Object | Description |
 |-------------|-------------|
 | `iw`, `aw` | Inner/a word |
 | `iW`, `aW` | Inner/a WORD (whitespace-delimited) |
-| `i(`, `a(` | Inner/around parentheses |
+| `i(`, `a(`, `ib`, `ab` | Inner/around parentheses |
 | `i[`, `a[` | Inner/around brackets |
-| `i{`, `a{` | Inner/around braces |
+| `i{`, `a{`, `iB`, `aB` | Inner/around braces |
 | `i<`, `a<` | Inner/around angle brackets |
 | `i"`, `a"` | Inner/around double quotes |
 | `i'`, `a'` | Inner/around single quotes |
@@ -182,6 +186,8 @@ Used with operators (`d`, `c`, `y`, `gu`, `gU`, `g~`) or in Visual mode:
 | `dd` | Delete line |
 | `cc` | Change line |
 | `yy` | Yank line |
+| `>>` | Indent line |
+| `<<` | Dedent line |
 | `D` | Delete to end of line |
 | `C` | Change to end of line |
 | `Y` | Yank to end of line |
@@ -201,8 +207,18 @@ Used with operators (`d`, `c`, `y`, `gu`, `gU`, `g~`) or in Visual mode:
 | `?` | Search backward |
 | `n` | Next match |
 | `N` | Previous match |
-| `*` | Search word under cursor (forward) |
-| `#` | Search word under cursor (backward) |
+| `*` | Search word under cursor (forward, with word boundaries) |
+| `#` | Search word under cursor (backward, with word boundaries) |
+| `g*` | Search word under cursor (forward, no word boundaries) |
+| `g#` | Search word under cursor (backward, no word boundaries) |
+
+### Marks
+
+| Key | Action |
+|-----|--------|
+| `m{a-z}` | Set mark {a-z} at current cursor position |
+| `'{a-z}` | Jump to line of mark {a-z} (first non-blank) |
+| `''` | Jump to position before last jump |
 
 ### Command Mode
 
@@ -216,6 +232,7 @@ Enter command mode by pressing `:` from Normal or Visual mode. Type a command an
 | `:wq`, `:x` | Submit (same as `ZZ`) |
 | `:q` | Quit (same as `ZQ`) |
 | `:q!` | Force quit (same as `ZQ`) |
+| `:{N}` | Go to line N (e.g., `:42` goes to line 42) |
 | `:noh`, `:nohlsearch` | Clear search highlighting |
 
 #### Substitute Command
@@ -260,11 +277,14 @@ The `:s` command performs search and replace with live preview:
 | `d`, `x` | Delete selection |
 | `c`, `s` | Change selection (delete + insert) |
 | `y` | Yank selection |
+| `>` | Indent selection |
+| `<` | Dedent selection |
 | `v` | Toggle/switch to character-wise |
 | `V` | Toggle/switch to line-wise |
 | `Ctrl-V` | Toggle/switch to block-wise |
 | `I` | Insert at block start (block mode) |
 | `A` | Append at block end (block mode) |
+| `$` | Extend block selection to end of each line (block mode) |
 | `:` | Enter command mode with selection range (for `:s` substitute) |
 
 ### Insert Mode
@@ -273,6 +293,8 @@ The `:s` command performs search and replace with live preview:
 |-----|--------|
 | `Escape` | Return to Normal mode |
 | `Backspace` | Delete character before cursor |
+| `Ctrl-T` | Indent current line |
+| `Ctrl-D` | Dedent current line |
 | Arrow keys | Move cursor |
 | Any character | Insert at cursor |
 
