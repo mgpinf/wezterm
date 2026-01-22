@@ -179,6 +179,29 @@ Used with operators (`d`, `c`, `y`, `>`, `<`, `gu`, `gU`, `g~`) or in Visual mod
 | `ip`, `ap` | Inner/a paragraph |
 | `is`, `as` | Inner/a sentence |
 
+#### Count/Number Prefix with Text Objects
+
+Text objects support a count prefix, but the behavior differs based on the text object type:
+
+**Pair text objects** (parentheses, brackets, quotes, etc.): Count selects the Nth nesting level.
+* `2di(` - With cursor in `((inner))`, deletes content inside the 2nd level of parentheses
+* `3ci{` - Change inside the 3rd level of nested braces
+* `2yi"` - Yank inside the 2nd level of nested double quotes
+
+**Word text objects**: Count repeats the operation N times (with single undo).
+* `3diw` - Delete 3 consecutive words
+* `2daw` - Delete 2 words including surrounding whitespace
+* `3ciW` - Change 3 consecutive WORDs
+
+Examples:
+```
+Text: foo((bar))baz
+Cursor on 'bar', press 2di( → foo()baz (deletes 'bar' from 2nd level)
+
+Text: one two three four
+Cursor on 'two', press 3diw → one four (deletes 'two', 'three', and the space)
+```
+
 ### Line Operations
 
 | Key | Action |
