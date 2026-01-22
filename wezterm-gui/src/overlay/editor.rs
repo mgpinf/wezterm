@@ -398,6 +398,12 @@ const PENDING_KEYS_PADDING: usize = 11;
 const POSITION_WIDTH: usize = 18;
 const SHIFTWIDTH: usize = 4;
 
+/// Check if a string contains only whitespace (non-allocating alternative to `s.trim().is_empty()`)
+#[inline]
+fn is_blank(s: &str) -> bool {
+    s.chars().all(|c| c.is_whitespace())
+}
+
 struct EditorState<'a> {
     args: &'a InputText,
     window: GuiWin,
@@ -2296,21 +2302,21 @@ impl<'a> EditorState<'a> {
         let mut start_row = self.cursor.0;
         let mut end_row = self.cursor.0;
 
-        if self.lines[self.cursor.0].trim().is_empty() {
-            while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
+        if is_blank(&self.lines[self.cursor.0]) {
+            while start_row > 0 && is_blank(&self.lines[start_row - 1]) {
                 start_row -= 1;
             }
-            while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
+            while end_row < self.lines.len() - 1 && is_blank(&self.lines[end_row + 1]) {
                 end_row += 1;
             }
             return (start_row, end_row);
         }
 
-        while start_row > 0 && !self.lines[start_row - 1].trim().is_empty() {
+        while start_row > 0 && !is_blank(&self.lines[start_row - 1]) {
             start_row -= 1;
         }
 
-        while end_row < self.lines.len() - 1 && !self.lines[end_row + 1].trim().is_empty() {
+        while end_row < self.lines.len() - 1 && !is_blank(&self.lines[end_row + 1]) {
             end_row += 1;
         }
 
@@ -2319,13 +2325,13 @@ impl<'a> EditorState<'a> {
 
     /// Includes trailing blank lines, or leading if at end of file
     fn get_around_paragraph_bounds_impl(&self) -> Option<(usize, usize)> {
-        if self.lines[self.cursor.0].trim().is_empty() {
+        if is_blank(&self.lines[self.cursor.0]) {
             let mut start_row = self.cursor.0;
-            while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
+            while start_row > 0 && is_blank(&self.lines[start_row - 1]) {
                 start_row -= 1;
             }
             let mut end_row = self.cursor.0;
-            while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
+            while end_row < self.lines.len() - 1 && is_blank(&self.lines[end_row + 1]) {
                 end_row += 1;
             }
 
@@ -2334,7 +2340,7 @@ impl<'a> EditorState<'a> {
             }
 
             end_row += 1;
-            while end_row < self.lines.len() - 1 && !self.lines[end_row + 1].trim().is_empty() {
+            while end_row < self.lines.len() - 1 && !is_blank(&self.lines[end_row + 1]) {
                 end_row += 1;
             }
 
@@ -2344,12 +2350,12 @@ impl<'a> EditorState<'a> {
         let (mut start_row, mut end_row) = self.get_inner_paragraph_bounds_impl();
 
         let original_end = end_row;
-        while end_row < self.lines.len() - 1 && self.lines[end_row + 1].trim().is_empty() {
+        while end_row < self.lines.len() - 1 && is_blank(&self.lines[end_row + 1]) {
             end_row += 1;
         }
 
         if end_row == original_end {
-            while start_row > 0 && self.lines[start_row - 1].trim().is_empty() {
+            while start_row > 0 && is_blank(&self.lines[start_row - 1]) {
                 start_row -= 1;
             }
         }
@@ -2437,7 +2443,7 @@ impl<'a> EditorState<'a> {
     fn get_inner_sentence_bounds(&self) -> (usize, usize, usize, usize) {
         let para_start = {
             let mut row = self.cursor.0;
-            while row > 0 && !self.lines[row - 1].trim().is_empty() {
+            while row > 0 && !is_blank(&self.lines[row - 1]) {
                 row -= 1;
             }
             row
@@ -2451,7 +2457,7 @@ impl<'a> EditorState<'a> {
             start_col = self.find_line_start(start_row);
         }
 
-        while start_row < self.lines.len() && self.lines[start_row].trim().is_empty() {
+        while start_row < self.lines.len() && is_blank(&self.lines[start_row]) {
             start_row += 1;
             start_col = 0;
         }
@@ -2483,7 +2489,7 @@ impl<'a> EditorState<'a> {
             }
 
             if end_row < self.lines.len() - 1 {
-                if self.lines[end_row + 1].trim().is_empty() {
+                if is_blank(&self.lines[end_row + 1]) {
                     let line_end = chars.len().saturating_sub(1);
                     return (start_row, start_col, end_row, line_end);
                 }
@@ -2514,7 +2520,7 @@ impl<'a> EditorState<'a> {
             return (start_row, start_col, new_end_row, new_end_col);
         }
 
-        if new_end_row < self.lines.len() - 1 && !self.lines[new_end_row + 1].trim().is_empty() {
+        if new_end_row < self.lines.len() - 1 && !is_blank(&self.lines[new_end_row + 1]) {
             let next_chars: Vec<char> = self.lines[new_end_row + 1].chars().collect();
             if !next_chars.is_empty() && next_chars[0].is_whitespace() {
                 new_end_row += 1;
@@ -3118,11 +3124,11 @@ impl<'a> EditorState<'a> {
     fn get_paragraph_backward_pos(&self) -> (usize, usize) {
         let mut row = self.cursor.0;
 
-        while row > 0 && self.lines[row].trim().is_empty() {
+        while row > 0 && is_blank(&self.lines[row]) {
             row -= 1;
         }
 
-        while row > 0 && !self.lines[row].trim().is_empty() {
+        while row > 0 && !is_blank(&self.lines[row]) {
             row -= 1;
         }
 
@@ -3133,14 +3139,14 @@ impl<'a> EditorState<'a> {
         let mut row = self.cursor.0;
         let last_row = self.lines.len().saturating_sub(1);
 
-        while row < last_row && self.lines[row].trim().is_empty() {
+        while row < last_row && is_blank(&self.lines[row]) {
             row += 1;
         }
-        while row < last_row && !self.lines[row].trim().is_empty() {
+        while row < last_row && !is_blank(&self.lines[row]) {
             row += 1;
         }
 
-        if row == last_row && !self.lines[row].trim().is_empty() {
+        if row == last_row && !is_blank(&self.lines[row]) {
             (row, self.lines[row].chars().count())
         } else {
             (row, 0)
@@ -3150,11 +3156,11 @@ impl<'a> EditorState<'a> {
     fn move_paragraph_backward(&mut self) {
         let mut row = self.cursor.0;
 
-        while row > 0 && self.lines[row].trim().is_empty() {
+        while row > 0 && is_blank(&self.lines[row]) {
             row -= 1;
         }
 
-        while row > 0 && !self.lines[row].trim().is_empty() {
+        while row > 0 && !is_blank(&self.lines[row]) {
             row -= 1;
         }
 
@@ -3167,16 +3173,16 @@ impl<'a> EditorState<'a> {
         let mut row = self.cursor.0;
         let last_row = self.lines.len().saturating_sub(1);
 
-        while row < last_row && self.lines[row].trim().is_empty() {
+        while row < last_row && is_blank(&self.lines[row]) {
             row += 1;
         }
-        while row < last_row && !self.lines[row].trim().is_empty() {
+        while row < last_row && !is_blank(&self.lines[row]) {
             row += 1;
         }
 
         self.cursor.0 = row;
 
-        self.cursor.1 = if row == last_row && !self.lines[row].trim().is_empty() {
+        self.cursor.1 = if row == last_row && !is_blank(&self.lines[row]) {
             self.lines[row].chars().count().saturating_sub(1)
         } else {
             0
@@ -3213,7 +3219,7 @@ impl<'a> EditorState<'a> {
     }
 
     fn compute_sentence_backward_pos(&self, start_row: usize, start_col: usize) -> (usize, usize) {
-        let started_on_blank = self.lines[start_row].trim().is_empty();
+        let started_on_blank = is_blank(&self.lines[start_row]);
 
         // Search backward from cursor position for sentence end or paragraph start
         let mut row = start_row;
@@ -3228,7 +3234,7 @@ impl<'a> EditorState<'a> {
 
         loop {
             // If we're on a blank line and we didn't start on a blank line, stop here
-            if self.lines[row].trim().is_empty() {
+            if is_blank(&self.lines[row]) {
                 if !started_on_blank {
                     return (row, 0);
                 }
@@ -3269,7 +3275,7 @@ impl<'a> EditorState<'a> {
 
             // Check if previous line is blank (paragraph boundary)
             if row > 0 {
-                if self.lines[row - 1].trim().is_empty() {
+                if is_blank(&self.lines[row - 1]) {
                     // At paragraph boundary
                     let para_start_col = self.find_line_start(row);
                     if row == start_row && para_start_col == start_col {
@@ -3294,11 +3300,11 @@ impl<'a> EditorState<'a> {
         let last_row = self.lines.len().saturating_sub(1);
 
         // If starting on a blank line, skip to next paragraph's first sentence
-        if self.lines[row].trim().is_empty() {
-            while row < last_row && self.lines[row].trim().is_empty() {
+        if is_blank(&self.lines[row]) {
+            while row < last_row && is_blank(&self.lines[row]) {
                 row += 1;
             }
-            if self.lines[row].trim().is_empty() {
+            if is_blank(&self.lines[row]) {
                 return (last_row, 0);
             }
             let chars: Vec<char> = self.lines[row].chars().collect();
@@ -3360,7 +3366,7 @@ impl<'a> EditorState<'a> {
                 // Continue to next line
                 if row < last_row {
                     let next_row = row + 1;
-                    if self.lines[next_row].trim().is_empty() {
+                    if is_blank(&self.lines[next_row]) {
                         return (next_row, 0);
                     }
                     let next_chars: Vec<char> = self.lines[next_row].chars().collect();
@@ -3404,7 +3410,7 @@ impl<'a> EditorState<'a> {
                         if row < last_row {
                             row += 1;
                             col = 0;
-                            if self.lines[row].trim().is_empty() {
+                            if is_blank(&self.lines[row]) {
                                 return (row, 0);
                             }
                         } else {
@@ -3420,7 +3426,7 @@ impl<'a> EditorState<'a> {
             if row < last_row {
                 row += 1;
                 col = 0;
-                if self.lines[row].trim().is_empty() {
+                if is_blank(&self.lines[row]) {
                     return (row, 0);
                 }
             } else {
@@ -3451,7 +3457,7 @@ impl<'a> EditorState<'a> {
             if r < self.lines.len() - 1 {
                 r += 1;
                 c = 0;
-                if self.lines[r].trim().is_empty() {
+                if is_blank(&self.lines[r]) {
                     return None;
                 }
             } else {
@@ -3491,7 +3497,7 @@ impl<'a> EditorState<'a> {
             }
 
             if r > 0 {
-                if self.lines[r - 1].trim().is_empty() {
+                if is_blank(&self.lines[r - 1]) {
                     return (r, self.find_line_start(r));
                 }
                 r -= 1;
@@ -5891,7 +5897,7 @@ impl<'a> EditorState<'a> {
             let mut deleted_text = String::new();
 
             if end.1 == 0 && !delete_empty_lines {
-                if !self.lines[end.0].trim().is_empty() {
+                if !is_blank(&self.lines[end.0]) {
                     deleted_text.push_str(&self.lines[end.0]);
                     deleted_text.push('\n');
                     self.lines[end.0] = String::new();
@@ -5964,7 +5970,7 @@ impl<'a> EditorState<'a> {
             let mut deleted_text = String::new();
 
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
-            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let is_first_line_of_para = start.0 == 0 || is_blank(&self.lines[start.0 - 1]);
             let cursor_qualifies_for_linewise = allow_linewise
                 && if is_first_line_of_para {
                     start.1 <= first_non_blank
@@ -6067,7 +6073,7 @@ impl<'a> EditorState<'a> {
                         self.lines.remove(start.0);
                         self.cursor.0 = start.0 - 1;
                         self.cursor.1 = 0;
-                    } else if start.0 > 0 && self.lines[start.0 - 1].trim().is_empty() {
+                    } else if start.0 > 0 && is_blank(&self.lines[start.0 - 1]) {
                         self.lines.remove(start.0 - 1);
                         self.cursor.0 = start.0 - 1;
                     }
@@ -6106,7 +6112,7 @@ impl<'a> EditorState<'a> {
 
         if end.0 < start.0 {
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
-            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let is_first_line_of_para = start.0 == 0 || is_blank(&self.lines[start.0 - 1]);
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
                 start.1 <= first_non_blank
             } else {
@@ -6168,7 +6174,7 @@ impl<'a> EditorState<'a> {
             };
 
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
-            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let is_first_line_of_para = start.0 == 0 || is_blank(&self.lines[start.0 - 1]);
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
                 start.1 <= first_non_blank
             } else {
@@ -6243,7 +6249,7 @@ impl<'a> EditorState<'a> {
     ) {
         if end.0 < start.0 {
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
-            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let is_first_line_of_para = start.0 == 0 || is_blank(&self.lines[start.0 - 1]);
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
                 start.1 <= first_non_blank
             } else {
@@ -6305,7 +6311,7 @@ impl<'a> EditorState<'a> {
             };
 
             let first_non_blank = self.get_first_non_blank_in_line(start.0);
-            let is_first_line_of_para = start.0 == 0 || self.lines[start.0 - 1].trim().is_empty();
+            let is_first_line_of_para = start.0 == 0 || is_blank(&self.lines[start.0 - 1]);
             let cursor_qualifies_for_linewise = if is_first_line_of_para {
                 start.1 <= first_non_blank
             } else {
@@ -6469,7 +6475,7 @@ impl<'a> EditorState<'a> {
                 // Skip whitespace-only content after open bracket
                 let first_chars: Vec<char> = self.lines[open_row].chars().collect();
                 let after_open: String = first_chars[open_col + 1..].iter().collect();
-                let has_first_line_content = !after_open.trim().is_empty();
+                let has_first_line_content = !is_blank(&after_open);
                 if has_first_line_content {
                     yanked.push_str(&after_open);
                 }
@@ -6485,7 +6491,7 @@ impl<'a> EditorState<'a> {
                 if close_row > open_row {
                     let last_chars: Vec<char> = self.lines[close_row].chars().collect();
                     let before_close: String = last_chars[..close_col].iter().collect();
-                    let has_last_line_content = !before_close.trim().is_empty();
+                    let has_last_line_content = !is_blank(&before_close);
                     if has_last_line_content {
                         if !yanked.is_empty() {
                             yanked.push('\n');
@@ -12561,7 +12567,7 @@ mod tests {
                     let mut yanked = String::new();
                     let first_chars: Vec<char> = self.lines[open_row].chars().collect();
                     let after_open: String = first_chars[open_col + 1..].iter().collect();
-                    let has_first_line_content = !after_open.trim().is_empty();
+                    let has_first_line_content = !is_blank(&after_open);
                     if has_first_line_content {
                         yanked.push_str(&after_open);
                     }
@@ -12576,7 +12582,7 @@ mod tests {
                     if close_row > open_row {
                         let last_chars: Vec<char> = self.lines[close_row].chars().collect();
                         let before_close: String = last_chars[..close_col].iter().collect();
-                        let has_last_line_content = !before_close.trim().is_empty();
+                        let has_last_line_content = !is_blank(&before_close);
                         if has_last_line_content {
                             if !yanked.is_empty() {
                                 yanked.push('\n');
