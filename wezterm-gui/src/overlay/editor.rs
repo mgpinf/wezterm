@@ -614,6 +614,21 @@ impl<'a> EditorState<'a> {
         self.lines[self.cursor.0].chars().collect()
     }
 
+    /// Get a substring by character indices (avoids intermediate Vec<char> allocation)
+    #[inline]
+    fn char_substring(s: &str, start: usize, end: usize) -> String {
+        s.chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect()
+    }
+
+    /// Get a substring of a line by character indices
+    #[inline]
+    fn line_char_substring(&self, row: usize, start: usize, end: usize) -> String {
+        Self::char_substring(&self.lines[row], start, end)
+    }
+
     #[inline]
     fn take_count(&mut self) -> usize {
         self.count_prefix.take().unwrap_or(1)
@@ -5346,8 +5361,8 @@ impl<'a> EditorState<'a> {
         let mut line_idx = self.viewport_top;
 
         while visual_row < content_rows && line_idx < self.lines.len() {
-            let chars: Vec<char> = self.line_chars(line_idx);
-            let line_len = chars.len();
+            // Avoid Vec<char> allocation - use char count and substring helpers
+            let line_len = self.line_char_count(line_idx);
             let line_visual_rows = Self::wrapped_line_rows(line_len, content_width);
 
             let start_wrap_row = if line_idx == self.viewport_top {
@@ -5399,7 +5414,7 @@ impl<'a> EditorState<'a> {
                 let segment: String = if line_len == 0 && wrap_row == 0 {
                     String::new()
                 } else {
-                    chars[start_col..end_col].iter().collect()
+                    self.line_char_substring(line_idx, start_col, end_col)
                 };
 
                 let line_in_selection = selection
