@@ -614,13 +614,21 @@ impl<'a> EditorState<'a> {
         self.lines[self.cursor.0].chars().collect()
     }
 
-    /// Get a substring by character indices (avoids intermediate Vec<char> allocation)
+    /// Get substring by character indices. Optimized for ASCII (common case).
     #[inline]
     fn char_substring(s: &str, start: usize, end: usize) -> String {
-        s.chars()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect()
+        if s.is_ascii() {
+            // Fast path for ASCII: 1 char = 1 byte, direct slice
+            let byte_end = end.min(s.len());
+            let byte_start = start.min(byte_end);
+            s[byte_start..byte_end].to_string()
+        } else {
+            // Slow path for non-ASCII: iterate by chars
+            s.chars()
+                .skip(start)
+                .take(end.saturating_sub(start))
+                .collect()
+        }
     }
 
     /// Get a substring of a line by character indices
@@ -629,16 +637,28 @@ impl<'a> EditorState<'a> {
         Self::char_substring(&self.lines[row], start, end)
     }
 
-    /// Convert character index to byte index (avoids Vec<char> allocation)
+    /// Convert character index to byte index. Optimized for ASCII (common case).
     #[inline]
     fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
-        s.chars().take(char_idx).map(|c| c.len_utf8()).sum()
+        if s.is_ascii() {
+            // Fast path for ASCII: 1 char = 1 byte
+            char_idx.min(s.len())
+        } else {
+            // Slow path for non-ASCII
+            s.chars().take(char_idx).map(|c| c.len_utf8()).sum()
+        }
     }
 
-    /// Get the nth character from a string (avoids Vec<char> for single access)
+    /// Get the nth character from a string. Optimized for ASCII (common case).
     #[inline]
     fn char_at(s: &str, idx: usize) -> Option<char> {
-        s.chars().nth(idx)
+        if s.is_ascii() {
+            // Fast path for ASCII: direct byte access
+            s.as_bytes().get(idx).map(|&b| b as char)
+        } else {
+            // Slow path for non-ASCII
+            s.chars().nth(idx)
+        }
     }
 
     /// Create a string of n spaces (avoids format!() allocation)
@@ -6828,14 +6848,16 @@ impl<'a> EditorState<'a> {
             self.cursor.1 = target_insert_col;
         } else if self.yank_is_linewise {
             let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
-            let mut all_lines: Vec<String> = Vec::new();
+            // Pre-allocate with exact capacity to avoid reallocations
+            let mut all_lines: Vec<String> = Vec::with_capacity(base_lines.len() * count);
             for _ in 0..count {
                 for line in &base_lines {
                     all_lines.push(line.to_string());
                 }
             }
-            for (i, line) in all_lines.iter().enumerate() {
-                self.lines.insert(self.cursor.0 + 1 + i, line.clone());
+            // Use into_iter() to take ownership, avoiding clone()
+            for (i, line) in all_lines.into_iter().enumerate() {
+                self.lines.insert(self.cursor.0 + 1 + i, line);
             }
             self.cursor.0 += 1;
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
@@ -6931,14 +6953,16 @@ impl<'a> EditorState<'a> {
             }
         } else if self.yank_is_linewise {
             let base_lines: Vec<&str> = self.yank_buffer.split('\n').collect();
-            let mut all_lines: Vec<String> = Vec::new();
+            // Pre-allocate with exact capacity to avoid reallocations
+            let mut all_lines: Vec<String> = Vec::with_capacity(base_lines.len() * count);
             for _ in 0..count {
                 for line in &base_lines {
                     all_lines.push(line.to_string());
                 }
             }
-            for (i, line) in all_lines.iter().enumerate() {
-                self.lines.insert(self.cursor.0 + i, line.clone());
+            // Use into_iter() to take ownership, avoiding clone()
+            for (i, line) in all_lines.into_iter().enumerate() {
+                self.lines.insert(self.cursor.0 + i, line);
             }
             self.cursor.1 = self.get_first_non_blank_in_line(self.cursor.0);
         } else if self.yank_buffer.contains('\n') {
@@ -6946,11 +6970,12 @@ impl<'a> EditorState<'a> {
                 .collect::<Vec<_>>()
                 .join("");
             let paste_lines: Vec<&str> = repeated_buffer.split('\n').collect();
-            let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
-            let insert_pos = self.cursor.1.min(current_line_chars.len());
+            let line = &self.lines[self.cursor.0];
+            let char_count = line.chars().count();
+            let insert_pos = self.cursor.1.min(char_count);
 
-            let before: String = current_line_chars[..insert_pos].iter().collect();
-            let after: String = current_line_chars[insert_pos..].iter().collect();
+            let before = Self::char_substring(line, 0, insert_pos);
+            let after = Self::char_substring(line, insert_pos, char_count);
 
             self.lines[self.cursor.0] = before + paste_lines[0];
 
