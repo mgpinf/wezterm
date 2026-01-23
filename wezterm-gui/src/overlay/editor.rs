@@ -629,6 +629,18 @@ impl<'a> EditorState<'a> {
         Self::char_substring(&self.lines[row], start, end)
     }
 
+    /// Convert character index to byte index (avoids Vec<char> allocation)
+    #[inline]
+    fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
+        s.chars().take(char_idx).map(|c| c.len_utf8()).sum()
+    }
+
+    /// Get the nth character from a string (avoids Vec<char> for single access)
+    #[inline]
+    fn char_at(s: &str, idx: usize) -> Option<char> {
+        s.chars().nth(idx)
+    }
+
     #[inline]
     fn take_count(&mut self) -> usize {
         self.count_prefix.take().unwrap_or(1)
@@ -5440,6 +5452,8 @@ impl<'a> EditorState<'a> {
                     }
                     let (sel_start, sel_end) = selection.unwrap();
                     let is_edge_line = line_idx == sel_start.0 || line_idx == sel_end.0;
+                    // Collect chars only for selection rendering (these functions need &[char])
+                    let chars: Vec<char> = self.lines[line_idx].chars().collect();
                     self.render_wrapped_segment_with_block_selection(
                         &chars,
                         start_col,
@@ -5450,6 +5464,8 @@ impl<'a> EditorState<'a> {
                     );
                 } else if line_in_selection && self.mode == EditorMode::Visual {
                     let (sel_start, sel_end) = selection.unwrap();
+                    // Collect chars only for selection rendering (these functions need &[char])
+                    let chars: Vec<char> = self.lines[line_idx].chars().collect();
                     self.render_wrapped_segment_with_selection(
                         &chars, start_col, end_col, line_idx, sel_start, sel_end,
                     );
@@ -5603,17 +5619,17 @@ impl<'a> EditorState<'a> {
         }
 
         // Render segment with highlighted matches
-        let segment_chars: Vec<char> = segment.chars().collect();
+        let segment_len = segment.chars().count();
         let mut last_pos = 0;
 
         for (match_start, match_end) in matches {
             // Calculate positions relative to segment
             let seg_match_start = match_start.saturating_sub(start_col);
-            let seg_match_end = (match_end.saturating_sub(start_col)).min(segment_chars.len());
+            let seg_match_end = (match_end.saturating_sub(start_col)).min(segment_len);
 
             // Text before match (within segment)
             if seg_match_start > last_pos {
-                let before: String = segment_chars[last_pos..seg_match_start].iter().collect();
+                let before = Self::char_substring(segment, last_pos, seg_match_start);
                 self.add_changes_batch([
                     Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                     Change::Text(before),
@@ -5627,7 +5643,7 @@ impl<'a> EditorState<'a> {
 
             let actual_start = seg_match_start.max(last_pos);
             if actual_start < seg_match_end {
-                let matched: String = segment_chars[actual_start..seg_match_end].iter().collect();
+                let matched = Self::char_substring(segment, actual_start, seg_match_end);
                 let (match_bg, match_fg) = if is_current {
                     (
                         self.colors.search_current_match_bg,
@@ -5647,8 +5663,8 @@ impl<'a> EditorState<'a> {
             last_pos = seg_match_end;
         }
 
-        if last_pos < segment_chars.len() {
-            let after: String = segment_chars[last_pos..].iter().collect();
+        if last_pos < segment_len {
+            let after = Self::char_substring(segment, last_pos, segment_len);
             self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(after),
@@ -5666,8 +5682,8 @@ impl<'a> EditorState<'a> {
         // During Replacement phase: highlight replacements in sub_replacements
         // and remaining matches in sub_matches
 
-        let segment_chars: Vec<char> = segment.chars().collect();
-        let end_col = start_col + segment_chars.len();
+        let segment_len = segment.chars().count();
+        let end_col = start_col + segment_len;
 
         // Collect pattern matches that overlap with this segment
         let mut pattern_matches: Vec<(usize, usize)> = Vec::new();
@@ -5717,11 +5733,11 @@ impl<'a> EditorState<'a> {
         for (match_start, match_end, is_replacement) in highlights {
             // Calculate positions relative to segment
             let seg_match_start = match_start.saturating_sub(start_col);
-            let seg_match_end = (match_end.saturating_sub(start_col)).min(segment_chars.len());
+            let seg_match_end = (match_end.saturating_sub(start_col)).min(segment_len);
 
             // Text before match
             if seg_match_start > last_pos {
-                let before: String = segment_chars[last_pos..seg_match_start].iter().collect();
+                let before = Self::char_substring(segment, last_pos, seg_match_start);
                 self.add_changes_batch([
                     Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                     Change::Text(before),
@@ -5730,7 +5746,7 @@ impl<'a> EditorState<'a> {
 
             let actual_start = seg_match_start.max(last_pos);
             if actual_start < seg_match_end {
-                let matched: String = segment_chars[actual_start..seg_match_end].iter().collect();
+                let matched = Self::char_substring(segment, actual_start, seg_match_end);
                 let (match_bg, match_fg) = if is_replacement {
                     (
                         self.colors.substitute_replacement_bg,
@@ -5753,8 +5769,8 @@ impl<'a> EditorState<'a> {
             last_pos = seg_match_end;
         }
 
-        if last_pos < segment_chars.len() {
-            let after: String = segment_chars[last_pos..].iter().collect();
+        if last_pos < segment_len {
+            let after = Self::char_substring(segment, last_pos, segment_len);
             self.add_changes_batch([
                 Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
                 Change::Text(after),
@@ -7077,9 +7093,9 @@ impl<'a> EditorState<'a> {
 
         // Search in current line after cursor
         let current_line = &self.lines[start_row];
-        let chars: Vec<char> = current_line.chars().collect();
-        if start_col < chars.len() {
-            let byte_offset: usize = chars[..start_col].iter().map(|c| c.len_utf8()).sum();
+        let char_count = current_line.chars().count();
+        if start_col < char_count {
+            let byte_offset = Self::char_to_byte_idx(current_line, start_col);
             let search_str = &current_line[byte_offset..];
             let mut search_start = 0;
             while let Some(pos) = search_str[search_start..].find(pattern.as_str()) {
@@ -7119,10 +7135,8 @@ impl<'a> EditorState<'a> {
         for row in 0..=start_row {
             let line = &self.lines[row];
             let search_end = if row == start_row {
-                chars[..self.cursor.1.min(chars.len())]
-                    .iter()
-                    .map(|c| c.len_utf8())
-                    .sum()
+                let line_char_count = line.chars().count();
+                Self::char_to_byte_idx(line, self.cursor.1.min(line_char_count))
             } else {
                 line.len()
             };
@@ -7155,12 +7169,9 @@ impl<'a> EditorState<'a> {
 
         // Search in current line before cursor (prefix of line, offset = 0)
         let current_line = &self.lines[start_row];
-        let chars: Vec<char> = current_line.chars().collect();
+        let char_count = current_line.chars().count();
         if start_col > 0 {
-            let byte_end: usize = chars[..start_col.min(chars.len())]
-                .iter()
-                .map(|c| c.len_utf8())
-                .sum();
+            let byte_end = Self::char_to_byte_idx(current_line, start_col.min(char_count));
             let search_str = &current_line[..byte_end];
             if let Some(pos) = self.find_last_word_match(current_line, search_str, pattern, 0) {
                 let char_pos = current_line[..pos].chars().count();
