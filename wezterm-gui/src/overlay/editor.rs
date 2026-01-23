@@ -641,6 +641,25 @@ impl<'a> EditorState<'a> {
         s.chars().nth(idx)
     }
 
+    /// Create a string of n spaces (avoids format!() allocation)
+    #[inline]
+    fn spaces(n: usize) -> String {
+        " ".repeat(n)
+    }
+
+    /// Pad a string to width with trailing spaces (avoids format!("{:<width$}", s))
+    #[inline]
+    fn pad_right(s: &str, width: usize) -> String {
+        if s.len() >= width {
+            s.to_string()
+        } else {
+            let mut result = String::with_capacity(width);
+            result.push_str(s);
+            result.push_str(&" ".repeat(width - s.len()));
+            result
+        }
+    }
+
     #[inline]
     fn take_count(&mut self) -> usize {
         self.count_prefix.take().unwrap_or(1)
@@ -5075,8 +5094,12 @@ impl<'a> EditorState<'a> {
             EditorMode::VisualLine => &self.colors.visual_line_mode_text,
             EditorMode::VisualBlock => &self.colors.visual_block_mode_text,
         };
-        let mode_text = format!(" {} ", mode_text_raw);
-        let mode_len = mode_text_raw.len() + 2;
+        // Build mode text without format!() allocation
+        let mut mode_text = String::with_capacity(mode_text_raw.len() + 2);
+        mode_text.push(' ');
+        mode_text.push_str(mode_text_raw);
+        mode_text.push(' ');
+        let mode_len = mode_text.len();
 
         let mut pending_str = String::new();
         if let Some(count) = self.count_prefix {
@@ -5115,9 +5138,15 @@ impl<'a> EditorState<'a> {
         } else {
             (self.cursor.1 + 1).to_string()
         };
-        let position_text = format!("{},{}", row_display, col_display);
-        let position_padding = POSITION_WIDTH.saturating_sub(position_text.len());
-        let position = format!("{}{}", position_text, " ".repeat(position_padding));
+        // Build position text without format!() - pre-allocate for "row,col" + padding
+        let mut position = String::with_capacity(POSITION_WIDTH);
+        position.push_str(&row_display);
+        position.push(',');
+        position.push_str(&col_display);
+        // Pad to POSITION_WIDTH
+        while position.len() < POSITION_WIDTH {
+            position.push(' ');
+        }
         let middle_width = cols.saturating_sub(mode_len + POSITION_WIDTH);
 
         self.add_changes_batch([
@@ -5132,7 +5161,7 @@ impl<'a> EditorState<'a> {
             Change::Attribute(AttributeChange::Intensity(Intensity::Normal)),
             Change::Attribute(AttributeChange::Background(self.colors.status_bg)),
             Change::Attribute(AttributeChange::Foreground(self.colors.status_fg)),
-            Change::Text(format!("{:width$}", "", width = middle_width)),
+            Change::Text(Self::spaces(middle_width)),
             Change::Text(position),
             Change::AllAttributes(CellAttributes::default()),
         ]);
@@ -5142,26 +5171,31 @@ impl<'a> EditorState<'a> {
                 Direction::Forward => "/",
                 Direction::Backward => "?",
             };
-            let search_text = format!("{}{}", prompt, self.search_input);
+            // Build search text without format!()
+            let mut search_text = String::with_capacity(1 + self.search_input.len());
+            search_text.push_str(prompt);
+            search_text.push_str(&self.search_input);
             self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
-                Change::Text(format!("{:<width$}", search_text, width = cols)),
+                Change::Text(Self::pad_right(&search_text, cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if self.mode == EditorMode::Command {
-            // Render command line at the bottom
-            let cmd_display = format!(":{}", self.cmd_input);
+            // Render command line at the bottom - build without format!()
+            let mut cmd_display = String::with_capacity(1 + self.cmd_input.len());
+            cmd_display.push(':');
+            cmd_display.push_str(&self.cmd_input);
             self.add_changes_batch([
                 Change::CursorPosition {
                     x: Position::Absolute(0),
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
-                Change::Text(format!("{:<width$}", cmd_display, width = cols)),
+                Change::Text(Self::pad_right(&cmd_display, cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else if let Some(ref error) = self.cmd_error {
@@ -5174,7 +5208,7 @@ impl<'a> EditorState<'a> {
                 Change::Attribute(AttributeChange::Foreground(ColorAttribute::PaletteIndex(
                     config::AnsiColor::Red.into(),
                 ))),
-                Change::Text(format!("{:<width$}", error, width = cols)),
+                Change::Text(Self::pad_right(error, cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             // Clear the error after displaying
@@ -5229,7 +5263,7 @@ impl<'a> EditorState<'a> {
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
-                Change::Text(format!("{:<width$}", cmd_display, width = cols)),
+                Change::Text(Self::pad_right(&cmd_display, cols)),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         } else {
@@ -5241,21 +5275,41 @@ impl<'a> EditorState<'a> {
                 } else {
                     "?"
                 };
-                // Show word boundaries in the display like Neovim does
+                // Show word boundaries in the display like Neovim does - build without format!()
+                let mut display =
+                    String::with_capacity(prompt.len() + self.search_pattern.len() + 4);
+                display.push_str(prompt);
                 if self.search_word_boundary {
-                    format!("{}\\<{}\\>", prompt, self.search_pattern)
+                    display.push_str("\\<");
+                    display.push_str(&self.search_pattern);
+                    display.push_str("\\>");
                 } else {
-                    format!("{}{}", prompt, self.search_pattern)
+                    display.push_str(&self.search_pattern);
                 }
+                display
             };
 
             let pending_with_padding = if pending_str.is_empty() {
                 String::new()
             } else {
-                let padding = PENDING_KEYS_PADDING.saturating_sub(pending_str.len());
-                format!("{}{}", pending_str, " ".repeat(padding))
+                // Build pending keys with padding without format!()
+                let mut result = String::with_capacity(PENDING_KEYS_PADDING);
+                result.push_str(&pending_str);
+                while result.len() < PENDING_KEYS_PADDING {
+                    result.push(' ');
+                }
+                result
             };
             let left_width = cols.saturating_sub(pending_with_padding.len());
+
+            // Build final status line without format!()
+            let mut status_line = String::with_capacity(cols);
+            status_line.push_str(&search_display);
+            // Pad search_display to left_width
+            while status_line.len() < left_width {
+                status_line.push(' ');
+            }
+            status_line.push_str(&pending_with_padding);
 
             self.add_changes_batch([
                 Change::CursorPosition {
@@ -5263,12 +5317,7 @@ impl<'a> EditorState<'a> {
                     y: Position::Absolute(rows - 1),
                 },
                 Change::Attribute(AttributeChange::Foreground(self.colors.last_row_fg)),
-                Change::Text(format!(
-                    "{:<left$}{}",
-                    search_display,
-                    pending_with_padding,
-                    left = left_width
-                )),
+                Change::Text(status_line),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
         }
@@ -5384,15 +5433,56 @@ impl<'a> EditorState<'a> {
                 let start_col = wrap_row * content_width;
                 let end_col = ((wrap_row + 1) * content_width).min(line_len);
 
-                let line_number_text = if start_wrap_row > 0 && wrap_row == start_wrap_row {
+                let line_number_text: String = if start_wrap_row > 0 && wrap_row == start_wrap_row {
                     LINE_CONTINUES_ABOVE.to_string()
                 } else if wrap_row == 0 {
+                    // Pre-allocate exact size: "  XXX " = 6 chars
+                    let mut buf = String::with_capacity(6);
+                    buf.push_str("  ");
                     if line_idx == self.cursor.0 {
-                        format!("  {:<3} ", self.cursor.0 + 1)
+                        let num = self.cursor.0 + 1;
+                        // Left-align: "N  " or "NN " or "NNN"
+                        if num < 10 {
+                            buf.push((b'0' + num as u8) as char);
+                            buf.push_str("   ");
+                        } else if num < 100 {
+                            buf.push((b'0' + (num / 10) as u8) as char);
+                            buf.push((b'0' + (num % 10) as u8) as char);
+                            buf.push_str("  ");
+                        } else if num < 1000 {
+                            buf.push((b'0' + (num / 100) as u8) as char);
+                            buf.push((b'0' + ((num / 10) % 10) as u8) as char);
+                            buf.push((b'0' + (num % 10) as u8) as char);
+                            buf.push(' ');
+                        } else {
+                            // Fallback for large numbers
+                            use std::fmt::Write;
+                            let _ = write!(buf, "{:<3} ", num);
+                        }
                     } else {
                         let rel_num = (line_idx as isize - self.cursor.0 as isize).unsigned_abs();
-                        format!("  {:>3} ", rel_num)
+                        // Right-align: "  N" or " NN" or "NNN"
+                        if rel_num < 10 {
+                            buf.push_str("  ");
+                            buf.push((b'0' + rel_num as u8) as char);
+                            buf.push(' ');
+                        } else if rel_num < 100 {
+                            buf.push(' ');
+                            buf.push((b'0' + (rel_num / 10) as u8) as char);
+                            buf.push((b'0' + (rel_num % 10) as u8) as char);
+                            buf.push(' ');
+                        } else if rel_num < 1000 {
+                            buf.push((b'0' + (rel_num / 100) as u8) as char);
+                            buf.push((b'0' + ((rel_num / 10) % 10) as u8) as char);
+                            buf.push((b'0' + (rel_num % 10) as u8) as char);
+                            buf.push(' ');
+                        } else {
+                            // Fallback for large numbers
+                            use std::fmt::Write;
+                            let _ = write!(buf, "{:>3} ", rel_num);
+                        }
                     }
+                    buf
                 } else {
                     EMPTY_GUTTER.to_string()
                 };
