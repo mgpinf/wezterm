@@ -1684,14 +1684,8 @@ impl<'a> EditorState<'a> {
             }
         };
 
-        let get_char = |r: usize, c: usize, lines: &[String]| -> Option<char> {
-            let chars: Vec<char> = lines[r].chars().collect();
-            if c < chars.len() {
-                Some(chars[c])
-            } else {
-                None
-            }
-        };
+        let get_char =
+            |r: usize, c: usize, lines: &[String]| -> Option<char> { lines[r].chars().nth(c) };
 
         if col > 0 {
             col -= 1;
@@ -3119,14 +3113,13 @@ impl<'a> EditorState<'a> {
 
             loop {
                 let line = &self.lines[row];
-                let chars: Vec<char> = line.chars().collect();
                 let search_start = if row == self.cursor.0 {
                     start_col + 1
                 } else {
                     0
                 };
 
-                for (idx, c) in chars.into_iter().enumerate().skip(search_start) {
+                for (idx, c) in line.chars().enumerate().skip(search_start) {
                     if c == cur_char {
                         depth += 1;
                     } else if c == matching {
@@ -3900,9 +3893,8 @@ impl<'a> EditorState<'a> {
 
         loop {
             let line = &self.lines[row];
-            let chars: Vec<char> = line.chars().collect();
 
-            for (idx, c) in chars.into_iter().enumerate().skip(search_start) {
+            for (idx, c) in line.chars().enumerate().skip(search_start) {
                 if c == open {
                     depth += 1;
                 } else if c == close {
@@ -4339,9 +4331,8 @@ impl<'a> EditorState<'a> {
                 match dir {
                     Direction::Forward => {
                         let line = &self.lines[self.cursor.0];
-                        let chars: Vec<char> = line.chars().collect();
                         let on_whitespace =
-                            self.cursor.1 < chars.len() && chars[self.cursor.1].is_whitespace();
+                            Self::char_at(line, self.cursor.1).map_or(false, |c| c.is_whitespace());
                         if on_whitespace {
                             self.perform_delete_motion_with_count(
                                 |s| s.get_word_forward_pos(*wt),
@@ -6760,19 +6751,17 @@ impl<'a> EditorState<'a> {
                 .collect::<Vec<_>>()
                 .join("");
             let paste_lines: Vec<&str> = repeated_buffer.split('\n').collect();
-            let current_line_chars: Vec<char> = self.lines[self.cursor.0].chars().collect();
-            let insert_pos = if current_line_chars.is_empty() {
+            let line = &self.lines[self.cursor.0];
+            let char_count = line.chars().count();
+            let insert_pos = if char_count == 0 {
                 0
             } else {
                 self.cursor.1 + 1
             };
 
-            let before: String = current_line_chars[..insert_pos.min(current_line_chars.len())]
-                .iter()
-                .collect();
-            let after: String = current_line_chars[insert_pos.min(current_line_chars.len())..]
-                .iter()
-                .collect();
+            let safe_pos = insert_pos.min(char_count);
+            let before = Self::char_substring(line, 0, safe_pos);
+            let after = Self::char_substring(line, safe_pos, char_count);
 
             self.lines[self.cursor.0] = before + paste_lines[0];
 
