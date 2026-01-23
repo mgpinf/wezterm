@@ -3140,18 +3140,18 @@ impl<'a> EditorState<'a> {
         } else {
             let mut depth = 0i32;
             let mut row = self.cursor.0;
-            let mut search_end = col;
+            let search_end = col;
 
             loop {
                 let line = &self.lines[row];
-                let chars: Vec<char> = line.chars().collect();
-                let end = if row == self.cursor.0 {
-                    search_end
+                // On cursor row, collect only up to search_end to reduce allocation
+                let chars: Vec<char> = if row == self.cursor.0 {
+                    line.chars().take(search_end).collect()
                 } else {
-                    chars.len()
+                    line.chars().collect()
                 };
 
-                for (idx, c) in chars.into_iter().enumerate().take(end).rev() {
+                for (idx, c) in chars.into_iter().enumerate().rev() {
                     if c == cur_char {
                         depth += 1;
                     } else if c == matching {
@@ -3168,7 +3168,6 @@ impl<'a> EditorState<'a> {
                     break;
                 }
                 row -= 1;
-                search_end = self.lines[row].len();
             }
         }
     }
@@ -3859,14 +3858,18 @@ impl<'a> EditorState<'a> {
     fn find_unmatched_backward(&self, open: char, close: char) -> Option<(usize, usize)> {
         let mut depth = 0i32;
         let mut row = self.cursor.0;
-        let mut search_end = self.cursor.1;
+        let search_end = self.cursor.1;
 
         loop {
             let line = &self.lines[row];
-            let chars: Vec<char> = line.chars().collect();
-            let end = search_end.min(chars.len());
+            // On cursor row, collect only up to search_end to reduce allocation
+            let chars: Vec<char> = if row == self.cursor.0 {
+                line.chars().take(search_end).collect()
+            } else {
+                line.chars().collect()
+            };
 
-            for (idx, c) in chars.into_iter().enumerate().take(end).rev() {
+            for (idx, c) in chars.into_iter().enumerate().rev() {
                 if c == close {
                     depth += 1;
                 } else if c == open {
@@ -3881,7 +3884,6 @@ impl<'a> EditorState<'a> {
                 break;
             }
             row -= 1;
-            search_end = self.lines[row].len();
         }
         None
     }
@@ -5580,9 +5582,10 @@ impl<'a> EditorState<'a> {
         let line = &self.lines[line_idx];
         let pattern = &self.search_pattern;
         let is_current_line = self.current_match.is_some_and(|(r, _)| r == line_idx);
-        let end_col = start_col + segment.chars().count();
+        let segment_len = segment.chars().count();
+        let end_col = start_col + segment_len;
 
-        let mut matches: Vec<(usize, usize)> = Vec::new();
+        let mut matches: Vec<(usize, usize)> = Vec::with_capacity(4);
         let mut search_start = 0;
         let pattern_len = pattern.len();
         while let Some(pos) = line[search_start..].find(pattern) {
@@ -5610,7 +5613,6 @@ impl<'a> EditorState<'a> {
         }
 
         // Render segment with highlighted matches
-        let segment_len = segment.chars().count();
         let mut last_pos = 0;
 
         for (match_start, match_end) in matches {
@@ -5677,7 +5679,7 @@ impl<'a> EditorState<'a> {
         let end_col = start_col + segment_len;
 
         // Collect pattern matches that overlap with this segment
-        let mut pattern_matches: Vec<(usize, usize)> = Vec::new();
+        let mut pattern_matches: Vec<(usize, usize)> = Vec::with_capacity(4);
         for &(row, col, len) in &self.sub_matches {
             if row == line_idx {
                 let match_start = col;
@@ -5689,7 +5691,7 @@ impl<'a> EditorState<'a> {
         }
 
         // Collect replacement positions that overlap with this segment
-        let mut replacement_matches: Vec<(usize, usize)> = Vec::new();
+        let mut replacement_matches: Vec<(usize, usize)> = Vec::with_capacity(4);
         for &(row, col, len) in &self.sub_replacements {
             if row == line_idx {
                 let match_start = col;
@@ -5709,7 +5711,8 @@ impl<'a> EditorState<'a> {
         }
 
         // Merge all highlights with their types: (start, end, is_replacement)
-        let mut highlights: Vec<(usize, usize, bool)> = Vec::new();
+        let mut highlights: Vec<(usize, usize, bool)> =
+            Vec::with_capacity(pattern_matches.len() + replacement_matches.len());
         for (start, end) in pattern_matches {
             highlights.push((start, end, false));
         }
