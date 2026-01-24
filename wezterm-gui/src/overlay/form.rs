@@ -397,29 +397,6 @@ impl<'a> FormState<'a> {
             current_row += 1;
         }
 
-        // Calculate where to put the submit row - after dropdown if open
-        let submit_row = if let Some((_, start, height)) = dropdown_info {
-            (start + height + 1).max(current_row + 1)
-        } else {
-            current_row + 1
-        };
-
-        let submit_label = self.args.submit_label.as_deref().unwrap_or("Submit");
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(submit_row),
-            },
-            Change::Attribute(AttributeChange::Foreground(self.colors.border_fg)),
-            Change::Text("[Ctrl+Enter] ".to_string()),
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!("{}  ", submit_label)),
-            Change::Attribute(AttributeChange::Foreground(self.colors.border_fg)),
-            Change::Text("[Esc] ".to_string()),
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text("Cancel".to_string()),
-        ]);
-
         // Render dropdown if open
         if let Some((field_idx, dropdown_start_row, total_height)) = dropdown_info {
             if let Some(Some(selector_state)) = self.selector_states.get(field_idx) {
