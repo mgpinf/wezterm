@@ -4384,7 +4384,7 @@ impl<'a> EditorState<'a> {
                     Direction::Forward => {
                         let line = &self.lines[self.cursor.0];
                         let on_whitespace =
-                            Self::char_at(line, self.cursor.1).map_or(false, |c| c.is_whitespace());
+                            Self::char_at(line, self.cursor.1).is_some_and(|c| c.is_whitespace());
                         if on_whitespace {
                             self.perform_delete_motion_with_count(
                                 |s| s.get_word_forward_pos(*wt),
@@ -7746,13 +7746,11 @@ impl<'a> EditorState<'a> {
             if let Some(s_idx) = cmd.find('s') {
                 if s_idx > 4 {
                     let digits_part = &cmd[4..s_idx];
-                    if digits_part.chars().all(|c| c.is_ascii_digit()) {
-                        if cmd.len() > s_idx + 1 {
-                            let rest = &cmd[s_idx + 1..];
-                            if let Some(delim) = rest.chars().next() {
-                                if !delim.is_alphanumeric() {
-                                    return Some(delim);
-                                }
+                    if digits_part.chars().all(|c| c.is_ascii_digit()) && cmd.len() > s_idx + 1 {
+                        let rest = &cmd[s_idx + 1..];
+                        if let Some(delim) = rest.chars().next() {
+                            if !delim.is_alphanumeric() {
+                                return Some(delim);
                             }
                         }
                     }
