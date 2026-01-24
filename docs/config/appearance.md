@@ -164,6 +164,7 @@ config.colors = {
   form_required_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
   form_border_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   form_separator_fg = 'Default', -- {{since('nightly', inline=True)}}
+  form_header_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
 
   image_selector_description_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
   image_selector_error_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}

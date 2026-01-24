@@ -22,6 +22,7 @@ struct FormColors {
     required_fg: ColorAttribute,
     border_fg: ColorAttribute,
     separator_fg: ColorAttribute,
+    header_fg: ColorAttribute,
 }
 
 impl FormColors {
@@ -56,6 +57,10 @@ impl FormColors {
             separator_fg: colors
                 .form_separator_fg
                 .map_or_else(|| ColorAttribute::Default, |fg_color| fg_color.into()),
+            header_fg: colors
+                .form_header_fg
+                .unwrap_or(AnsiColor::Yellow.into())
+                .into(),
         }
     }
 }
@@ -220,7 +225,7 @@ impl<'a> FormState<'a> {
         let title = &self.args.title;
         self.buf.add_changes(vec![
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(self.colors.active_label_fg)),
+            Change::Attribute(AttributeChange::Foreground(self.colors.header_fg)),
             Change::Text(title.clone()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),

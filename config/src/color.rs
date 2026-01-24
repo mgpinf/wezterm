@@ -242,6 +242,7 @@ pub struct Palette {
     pub form_required_fg: Option<ColorSpec>,
     pub form_border_fg: Option<ColorSpec>,
     pub form_separator_fg: Option<ColorSpec>,
+    pub form_header_fg: Option<ColorSpec>,
 
     pub command_runner_list_header_fg: Option<ColorSpec>,
     pub command_runner_list_marker_fg: Option<ColorSpec>,
@@ -378,6 +379,7 @@ impl Palette {
             form_required_fg: overlay!(form_required_fg),
             form_border_fg: overlay!(form_border_fg),
             form_separator_fg: overlay!(form_separator_fg),
+            form_header_fg: overlay!(form_header_fg),
             command_runner_list_header_fg: overlay!(command_runner_list_header_fg),
             command_runner_list_marker_fg: overlay!(command_runner_list_marker_fg),
             command_runner_output_label_fg: overlay!(command_runner_output_label_fg),
