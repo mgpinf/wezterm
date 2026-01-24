@@ -748,6 +748,7 @@ impl<'a> TransientState<'a> {
                         }
                     }
                     InputEvent::Resized { cols, rows } => {
+                        selector_state.max_items = rows.saturating_sub(ROW_OVERHEAD);
                         self.buf.resize(cols, rows);
                     }
                     _ => {}
