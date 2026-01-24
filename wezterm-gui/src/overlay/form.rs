@@ -311,7 +311,7 @@ impl<'a> FormState<'a> {
                         let filter_display = format!("/{}", selector_state.filter_term);
                         self.buf.add_changes(vec![
                             Change::Attribute(AttributeChange::Foreground(self.colors.input_fg)),
-                            Change::Text(filter_display.clone()),
+                            Change::Text(filter_display),
                             Change::AllAttributes(CellAttributes::default()),
                             Change::Text(" ▾".to_string()),
                         ]);
@@ -350,7 +350,7 @@ impl<'a> FormState<'a> {
 
                         self.buf.add_changes(vec![
                             Change::Attribute(AttributeChange::Foreground(input_color)),
-                            Change::Text(display_value.clone()),
+                            Change::Text(display_value),
                             Change::AllAttributes(CellAttributes::default()),
                             Change::Text(" ▾".to_string()),
                         ]);
@@ -389,7 +389,7 @@ impl<'a> FormState<'a> {
 
                 self.buf.add_changes(vec![
                     Change::Attribute(AttributeChange::Foreground(input_color)),
-                    Change::Text(display_value.clone()),
+                    Change::Text(display_value),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
             }
