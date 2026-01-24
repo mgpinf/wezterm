@@ -23,6 +23,36 @@ use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::Modifiers;
 
+/// Concatenate a prefix and value without format! overhead
+#[inline]
+fn concat_str(prefix: &str, value: &str) -> String {
+    let mut s = String::with_capacity(prefix.len() + value.len());
+    s.push_str(prefix);
+    s.push_str(value);
+    s
+}
+
+/// Concatenate prefix, value, and suffix without format! overhead
+#[inline]
+fn concat_str3(prefix: &str, value: &str, suffix: &str) -> String {
+    let mut s = String::with_capacity(prefix.len() + value.len() + suffix.len());
+    s.push_str(prefix);
+    s.push_str(value);
+    s.push_str(suffix);
+    s
+}
+
+/// Concatenate four parts without format! overhead
+#[inline]
+fn concat_str4(a: &str, b: &str, c: &str, d: &str) -> String {
+    let mut s = String::with_capacity(a.len() + b.len() + c.len() + d.len());
+    s.push_str(a);
+    s.push_str(b);
+    s.push_str(c);
+    s.push_str(d);
+    s
+}
+
 const ROW_OVERHEAD: usize = 6;
 
 struct SelectorState<'a> {
@@ -109,7 +139,7 @@ impl<'a> TransientSwitch<'a> {
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {} (", delegate.description)),
+            Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
 
         if self.value.get() {
@@ -151,7 +181,7 @@ impl<'a> TransientOption<'a> {
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {} (", delegate.description)),
+            Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
 
         if let Some(val) = self.value.borrow().as_ref() {
@@ -197,7 +227,7 @@ impl<'a> TransientCyclicSwitch<'a> {
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {} (", delegate.description)),
+            Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
 
         if let Some(idx) = self.active_idx.get() {
@@ -222,7 +252,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                             Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                         ]);
                     } else {
-                        buf.add_change(Change::Text(format!("{}{}", prefix, choice)));
+                        buf.add_change(Change::Text(concat_str(prefix, choice)));
                     }
                     if cur_idx == 0 {
                         prefix = "|";
@@ -245,7 +275,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
-                    buf.add_change(Change::Text(format!("{}{}", prefix, choice)));
+                    buf.add_change(Change::Text(concat_str(prefix, choice)));
                     if cur_idx == 0 {
                         prefix = "|";
                     }
@@ -277,7 +307,7 @@ impl<'a> TransientArgument<'a> {
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(self.delegate.key.clone()),
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {}", self.delegate.description)),
+            Change::Text(concat_str(" ", &self.delegate.description)),
         ]);
 
         Ok(())
@@ -392,7 +422,7 @@ impl<'a> TransientState<'a> {
                     Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)),
                     Change::Text(entry.label.clone()),
                     Change::AllAttributes(CellAttributes::default()),
-                    Change::Text(format!(": {}", entry.id)),
+                    Change::Text(concat_str(": ", &entry.id)),
                 ]);
             }
         }
@@ -427,10 +457,14 @@ impl<'a> TransientState<'a> {
                     ]);
 
                     if let Some(default) = prompt_state.option.delegate.default.as_ref() {
-                        prompt_surface.add_change(Change::Text(format!(" (default {})", default)));
+                        prompt_surface.add_change(Change::Text(concat_str3(
+                            " (default ",
+                            default,
+                            ")",
+                        )));
                     }
 
-                    prompt_surface.add_change(Change::Text(format!(": {}", prompt_state.line)));
+                    prompt_surface.add_change(Change::Text(concat_str(": ", &prompt_state.line)));
                     self.buf.draw_from_screen(&prompt_surface, 0, rows - 3);
 
                     let (xpos, _) = prompt_surface.cursor_position();
@@ -458,10 +492,11 @@ impl<'a> TransientState<'a> {
                         Change::Text("─".repeat(cols)),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text(truncate_right(
-                            &format!(
-                                "\r\n{}: {}",
-                                selector_state.option.delegate.description,
-                                selector_state.filter_term
+                            &concat_str4(
+                                "\r\n",
+                                &selector_state.option.delegate.description,
+                                ": ",
+                                &selector_state.filter_term,
                             ),
                             max_width,
                         )),

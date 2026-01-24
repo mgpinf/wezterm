@@ -19,6 +19,15 @@ use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::{Clipboard, Modifiers, WindowOps};
 
+/// Concatenate a prefix and value without format! overhead
+#[inline]
+fn concat_str(prefix: &str, value: &str) -> String {
+    let mut s = String::with_capacity(prefix.len() + value.len());
+    s.push_str(prefix);
+    s.push_str(value);
+    s
+}
+
 #[derive(Clone)]
 struct SelectorEntry<'a> {
     delegate: &'a InputSelectorEntry,
@@ -239,7 +248,7 @@ impl<'a> SelectorState<'a> {
                     Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)),
                     Change::Text(entry.label.clone()),
                     Change::AllAttributes(CellAttributes::default()),
-                    Change::Text(format!(": {}", entry.id)),
+                    Change::Text(concat_str(": ", &entry.id)),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
             }
@@ -259,7 +268,7 @@ impl<'a> SelectorState<'a> {
                 Change::Attribute(AttributeChange::Foreground(self.colors.key_fg)),
                 Change::Text(positional_arg.key.clone()),
                 Change::AllAttributes(CellAttributes::default()),
-                Change::Text(format!(" {}", positional_arg.description)),
+                Change::Text(concat_str(" ", &positional_arg.description)),
             ]);
         }
 
@@ -345,7 +354,7 @@ impl<'a> SelectorState<'a> {
                 Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
                 Change::Text(truncate_right(&self.fuzzy_description, max_width)),
                 Change::AllAttributes(CellAttributes::default()),
-                Change::Text(format!(": {}", self.filter_term)),
+                Change::Text(concat_str(": ", &self.filter_term)),
             ]);
         }
 
