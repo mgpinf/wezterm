@@ -230,7 +230,7 @@ impl<'a> FormState<'a> {
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-            Change::Text("─".repeat(cols)),
+            Change::Text("─".repeat(title.len())),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
         ]);
