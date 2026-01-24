@@ -1074,7 +1074,11 @@ impl<'a> EditorState<'a> {
     /// Indent a single line by inserting shiftwidth (4) spaces at the start
     fn indent_line(&mut self, row: usize) {
         if row < self.lines.len() {
-            self.lines[row] = format!("{}{}", " ".repeat(SHIFTWIDTH), self.lines[row]);
+            let line = &self.lines[row];
+            let mut new_line = String::with_capacity(SHIFTWIDTH + line.len());
+            new_line.push_str(&Self::spaces(SHIFTWIDTH));
+            new_line.push_str(line);
+            self.lines[row] = new_line;
             self.lines_version += 1;
         }
     }
@@ -1100,7 +1104,11 @@ impl<'a> EditorState<'a> {
             let insert_col = col.min(line_len);
             let before: String = chars.iter().take(insert_col).collect();
             let after: String = chars.iter().skip(insert_col).collect();
-            self.lines[row] = format!("{}{}{}", before, " ".repeat(SHIFTWIDTH), after);
+            let mut new_line = String::with_capacity(before.len() + SHIFTWIDTH + after.len());
+            new_line.push_str(&before);
+            new_line.push_str(&Self::spaces(SHIFTWIDTH));
+            new_line.push_str(&after);
+            self.lines[row] = new_line;
             self.lines_version += 1;
         }
     }
@@ -1119,7 +1127,10 @@ impl<'a> EditorState<'a> {
             if remove > 0 {
                 let before: String = chars.iter().take(col).collect();
                 let after: String = chars.iter().skip(col + remove).collect();
-                self.lines[row] = format!("{}{}", before, after);
+                let mut new_line = String::with_capacity(before.len() + after.len());
+                new_line.push_str(&before);
+                new_line.push_str(&after);
+                self.lines[row] = new_line;
                 self.lines_version += 1;
             }
         }
@@ -5054,7 +5065,11 @@ impl<'a> EditorState<'a> {
         let chars = self.current_line_chars();
         let before: String = chars[..num.start].iter().collect();
         let after: String = chars[num.end..].iter().collect();
-        self.lines[self.cursor.0] = format!("{}{}{}", before, new_num_str, after);
+        let mut new_line = String::with_capacity(before.len() + new_num_str.len() + after.len());
+        new_line.push_str(&before);
+        new_line.push_str(&new_num_str);
+        new_line.push_str(&after);
+        self.lines[self.cursor.0] = new_line;
 
         let new_end = num.start + new_num_str.chars().count();
         self.cursor.1 = new_end.saturating_sub(1);
@@ -5243,38 +5258,72 @@ impl<'a> EditorState<'a> {
             if self.sub_confirm_mode {
                 flags.push('c');
             }
+            // Build cmd_display without format!() allocations
             let cmd_display = match self.sub_phase {
                 SubstitutePhase::Pattern => {
-                    format!("{}{}{}", prefix, delim, self.sub_pattern)
+                    let mut s = String::with_capacity(prefix.len() + 1 + self.sub_pattern.len());
+                    s.push_str(prefix);
+                    s.push(delim);
+                    s.push_str(&self.sub_pattern);
+                    s
                 }
                 SubstitutePhase::Replacement => {
                     if self.sub_closed {
-                        format!(
-                            "{}{}{}{}{}{}{}",
-                            prefix,
-                            delim,
-                            self.sub_pattern,
-                            delim,
-                            self.sub_replacement,
-                            delim,
-                            flags
-                        )
+                        let mut s = String::with_capacity(
+                            prefix.len()
+                                + 3 // 3 delimiters
+                                + self.sub_pattern.len()
+                                + self.sub_replacement.len()
+                                + flags.len(),
+                        );
+                        s.push_str(prefix);
+                        s.push(delim);
+                        s.push_str(&self.sub_pattern);
+                        s.push(delim);
+                        s.push_str(&self.sub_replacement);
+                        s.push(delim);
+                        s.push_str(&flags);
+                        s
                     } else {
-                        format!(
-                            "{}{}{}{}{}",
-                            prefix, delim, self.sub_pattern, delim, self.sub_replacement
-                        )
+                        let mut s = String::with_capacity(
+                            prefix.len()
+                                + 2 // 2 delimiters
+                                + self.sub_pattern.len()
+                                + self.sub_replacement.len(),
+                        );
+                        s.push_str(prefix);
+                        s.push(delim);
+                        s.push_str(&self.sub_pattern);
+                        s.push(delim);
+                        s.push_str(&self.sub_replacement);
+                        s
                     }
                 }
                 SubstitutePhase::Confirm => {
                     // Show confirm prompt with match info
+                    // "replace with '{}'? (y/n/a/q/l) [{}/{}] ({} replaced)"
                     let current = self.sub_current_match_idx + 1;
                     let total = self.sub_matches.len();
                     let replaced = self.sub_replace_count;
-                    format!(
-                        "replace with '{}'? (y/n/a/q/l) [{}/{}] ({} replaced)",
-                        self.sub_replacement, current, total, replaced
-                    )
+                    let current_str = current.to_string();
+                    let total_str = total.to_string();
+                    let replaced_str = replaced.to_string();
+                    let mut s = String::with_capacity(
+                        50 + self.sub_replacement.len()
+                            + current_str.len()
+                            + total_str.len()
+                            + replaced_str.len(),
+                    );
+                    s.push_str("replace with '");
+                    s.push_str(&self.sub_replacement);
+                    s.push_str("'? (y/n/a/q/l) [");
+                    s.push_str(&current_str);
+                    s.push('/');
+                    s.push_str(&total_str);
+                    s.push_str("] (");
+                    s.push_str(&replaced_str);
+                    s.push_str(" replaced)");
+                    s
                 }
             };
             self.add_changes_batch([
@@ -6104,7 +6153,9 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = false;
 
-                let new_line = format!("{}{}", end_prefix, start_suffix);
+                let mut new_line = String::with_capacity(end_prefix.len() + start_suffix.len());
+                new_line.push_str(&end_prefix);
+                new_line.push_str(&start_suffix);
 
                 self.lines.drain(end.0 + 1..=start.0);
                 self.lines[end.0] = new_line;
@@ -6217,7 +6268,9 @@ impl<'a> EditorState<'a> {
                 self.yank_buffer = deleted_text;
                 self.yank_is_linewise = false;
 
-                let new_line = format!("{}{}", start_prefix, end_suffix);
+                let mut new_line = String::with_capacity(start_prefix.len() + end_suffix.len());
+                new_line.push_str(&start_prefix);
+                new_line.push_str(&end_suffix);
                 let new_line_empty = new_line.is_empty();
 
                 self.lines.drain(start.0 + 1..=end.0);
@@ -7922,12 +7975,13 @@ impl<'a> EditorState<'a> {
             // Convert char position to byte position
             let start_byte: usize = line.chars().take(col).map(|c| c.len_utf8()).sum();
             let end_byte: usize = line.chars().take(col + len).map(|c| c.len_utf8()).sum();
-            let new_line = format!(
-                "{}{}{}",
-                &line[..start_byte],
-                self.sub_replacement,
-                &line[end_byte..]
-            );
+            let before = &line[..start_byte];
+            let after = &line[end_byte..];
+            let mut new_line =
+                String::with_capacity(before.len() + self.sub_replacement.len() + after.len());
+            new_line.push_str(before);
+            new_line.push_str(&self.sub_replacement);
+            new_line.push_str(after);
 
             let replacement_len = self.sub_replacement.chars().count();
             let len_diff = replacement_len as isize - len as isize;
@@ -13480,7 +13534,12 @@ mod tests {
             let chars: Vec<char> = line.chars().collect();
             let before: String = chars[..num.start].iter().collect();
             let after: String = chars[num.end..].iter().collect();
-            *line = format!("{}{}{}", before, new_num_str, after);
+            let mut new_line =
+                String::with_capacity(before.len() + new_num_str.len() + after.len());
+            new_line.push_str(&before);
+            new_line.push_str(&new_num_str);
+            new_line.push_str(&after);
+            *line = new_line;
 
             // Position cursor at the last digit of the new number
             let new_end = num.start + new_num_str.chars().count();
