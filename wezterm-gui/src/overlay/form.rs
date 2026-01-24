@@ -514,12 +514,24 @@ impl<'a> FormState<'a> {
             }
         }
 
+        // Hide cursor when a selector field is active but dropdown is closed
+        // (no text input happening in that state)
+        let cursor_visible = if self.is_selector_field(self.active_idx) {
+            self.is_dropdown_open(self.active_idx)
+        } else {
+            true
+        };
+
         self.buf.add_changes(vec![
             Change::CursorPosition {
                 x: Position::Absolute(cursor_x),
                 y: Position::Absolute(cursor_y),
             },
-            Change::CursorVisibility(CursorVisibility::Visible),
+            Change::CursorVisibility(if cursor_visible {
+                CursorVisibility::Visible
+            } else {
+                CursorVisibility::Hidden
+            }),
         ]);
 
         self.buf.flush()?;
