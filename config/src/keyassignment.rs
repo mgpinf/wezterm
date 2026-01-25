@@ -896,11 +896,27 @@ pub struct ArgumentSection {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct SelectorActionsEntryMetadata {
+    pub name: String,
+    #[dynamic(default)]
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct SelectorActionsEntry {
+    pub label: String,
+    #[dynamic(default)]
+    pub id: Option<String>,
+    #[dynamic(default)]
+    pub metadata: Option<Vec<SelectorActionsEntryMetadata>>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct SelectorActions {
     pub description: String,
     #[dynamic(default)]
     pub context: Option<TransientContext>,
-    pub choices: Vec<InputSelectorEntry>,
+    pub choices: Vec<SelectorActionsEntry>,
     pub section: ArgumentSection,
     #[dynamic(default)]
     pub multiple: bool,

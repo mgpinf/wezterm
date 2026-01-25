@@ -2,7 +2,7 @@ use crate::overlay::common::{KeyLookup, KeyMap, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
-    InputSelectorEntry, KeyAssignment, SelectorActions, TransientArgument, TransientContext,
+    KeyAssignment, SelectorActions, SelectorActionsEntry, TransientArgument, TransientContext,
 };
 use config::ColorAttribute;
 use luahelper::impl_lua_conversion_dynamic;
@@ -30,7 +30,7 @@ fn concat_str(prefix: &str, value: &str) -> String {
 
 #[derive(Clone)]
 struct SelectorEntry<'a> {
-    delegate: &'a InputSelectorEntry,
+    delegate: &'a SelectorActionsEntry,
     idx: usize,
 }
 
@@ -505,7 +505,7 @@ impl<'a> SelectorState<'a> {
                                 _ => anyhow::bail!("SelectorActions requires action to be defined by wezterm.action_callback")
                             };
 
-                            let mut choices: Vec<InputSelectorEntry> = vec![];
+                            let mut choices: Vec<SelectorActionsEntry> = vec![];
 
                             if let Some(multiple_idx) = self.multiple_idx.as_ref() {
                                 choices.extend(
@@ -513,9 +513,10 @@ impl<'a> SelectorState<'a> {
                                         .iter()
                                         .enumerate()
                                         .filter(|(_, val)| **val)
-                                        .map(|(idx, _)| InputSelectorEntry {
+                                        .map(|(idx, _)| SelectorActionsEntry {
                                             label: self.choices[idx].delegate.label.clone(),
                                             id: self.choices[idx].delegate.id.clone(),
+                                            metadata: self.choices[idx].delegate.metadata.clone(),
                                         }),
                                 );
                             }
@@ -527,9 +528,10 @@ impl<'a> SelectorState<'a> {
 
                             if choices.is_empty() {
                                 let entry = self.filtered_entries[self.active_idx];
-                                choices.push(InputSelectorEntry {
+                                choices.push(SelectorActionsEntry {
                                     label: entry.delegate.label.clone(),
                                     id: entry.delegate.id.clone(),
+                                    metadata: entry.delegate.metadata.clone(),
                                 });
                             }
 
@@ -596,7 +598,7 @@ impl<'a> SelectorState<'a> {
 
 #[derive(FromDynamic, ToDynamic)]
 struct SelectorActionsResult {
-    choices: Vec<InputSelectorEntry>,
+    choices: Vec<SelectorActionsEntry>,
 }
 impl_lua_conversion_dynamic!(SelectorActionsResult);
 
