@@ -12566,11 +12566,10 @@ mod tests {
                         .iter()
                         .enumerate()
                         .map(|(i, &c)| {
-                            if row == start_row && i >= start_col {
-                                transform(c)
-                            } else if row == end_row && i <= end_col {
-                                transform(c)
-                            } else if row > start_row && row < end_row {
+                            if (row == start_row && i >= start_col)
+                                || (row == end_row && i <= end_col)
+                                || (row > start_row && row < end_row)
+                            {
                                 transform(c)
                             } else {
                                 c
