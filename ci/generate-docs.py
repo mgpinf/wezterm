@@ -387,8 +387,28 @@ TOC = [
                 "config/lua/wezterm.color",
             ),
             Gen(
+                "module: wezterm.crypto",
+                "config/lua/wezterm.crypto",
+            ),
+            Gen(
+                "module: wezterm.docker",
+                "config/lua/wezterm.docker",
+            ),
+            Gen(
+                "module: wezterm.git",
+                "config/lua/wezterm.git",
+            ),
+            Gen(
+                "module: wezterm.github",
+                "config/lua/wezterm.github",
+            ),
+            Gen(
                 "module: wezterm.gui",
                 "config/lua/wezterm.gui",
+            ),
+            Gen(
+                "module: wezterm.http",
+                "config/lua/wezterm.http",
             ),
             Gen(
                 "module: wezterm.mux",
