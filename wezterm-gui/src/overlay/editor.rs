@@ -10659,6 +10659,18 @@ impl<'a> EditorState<'a> {
                         }
                     }
                     InputEvent::Key(KeyEvent {
+                        key: KeyCode::Tab,
+                        modifiers,
+                    }) => {
+                        if !modifiers.contains(Modifiers::CTRL)
+                            && !modifiers.contains(Modifiers::ALT)
+                        {
+                            let spaces = Self::spaces(SHIFTWIDTH);
+                            self.insert_text(&spaces);
+                            self.insert_buffer.push_str(&spaces);
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
                         modifiers,
                     }) => {
