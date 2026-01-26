@@ -13,12 +13,6 @@ This is useful for storing sensitive data like SSH passphrases, API tokens,
 or any credentials that your Lua configuration needs to access without
 hardcoding them in plain text.
 
-## Available functions
-
-  - [delete](delete.md) - Delete a stored password
-  - [get](get.md) - Retrieve a stored password
-  - [set](set.md) - Store a password
-
 ## Example: SSH passphrase helper
 
 ```lua
@@ -35,3 +29,10 @@ wezterm.on('mux-startup', function()
   end
 end)
 ```
+
+## Available functions
+
+
+  - [delete](delete.md)
+  - [get](get.md)
+  - [set](set.md)
