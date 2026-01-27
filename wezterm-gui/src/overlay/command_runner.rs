@@ -492,6 +492,14 @@ impl CommandState {
         }
     }
 
+    fn clear_output(&mut self) {
+        self.output_lines.clear();
+        self.line_byte_lengths.clear();
+        self.pending_line.clear();
+        self.output_size = 0;
+        self.output_generation = self.output_generation.wrapping_add(1);
+    }
+
     fn append_output(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;
@@ -789,6 +797,21 @@ impl CommandRunnerState {
         match self.current_command_idx() {
             Some(idx) => self.output_wrapped_row_count(idx),
             None => 0,
+        }
+    }
+
+    fn clear_command_output(&mut self, command_idx: usize) {
+        let Some(cmd) = self.commands.get_mut(command_idx) else {
+            return;
+        };
+
+        cmd.clear_output();
+
+        if self.current_command_idx() == Some(command_idx) {
+            self.scroll_offset = 0;
+            self.clear_current_match();
+            self.clear_filtered_lines();
+            self.reset_current_line_to_scroll_offset();
         }
     }
 
@@ -2109,6 +2132,16 @@ impl CommandRunnerState {
                 }
             }
             InputEvent::Key(KeyEvent {
+                key: KeyCode::Char('L'),
+                modifiers: Modifiers::CTRL,
+            }) => {
+                self.reset_count();
+                self.list_selection_input.clear();
+                if self.list_selection < self.commands.len() {
+                    self.clear_command_output(self.list_selection);
+                }
+            }
+            InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('q'),
                 modifiers: Modifiers::NONE,
             }) => {
@@ -2386,6 +2419,13 @@ impl CommandRunnerState {
                 let _ = process_tx.try_send(ProcessMessage::Kill(command_idx));
             }
             InputEvent::Key(KeyEvent {
+                key: KeyCode::Char('L'),
+                modifiers: Modifiers::CTRL,
+            }) => {
+                self.reset_count();
+                self.clear_command_output(command_idx);
+            }
+            InputEvent::Key(KeyEvent {
                 key: KeyCode::Escape,
                 ..
             }) => {
@@ -2505,6 +2545,18 @@ impl CommandRunnerState {
                 } else {
                     self.clear_filtered_lines();
                 }
+                self.view_mode = ViewMode::Filter {
+                    command_idx,
+                    pattern,
+                    mode,
+                    context,
+                };
+            }
+            InputEvent::Key(KeyEvent {
+                key: KeyCode::Char('L'),
+                modifiers: Modifiers::CTRL,
+            }) => {
+                self.clear_command_output(command_idx);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
                     pattern,
@@ -2828,11 +2880,7 @@ pub fn show_command_runner_overlay(
 
                     if let Some(cmd) = state.commands.get_mut(idx) {
                         cmd.status = CommandStatus::Running;
-                        cmd.output_lines.clear();
-                        cmd.line_byte_lengths.clear();
-                        cmd.pending_line.clear();
-                        cmd.output_size = 0;
-                        cmd.output_generation = cmd.output_generation.wrapping_add(1);
+                        cmd.clear_output();
                         cmd.start_time = Some(Instant::now());
                         cmd.end_time = None;
                         dirty = true;
