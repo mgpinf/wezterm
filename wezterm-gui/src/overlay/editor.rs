@@ -17,6 +17,8 @@ struct EditorColors {
     text_fg: ColorAttribute,
     line_number_fg: ColorAttribute,
     current_line_number_fg: ColorAttribute,
+    current_line_fg: ColorAttribute,
+    current_line_bg: Option<ColorAttribute>,
     status_fg: ColorAttribute,
     status_bg: ColorAttribute,
     last_row_fg: ColorAttribute,
@@ -60,14 +62,20 @@ impl EditorColors {
                 c.into()
             });
 
+        let text_fg = colors.foreground.map_or(ColorAttribute::Default, |c| {
+            ColorAttribute::TrueColorWithDefaultFallback(c.into())
+        });
+
         Self {
-            text_fg: colors.foreground.map_or(ColorAttribute::Default, |c| {
-                ColorAttribute::TrueColorWithDefaultFallback(c.into())
-            }),
+            text_fg,
             line_number_fg,
             current_line_number_fg: colors
                 .input_text_current_line_number_fg
                 .map_or(line_number_fg, |c| c.into()),
+            current_line_fg: colors
+                .input_text_current_line_fg
+                .map_or(text_fg, |c| c.into()),
+            current_line_bg: colors.input_text_current_line_bg.map(|c| c.into()),
             status_fg: colors.input_text_status_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
@@ -5636,7 +5644,14 @@ impl<'a> EditorState<'a> {
                 } else if self.mode == EditorMode::SubstitutePreview {
                     self.render_segment_with_substitute_highlight(&segment, line_idx, start_col);
                 } else {
-                    self.render_segment_with_search_highlight(&segment, line_idx, start_col);
+                    let is_cursor_line = line_idx == self.cursor.0;
+                    self.render_segment_with_search_highlight(
+                        &segment,
+                        line_idx,
+                        start_col,
+                        is_cursor_line,
+                        content_width,
+                    );
                 }
 
                 visual_row += 1;
@@ -5741,19 +5756,42 @@ impl<'a> EditorState<'a> {
         segment: &str,
         line_idx: usize,
         start_col: usize,
+        is_cursor_line: bool,
+        content_width: usize,
     ) {
+        // Determine foreground/background colors for non-highlighted text
+        let has_current_line_bg = is_cursor_line && self.colors.current_line_bg.is_some();
+        let (text_fg, text_bg) = if is_cursor_line {
+            (
+                self.colors.current_line_fg,
+                self.colors
+                    .current_line_bg
+                    .unwrap_or(ColorAttribute::Default),
+            )
+        } else {
+            (self.colors.text_fg, ColorAttribute::Default)
+        };
+
+        let segment_len = segment.chars().count();
+
         if !self.search_highlight || self.search_pattern.is_empty() {
             self.add_changes_batch([
-                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Attribute(AttributeChange::Foreground(text_fg)),
+                Change::Attribute(AttributeChange::Background(text_bg)),
                 Change::Text(segment.to_string()),
             ]);
+            // Extend current line bg to end of visible line
+            if has_current_line_bg && segment_len < content_width {
+                let padding = content_width - segment_len;
+                self.add_changes_batch([Change::Text(Self::spaces(padding))]);
+            }
+            self.add_changes_batch([Change::AllAttributes(CellAttributes::default())]);
             return;
         }
 
         let line = &self.lines[line_idx];
         let pattern = &self.search_pattern;
-        let is_current_line = self.current_match.is_some_and(|(r, _)| r == line_idx);
-        let segment_len = segment.chars().count();
+        let is_current_match_line = self.current_match.is_some_and(|(r, _)| r == line_idx);
         let end_col = start_col + segment_len;
 
         let mut matches: Vec<(usize, usize)> = Vec::with_capacity(4);
@@ -5777,9 +5815,16 @@ impl<'a> EditorState<'a> {
 
         if matches.is_empty() {
             self.add_changes_batch([
-                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Attribute(AttributeChange::Foreground(text_fg)),
+                Change::Attribute(AttributeChange::Background(text_bg)),
                 Change::Text(segment.to_string()),
             ]);
+            // Extend current line bg to end of visible line
+            if has_current_line_bg && segment_len < content_width {
+                let padding = content_width - segment_len;
+                self.add_changes_batch([Change::Text(Self::spaces(padding))]);
+            }
+            self.add_changes_batch([Change::AllAttributes(CellAttributes::default())]);
             return;
         }
 
@@ -5795,12 +5840,14 @@ impl<'a> EditorState<'a> {
             if seg_match_start > last_pos {
                 let before = Self::char_substring(segment, last_pos, seg_match_start);
                 self.add_changes_batch([
-                    Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                    Change::Attribute(AttributeChange::Foreground(text_fg)),
+                    Change::Attribute(AttributeChange::Background(text_bg)),
                     Change::Text(before),
+                    Change::AllAttributes(CellAttributes::default()),
                 ]);
             }
 
-            let is_current = is_current_line
+            let is_current = is_current_match_line
                 && self
                     .current_match
                     .is_some_and(|(_, c)| c >= match_start && c < match_end);
@@ -5830,10 +5877,17 @@ impl<'a> EditorState<'a> {
         if last_pos < segment_len {
             let after = Self::char_substring(segment, last_pos, segment_len);
             self.add_changes_batch([
-                Change::Attribute(AttributeChange::Foreground(self.colors.text_fg)),
+                Change::Attribute(AttributeChange::Foreground(text_fg)),
+                Change::Attribute(AttributeChange::Background(text_bg)),
                 Change::Text(after),
             ]);
         }
+        // Extend current line bg to end of visible line
+        if has_current_line_bg && segment_len < content_width {
+            let padding = content_width - segment_len;
+            self.add_changes_batch([Change::Text(Self::spaces(padding))]);
+        }
+        self.add_changes_batch([Change::AllAttributes(CellAttributes::default())]);
     }
 
     fn render_segment_with_substitute_highlight(

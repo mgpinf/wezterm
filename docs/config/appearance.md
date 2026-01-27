@@ -188,6 +188,8 @@ config.colors = {
   input_text_status_bg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   input_text_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   input_text_current_line_number_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_current_line_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  input_text_current_line_bg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   input_text_search_match_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   input_text_search_match_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
   input_text_search_current_match_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
