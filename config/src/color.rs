@@ -187,6 +187,8 @@ pub struct Palette {
     pub command_runner_output_margin_fg: Option<ColorSpec>,
     pub command_runner_output_line_number_fg: Option<ColorSpec>,
     pub command_runner_output_active_line_number_fg: Option<ColorSpec>,
+    pub command_runner_output_current_line_fg: Option<ColorSpec>,
+    pub command_runner_output_current_line_bg: Option<ColorSpec>,
     pub command_runner_match_fg: Option<ColorSpec>,
     pub command_runner_match_bg: Option<ColorSpec>,
     pub command_runner_current_match_fg: Option<ColorSpec>,
@@ -255,6 +257,8 @@ impl Palette {
             command_runner_output_active_line_number_fg: overlay!(
                 command_runner_output_active_line_number_fg
             ),
+            command_runner_output_current_line_fg: overlay!(command_runner_output_current_line_fg),
+            command_runner_output_current_line_bg: overlay!(command_runner_output_current_line_bg),
             command_runner_match_fg: overlay!(command_runner_match_fg),
             command_runner_match_bg: overlay!(command_runner_match_bg),
             command_runner_current_match_fg: overlay!(command_runner_current_match_fg),
