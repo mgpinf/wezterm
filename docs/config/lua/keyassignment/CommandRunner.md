@@ -99,6 +99,7 @@ List view:
 * <kbd>Enter</kbd>: open output view
 * <kbd>r</kbd>: rerun selected command
 * <kbd>Ctrl</kbd>+<kbd>C</kbd>: kill selected command
+* <kbd>Ctrl</kbd>+<kbd>L</kbd>: clear output for selected command
 * <kbd>q</kbd>: quit (prompts if commands are running)
 
 Note: keys present in `alphabet` are reserved for quick selection; remove any
@@ -109,11 +110,13 @@ Output view:
 * <kbd>n</kbd>/<kbd>N</kbd>: next/previous match
 * <kbd>y</kbd>: copy the current line (accepts a numeric prefix)
 * <kbd>/</kbd>: open filter input
+* <kbd>Ctrl</kbd>+<kbd>L</kbd>: clear output for current command
 * <kbd>q</kbd>: return to list view
 
 Filter input:
 * <kbd>Enter</kbd>: apply filter and return to output view
 * <kbd>Escape</kbd>: cancel input (restores the prior filter)
 * <kbd>Ctrl</kbd>+<kbd>U</kbd>: clear pattern
+* <kbd>Ctrl</kbd>+<kbd>L</kbd>: clear output for current command
 * <kbd>Ctrl</kbd>+<kbd>R</kbd>: cycle search mode
 * <kbd>Tab</kbd>/<kbd>Shift</kbd>+<kbd>Tab</kbd>: increase/decrease context
