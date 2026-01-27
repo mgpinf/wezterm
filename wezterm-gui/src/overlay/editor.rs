@@ -16,6 +16,7 @@ use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 struct EditorColors {
     text_fg: ColorAttribute,
     line_number_fg: ColorAttribute,
+    current_line_number_fg: ColorAttribute,
     status_fg: ColorAttribute,
     status_bg: ColorAttribute,
     last_row_fg: ColorAttribute,
@@ -53,15 +54,20 @@ impl EditorColors {
         let config = configuration();
         let colors = &config.resolved_palette;
 
+        let line_number_fg = colors
+            .input_text_line_number_fg
+            .map_or(ColorAttribute::PaletteIndex(AnsiColor::Grey.into()), |c| {
+                c.into()
+            });
+
         Self {
             text_fg: colors.foreground.map_or(ColorAttribute::Default, |c| {
                 ColorAttribute::TrueColorWithDefaultFallback(c.into())
             }),
-            line_number_fg: colors
-                .input_text_line_number_fg
-                .map_or(ColorAttribute::PaletteIndex(AnsiColor::Grey.into()), |c| {
-                    c.into()
-                }),
+            line_number_fg,
+            current_line_number_fg: colors
+                .input_text_current_line_number_fg
+                .map_or(line_number_fg, |c| c.into()),
             status_fg: colors.input_text_status_fg.map_or_else(
                 || {
                     colors.background.map_or(ColorAttribute::Default, |c| {
@@ -5556,12 +5562,18 @@ impl<'a> EditorState<'a> {
                     EMPTY_GUTTER.to_string()
                 };
 
+                let line_number_fg = if line_idx == self.cursor.0 {
+                    self.colors.current_line_number_fg
+                } else {
+                    self.colors.line_number_fg
+                };
+
                 self.add_changes_batch([
                     Change::CursorPosition {
                         x: Position::Absolute(0),
                         y: Position::Absolute(content_start_row + visual_row),
                     },
-                    Change::Attribute(AttributeChange::Foreground(self.colors.line_number_fg)),
+                    Change::Attribute(AttributeChange::Foreground(line_number_fg)),
                     Change::Text(line_number_text),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
