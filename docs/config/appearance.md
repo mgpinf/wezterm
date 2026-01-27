@@ -213,6 +213,8 @@ config.colors = {
   command_runner_output_margin_fg = { AnsiColor = 'Teal' }, -- {{since('nightly', inline=True)}}
   command_runner_output_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   command_runner_output_active_line_number_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_current_line_fg = 'Default', -- {{since('nightly', inline=True)}}
+  command_runner_output_current_line_bg = 'Default', -- {{since('nightly', inline=True)}}
   command_runner_match_fg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   command_runner_match_bg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
   command_runner_current_match_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
@@ -642,4 +644,3 @@ through to `1.0` (completely opaque).
 ```lua
 config.text_background_opacity = 0.3
 ```
-

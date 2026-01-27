@@ -30,6 +30,8 @@ struct CommandRunnerColors {
     margin_fg: ColorAttribute,
     line_number_fg: ColorAttribute,
     active_line_number_fg: ColorAttribute,
+    current_line_fg: Option<ColorAttribute>,
+    current_line_bg: Option<ColorAttribute>,
     match_fg: ColorAttribute,
     match_bg: ColorAttribute,
     current_match_fg: ColorAttribute,
@@ -69,6 +71,12 @@ impl CommandRunnerColors {
                 .command_runner_output_active_line_number_fg
                 .unwrap_or(AnsiColor::White.into())
                 .into(),
+            current_line_fg: colors
+                .command_runner_output_current_line_fg
+                .map(|fg| fg.into()),
+            current_line_bg: colors
+                .command_runner_output_current_line_bg
+                .map(|bg| bg.into()),
             match_fg: colors
                 .command_runner_match_fg
                 .unwrap_or(AnsiColor::Black.into())
@@ -299,9 +307,27 @@ fn push_text_with_highlights(
     segment: &WrappedSegment,
     colors: &CommandRunnerColors,
     current_match_id: Option<usize>,
+    line_fg: Option<ColorAttribute>,
+    line_bg: Option<ColorAttribute>,
 ) {
+    let has_line_style = line_fg.is_some() || line_bg.is_some();
+    let apply_line_style = |changes: &mut Vec<Change>| {
+        if let Some(bg) = line_bg {
+            changes.push(AttributeChange::Background(bg).into());
+        }
+        if let Some(fg) = line_fg {
+            changes.push(AttributeChange::Foreground(fg).into());
+        }
+    };
+
     if segment.highlights.is_empty() {
+        if has_line_style {
+            apply_line_style(changes);
+        }
         changes.push(Change::Text(segment.text.to_string()));
+        if has_line_style {
+            changes.push(Change::AllAttributes(Default::default()));
+        }
         return;
     }
 
@@ -316,9 +342,15 @@ fn push_text_with_highlights(
             continue;
         }
         if start_byte > last_byte {
+            if has_line_style {
+                apply_line_style(changes);
+            }
             changes.push(Change::Text(
                 segment.text[last_byte..start_byte].to_string(),
             ));
+            if has_line_style {
+                changes.push(Change::AllAttributes(Default::default()));
+            }
         }
 
         let is_current = current_match_id == Some(hl.match_id);
@@ -338,7 +370,13 @@ fn push_text_with_highlights(
     }
 
     if last_byte < segment.text.len() {
+        if has_line_style {
+            apply_line_style(changes);
+        }
         changes.push(Change::Text(segment.text[last_byte..].to_string()));
+        if has_line_style {
+            changes.push(Change::AllAttributes(Default::default()));
+        }
     }
 }
 
@@ -1821,6 +1859,12 @@ impl CommandRunnerState {
             None
         };
         let number_width = self.line_number_width_for(cmd_idx);
+        let gutter_width = if number_width > 0 {
+            number_width + 1
+        } else {
+            0
+        };
+        let content_width = self.screen_cols.saturating_sub(gutter_width).max(1);
 
         changes.push(Change::CursorPosition {
             x: Position::Absolute(0),
@@ -1890,6 +1934,7 @@ impl CommandRunnerState {
             None
         };
 
+        let mut logical_line_number = None;
         for row in 0..visible_rows {
             let line_idx = self.scroll_offset + row;
             changes.push(Change::CursorPosition {
@@ -1919,12 +1964,38 @@ impl CommandRunnerState {
                             changes.push(Change::Text(" ".repeat(number_width + 1)));
                         }
                     }
+                    if let Some(line_number) = segment.line_number {
+                        logical_line_number = Some(line_number);
+                    }
+                    let is_current_line =
+                        active_line_number.is_some() && logical_line_number == active_line_number;
+                    let (line_fg, line_bg) = if is_current_line {
+                        (self.colors.current_line_fg, self.colors.current_line_bg)
+                    } else {
+                        (None, None)
+                    };
+                    let segment_width = str_column_width(&segment.text).min(content_width);
                     push_text_with_highlights(
                         &mut changes,
                         segment,
                         &self.colors,
                         current_match_id,
+                        line_fg,
+                        line_bg,
                     );
+                    if is_current_line {
+                        if let Some(bg) = line_bg {
+                            let remaining = content_width.saturating_sub(segment_width);
+                            if remaining > 0 {
+                                changes.push(AttributeChange::Background(bg).into());
+                                if let Some(fg) = line_fg {
+                                    changes.push(AttributeChange::Foreground(fg).into());
+                                }
+                                changes.push(Change::Text(" ".repeat(remaining)));
+                                changes.push(Change::AllAttributes(Default::default()));
+                            }
+                        }
+                    }
                 }
             }
         }
