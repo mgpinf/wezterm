@@ -14,6 +14,21 @@ use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::Modifiers;
 
+/// Maximum number of visible rows in a dropdown selector.
+const MAX_DROPDOWN_VISIBLE_ROWS: usize = 8;
+
+/// Default maximum width for dropdown selectors.
+const DEFAULT_DROPDOWN_WIDTH: usize = 30;
+
+/// Number of rows occupied by the form header (title + underline + blank line).
+const HEADER_ROWS: usize = 3;
+
+/// Width of field prefix for text/selector fields: "* " (2) + ": " (2) = 4.
+const FIELD_PREFIX_WIDTH: usize = 4;
+
+/// Width of field prefix for checkbox fields: "* " (2) + " " (1) = 3 (no colon).
+const CHECKBOX_PREFIX_WIDTH: usize = 3;
+
 struct FormColors {
     label_fg: ColorAttribute,
     active_label_fg: ColorAttribute,
@@ -264,19 +279,23 @@ impl<'a> FormState<'a> {
 
         let mut cursor_x = 0;
         let mut cursor_y = 0;
-        let mut current_row = 3;
+        let mut current_row = HEADER_ROWS;
 
         // Pre-calculate dropdown info to know how to offset rows
         let mut dropdown_info: Option<(usize, usize, usize)> = None; // (field_idx, start_row, height)
         for (idx, _field) in self.args.fields.iter().enumerate() {
             if self.is_dropdown_open(idx) {
                 if let Some(Some(selector_state)) = self.selector_states.get(idx) {
-                    let start_row = 3 + idx + 1; // row after this field
-                    let max_height = rows.saturating_sub(start_row + 3); // leave room for submit
+                    let start_row = HEADER_ROWS + idx + 1; // row after this field
+                    let max_height = rows.saturating_sub(start_row + HEADER_ROWS); // leave room for submit
                     let height = if selector_state.filtered_choices.is_empty() {
                         1
                     } else {
-                        selector_state.filtered_choices.len().min(max_height).min(8)
+                        selector_state
+                            .filtered_choices
+                            .len()
+                            .min(max_height)
+                            .min(MAX_DROPDOWN_VISIBLE_ROWS)
                     };
                     // Add 1 for the bottom border of dropdown
                     dropdown_info = Some((idx, start_row, height + 1));
@@ -295,7 +314,7 @@ impl<'a> FormState<'a> {
             let is_after_dropdown = if let Some((dropdown_idx, _start, height)) = dropdown_info {
                 if idx > dropdown_idx {
                     // Position this field after the dropdown
-                    let field_row = 3 + idx + height;
+                    let field_row = HEADER_ROWS + idx + height;
                     self.buf.add_changes(vec![Change::CursorPosition {
                         x: Position::Absolute(0),
                         y: Position::Absolute(field_row),
@@ -351,8 +370,8 @@ impl<'a> FormState<'a> {
 
                 if is_active {
                     cursor_y = current_row;
-                    // Position cursor on the checkbox (no colon, so +3 instead of +4)
-                    cursor_x = field.label.chars().count() + 3 + 1; // +1 to be inside the brackets
+                    // Position cursor inside the checkbox brackets
+                    cursor_x = field.label.chars().count() + CHECKBOX_PREFIX_WIDTH + 1;
                 }
             } else if is_selector {
                 // For selector fields
@@ -369,7 +388,7 @@ impl<'a> FormState<'a> {
                         if is_active {
                             cursor_y = current_row;
                             cursor_x = field.label.chars().count()
-                                + 4
+                                + FIELD_PREFIX_WIDTH
                                 + 1
                                 + selector_state.filter_term.chars().count();
                         }
@@ -412,7 +431,7 @@ impl<'a> FormState<'a> {
 
                         if is_active {
                             cursor_y = current_row;
-                            cursor_x = field.label.chars().count() + 4;
+                            cursor_x = field.label.chars().count() + FIELD_PREFIX_WIDTH;
                         }
                     }
                 }
@@ -443,7 +462,8 @@ impl<'a> FormState<'a> {
 
                 if is_active {
                     cursor_y = current_row;
-                    cursor_x = field.label.chars().count() + 4 + self.field_cursors[idx];
+                    cursor_x =
+                        field.label.chars().count() + FIELD_PREFIX_WIDTH + self.field_cursors[idx];
                 }
 
                 self.buf.add_changes(vec![
@@ -460,8 +480,9 @@ impl<'a> FormState<'a> {
         if let Some((field_idx, dropdown_start_row, total_height)) = dropdown_info {
             if let Some(Some(selector_state)) = self.selector_states.get(field_idx) {
                 let field = &self.args.fields[field_idx];
-                let label_offset = field.label.chars().count() + 4;
-                let dropdown_width = 30.min(cols.saturating_sub(label_offset + 2));
+                let label_offset = field.label.chars().count() + FIELD_PREFIX_WIDTH;
+                let dropdown_width =
+                    DEFAULT_DROPDOWN_WIDTH.min(cols.saturating_sub(label_offset + 2));
                 // total_height includes the border row, so actual choice rows = total_height - 1
                 let choice_rows = total_height.saturating_sub(1);
 
@@ -672,9 +693,11 @@ impl<'a> FormState<'a> {
                     let max_idx = selector_state.filtered_choices.len().saturating_sub(1);
                     selector_state.active_choice_idx =
                         (selector_state.active_choice_idx + 1).min(max_idx);
-                    // Scroll down if needed (assuming max 8 visible items)
-                    if selector_state.active_choice_idx > selector_state.top_row + 7 {
-                        selector_state.top_row = selector_state.active_choice_idx.saturating_sub(7);
+                    // Scroll down if needed
+                    let last_visible_row = selector_state.top_row + MAX_DROPDOWN_VISIBLE_ROWS - 1;
+                    if selector_state.active_choice_idx > last_visible_row {
+                        selector_state.top_row =
+                            selector_state.active_choice_idx - (MAX_DROPDOWN_VISIBLE_ROWS - 1);
                     }
                 }
                 true
