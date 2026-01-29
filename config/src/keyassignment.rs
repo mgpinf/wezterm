@@ -1169,6 +1169,20 @@ impl FormFieldValue {
             _ => None,
         }
     }
+
+    pub fn as_string_mut(&mut self) -> Option<&mut String> {
+        match self {
+            FormFieldValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool_mut(&mut self) -> Option<&mut bool> {
+        match self {
+            FormFieldValue::Bool(b) => Some(b),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

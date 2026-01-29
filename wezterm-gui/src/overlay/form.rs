@@ -179,10 +179,7 @@ impl<'a> FormState<'a> {
             .collect();
         let field_cursors = field_values
             .iter()
-            .map(|v| match v {
-                FormFieldValue::String(s) => s.chars().count(),
-                FormFieldValue::Bool(_) => 0,
-            })
+            .map(|v| v.as_string().map(|s| s.chars().count()).unwrap_or(0))
             .collect();
 
         let selector_states: Vec<Option<SelectorFieldState>> = args
@@ -229,7 +226,7 @@ impl<'a> FormState<'a> {
     }
 
     fn toggle_checkbox(&mut self, idx: usize) {
-        if let Some(FormFieldValue::Bool(b)) = self.field_values.get_mut(idx) {
+        if let Some(b) = self.field_values.get_mut(idx).and_then(|v| v.as_bool_mut()) {
             *b = !*b;
         }
     }
@@ -781,8 +778,10 @@ impl<'a> FormState<'a> {
                     .filter(|c| !c.is_control() && *c != '\n' && *c != '\r')
                     .collect();
                 if !filtered.is_empty() {
-                    if let Some(FormFieldValue::String(value)) =
-                        self.field_values.get_mut(self.active_idx)
+                    if let Some(value) = self
+                        .field_values
+                        .get_mut(self.active_idx)
+                        .and_then(|v| v.as_string_mut())
                     {
                         let pos = self.field_cursors[self.active_idx];
                         let mut chars: Vec<char> = value.chars().collect();
@@ -816,8 +815,12 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('F'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                let FormFieldValue::String(s) = &self.field_values[self.active_idx] else {
-                    unreachable!()
+                let Some(s) = self
+                    .field_values
+                    .get(self.active_idx)
+                    .and_then(|v| v.as_string())
+                else {
+                    return true;
                 };
                 if self.field_cursors[self.active_idx] < s.chars().count() {
                     self.field_cursors[self.active_idx] += 1;
@@ -841,8 +844,12 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('E'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                let FormFieldValue::String(s) = &self.field_values[self.active_idx] else {
-                    unreachable!()
+                let Some(s) = self
+                    .field_values
+                    .get(self.active_idx)
+                    .and_then(|v| v.as_string())
+                else {
+                    return true;
                 };
                 self.field_cursors[self.active_idx] = s.chars().count();
                 true
@@ -855,8 +862,10 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('D'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                if let Some(FormFieldValue::String(value)) =
-                    self.field_values.get_mut(self.active_idx)
+                if let Some(value) = self
+                    .field_values
+                    .get_mut(self.active_idx)
+                    .and_then(|v| v.as_string_mut())
                 {
                     let pos = self.field_cursors[self.active_idx];
                     let mut chars: Vec<char> = value.chars().collect();
@@ -872,8 +881,10 @@ impl<'a> FormState<'a> {
                 modifiers,
             }) => {
                 if modifiers.is_empty() || *modifiers == Modifiers::SHIFT {
-                    if let Some(FormFieldValue::String(value)) =
-                        self.field_values.get_mut(self.active_idx)
+                    if let Some(value) = self
+                        .field_values
+                        .get_mut(self.active_idx)
+                        .and_then(|v| v.as_string_mut())
                     {
                         let pos = self.field_cursors[self.active_idx];
                         let mut chars: Vec<char> = value.chars().collect();
@@ -885,16 +896,20 @@ impl<'a> FormState<'a> {
                 } else if *modifiers == Modifiers::CTRL {
                     match c {
                         'U' => {
-                            if let Some(FormFieldValue::String(value)) =
-                                self.field_values.get_mut(self.active_idx)
+                            if let Some(value) = self
+                                .field_values
+                                .get_mut(self.active_idx)
+                                .and_then(|v| v.as_string_mut())
                             {
                                 value.clear();
                             }
                             self.field_cursors[self.active_idx] = 0;
                         }
                         'K' => {
-                            if let Some(FormFieldValue::String(value)) =
-                                self.field_values.get_mut(self.active_idx)
+                            if let Some(value) = self
+                                .field_values
+                                .get_mut(self.active_idx)
+                                .and_then(|v| v.as_string_mut())
                             {
                                 let pos = self.field_cursors[self.active_idx];
                                 let chars: Vec<char> = value.chars().collect();
@@ -902,8 +917,10 @@ impl<'a> FormState<'a> {
                             }
                         }
                         'W' => {
-                            if let Some(FormFieldValue::String(value)) =
-                                self.field_values.get_mut(self.active_idx)
+                            if let Some(value) = self
+                                .field_values
+                                .get_mut(self.active_idx)
+                                .and_then(|v| v.as_string_mut())
                             {
                                 let orig_pos = self.field_cursors[self.active_idx];
                                 let mut chars: Vec<char> = value.chars().collect();
@@ -930,8 +947,10 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Backspace,
                 ..
             }) => {
-                if let Some(FormFieldValue::String(value)) =
-                    self.field_values.get_mut(self.active_idx)
+                if let Some(value) = self
+                    .field_values
+                    .get_mut(self.active_idx)
+                    .and_then(|v| v.as_string_mut())
                 {
                     let pos = self.field_cursors[self.active_idx];
                     if pos > 0 {
