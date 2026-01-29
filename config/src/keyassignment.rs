@@ -1112,6 +1112,65 @@ pub struct FormFieldChoice {
     pub id: Option<String>,
 }
 
+/// Value type for form fields - can be a string or boolean (for checkbox fields)
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormFieldValue {
+    String(String),
+    Bool(bool),
+}
+
+impl Default for FormFieldValue {
+    fn default() -> Self {
+        FormFieldValue::String(String::new())
+    }
+}
+
+impl FromDynamic for FormFieldValue {
+    fn from_dynamic(
+        value: &Value,
+        _options: FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        match value {
+            Value::Bool(b) => Ok(FormFieldValue::Bool(*b)),
+            Value::String(s) => Ok(FormFieldValue::String(s.clone())),
+            Value::Null => Ok(FormFieldValue::String(String::new())),
+            _ => Err(wezterm_dynamic::Error::Message(format!(
+                "expected string or boolean, got {:?}",
+                value.variant_name()
+            ))),
+        }
+    }
+}
+
+impl ToDynamic for FormFieldValue {
+    fn to_dynamic(&self) -> Value {
+        match self {
+            FormFieldValue::String(s) => Value::String(s.clone()),
+            FormFieldValue::Bool(b) => Value::Bool(*b),
+        }
+    }
+}
+
+impl FormFieldValue {
+    pub fn is_bool(&self) -> bool {
+        matches!(self, FormFieldValue::Bool(_))
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            FormFieldValue::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_string(&self) -> Option<&str> {
+        match self {
+            FormFieldValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct FormField {
     pub label: String,
@@ -1121,7 +1180,7 @@ pub struct FormField {
     #[dynamic(default)]
     pub is_password: bool,
     #[dynamic(default)]
-    pub initial_value: Option<String>,
+    pub initial_value: Option<FormFieldValue>,
     #[dynamic(default)]
     pub required: bool,
     /// If non-empty, this field becomes a selector with fuzzy search

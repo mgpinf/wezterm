@@ -1,6 +1,6 @@
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
-use config::keyassignment::{FormFieldChoice, InputForm, KeyAssignment};
+use config::keyassignment::{FormFieldChoice, FormFieldValue, InputForm, KeyAssignment};
 use config::{configuration, AnsiColor, ColorAttribute};
 use luahelper::impl_lua_conversion_dynamic;
 use mux::termwiztermtab::TermWizTerminal;
@@ -23,6 +23,8 @@ struct FormColors {
     border_fg: ColorAttribute,
     separator_fg: ColorAttribute,
     header_fg: ColorAttribute,
+    checkbox_checked_fg: ColorAttribute,
+    checkbox_bracket_fg: ColorAttribute,
 }
 
 impl FormColors {
@@ -60,6 +62,14 @@ impl FormColors {
             header_fg: colors
                 .form_header_fg
                 .unwrap_or(AnsiColor::Yellow.into())
+                .into(),
+            checkbox_checked_fg: colors
+                .form_checkbox_checked_fg
+                .unwrap_or(AnsiColor::Green.into())
+                .into(),
+            checkbox_bracket_fg: colors
+                .form_checkbox_bracket_fg
+                .unwrap_or(AnsiColor::Grey.into())
                 .into(),
         }
     }
@@ -135,7 +145,7 @@ struct FormState<'a> {
     window: GuiWin,
     pane: MuxPane,
     active_idx: usize,
-    field_values: Vec<String>,
+    field_values: Vec<FormFieldValue>,
     field_cursors: Vec<usize>,
     /// State for selector fields (only populated for fields with choices)
     selector_states: Vec<Option<SelectorFieldState>>,
@@ -150,33 +160,40 @@ impl<'a> FormState<'a> {
         pane: MuxPane,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
-        let field_values: Vec<String> = args
+        let field_values: Vec<FormFieldValue> = args
             .fields
             .iter()
             .map(|f| {
-                if !f.choices.is_empty() {
-                    // For selector fields, use the initial value or the first choice's value
-                    f.initial_value.clone().unwrap_or_else(|| {
+                if f.initial_value.is_none() && !f.choices.is_empty() {
+                    // Selector field with no initial value - use first choice
+                    FormFieldValue::String(
                         f.choices
                             .first()
                             .map(|c| c.id.clone().unwrap_or_else(|| c.label.clone()))
-                            .unwrap_or_default()
-                    })
+                            .unwrap_or_default(),
+                    )
                 } else {
                     f.initial_value.clone().unwrap_or_default()
                 }
             })
             .collect();
-        let field_cursors = field_values.iter().map(|v| v.chars().count()).collect();
+        let field_cursors = field_values
+            .iter()
+            .map(|v| match v {
+                FormFieldValue::String(s) => s.chars().count(),
+                FormFieldValue::Bool(_) => 0,
+            })
+            .collect();
 
         let selector_states: Vec<Option<SelectorFieldState>> = args
             .fields
             .iter()
             .map(|f| {
+                // Validation ensures checkbox fields can't have choices
                 if !f.choices.is_empty() {
                     Some(SelectorFieldState::new(
                         &f.choices,
-                        f.initial_value.as_deref(),
+                        f.initial_value.as_ref().and_then(|v| v.as_string()),
                     ))
                 } else {
                     None
@@ -202,6 +219,19 @@ impl<'a> FormState<'a> {
             .get(idx)
             .map(|s| s.is_some())
             .unwrap_or(false)
+    }
+
+    fn is_checkbox_field(&self, idx: usize) -> bool {
+        self.field_values
+            .get(idx)
+            .map(|v| v.is_bool())
+            .unwrap_or(false)
+    }
+
+    fn toggle_checkbox(&mut self, idx: usize) {
+        if let Some(FormFieldValue::Bool(b)) = self.field_values.get_mut(idx) {
+            *b = !*b;
+        }
     }
 
     fn is_dropdown_open(&self, idx: usize) -> bool {
@@ -260,6 +290,7 @@ impl<'a> FormState<'a> {
 
         for (idx, field) in self.args.fields.iter().enumerate() {
             let is_active = idx == self.active_idx;
+            let is_checkbox = self.is_checkbox_field(idx);
             let is_selector = !field.choices.is_empty();
             let dropdown_open = self.is_dropdown_open(idx);
 
@@ -300,10 +331,33 @@ impl<'a> FormState<'a> {
                 })),
                 Change::Text(field.label.clone()),
                 Change::AllAttributes(CellAttributes::default()),
-                Change::Text(": ".to_string()),
+                Change::Text(if is_checkbox { " " } else { ": " }.to_string()),
             ]);
 
-            if is_selector {
+            if is_checkbox {
+                // For checkbox fields
+                let checked = self
+                    .field_values
+                    .get(idx)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                self.buf.add_changes(vec![
+                    Change::Attribute(AttributeChange::Foreground(self.colors.checkbox_bracket_fg)),
+                    Change::Text("[".to_string()),
+                    Change::Attribute(AttributeChange::Foreground(self.colors.checkbox_checked_fg)),
+                    Change::Text(if checked { "✓" } else { " " }.to_string()),
+                    Change::Attribute(AttributeChange::Foreground(self.colors.checkbox_bracket_fg)),
+                    Change::Text("]".to_string()),
+                    Change::AllAttributes(CellAttributes::default()),
+                ]);
+
+                if is_active {
+                    cursor_y = current_row;
+                    // Position cursor on the checkbox (no colon, so +3 instead of +4)
+                    cursor_x = field.label.chars().count() + 3 + 1; // +1 to be inside the brackets
+                }
+            } else if is_selector {
                 // For selector fields
                 if let Some(selector_state) = &self.selector_states[idx] {
                     if dropdown_open {
@@ -324,13 +378,17 @@ impl<'a> FormState<'a> {
                         }
                     } else {
                         // Show selected value when dropdown is closed
-                        let value = &self.field_values[idx];
+                        let value = self
+                            .field_values
+                            .get(idx)
+                            .and_then(|v| v.as_string())
+                            .unwrap_or("");
                         let display_label = field
                             .choices
                             .iter()
                             .find(|c| c.id.as_deref().unwrap_or(&c.label) == value)
                             .map(|c| c.label.clone())
-                            .unwrap_or_else(|| value.clone());
+                            .unwrap_or_else(|| value.to_string());
 
                         let display_value = if display_label.is_empty() {
                             if let Some(placeholder) = &field.placeholder {
@@ -342,7 +400,7 @@ impl<'a> FormState<'a> {
                             display_label
                         };
 
-                        let input_color = if !self.field_values[idx].is_empty() {
+                        let input_color = if !value.is_empty() {
                             self.colors.input_fg
                         } else {
                             self.colors.placeholder_fg
@@ -363,7 +421,11 @@ impl<'a> FormState<'a> {
                 }
             } else {
                 // For regular text fields
-                let value = &self.field_values[idx];
+                let value = self
+                    .field_values
+                    .get(idx)
+                    .and_then(|v| v.as_string())
+                    .unwrap_or("");
                 let display_value = if field.is_password && !value.is_empty() {
                     "*".repeat(value.len())
                 } else if value.is_empty() {
@@ -373,7 +435,7 @@ impl<'a> FormState<'a> {
                         "".to_string()
                     }
                 } else {
-                    value.clone()
+                    value.to_string()
                 };
 
                 let input_color = if !value.is_empty() {
@@ -496,9 +558,11 @@ impl<'a> FormState<'a> {
             }
         }
 
-        // Hide cursor when a selector field is active but dropdown is closed
-        // (no text input happening in that state)
-        let cursor_visible = if self.is_selector_field(self.active_idx) {
+        // Hide cursor for checkbox fields or when a selector field is active but dropdown is closed
+        // (no text input happening in those states)
+        let cursor_visible = if self.is_checkbox_field(self.active_idx) {
+            false
+        } else if self.is_selector_field(self.active_idx) {
             self.is_dropdown_open(self.active_idx)
         } else {
             true
@@ -546,7 +610,7 @@ impl<'a> FormState<'a> {
                 .get(selector_state.active_choice_idx)
             {
                 let value = choice.id.clone().unwrap_or_else(|| choice.label.clone());
-                self.field_values[field_idx] = value;
+                self.field_values[field_idx] = FormFieldValue::String(value);
             }
             selector_state.dropdown_open = false;
             selector_state.filter_term.clear();
@@ -688,6 +752,25 @@ impl<'a> FormState<'a> {
         }
     }
 
+    /// Handle checkbox field specific input. Returns true if handled, false otherwise.
+    fn handle_checkbox_input(&mut self, event: &InputEvent) -> bool {
+        match event {
+            // Space or Enter toggles the checkbox
+            InputEvent::Key(KeyEvent {
+                key: KeyCode::Char(' '),
+                modifiers: Modifiers::NONE,
+            })
+            | InputEvent::Key(KeyEvent {
+                key: KeyCode::Enter,
+                modifiers: Modifiers::NONE,
+            }) => {
+                self.toggle_checkbox(self.active_idx);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Handle text field specific input. Returns true if handled, false otherwise.
     fn handle_text_field_input(&mut self, event: &InputEvent) -> bool {
         match event {
@@ -698,13 +781,17 @@ impl<'a> FormState<'a> {
                     .filter(|c| !c.is_control() && *c != '\n' && *c != '\r')
                     .collect();
                 if !filtered.is_empty() {
-                    let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
-                    let pos = self.field_cursors[self.active_idx];
-                    for (i, c) in filtered.chars().enumerate() {
-                        chars.insert(pos + i, c);
+                    if let Some(FormFieldValue::String(value)) =
+                        self.field_values.get_mut(self.active_idx)
+                    {
+                        let pos = self.field_cursors[self.active_idx];
+                        let mut chars: Vec<char> = value.chars().collect();
+                        for (i, c) in filtered.chars().enumerate() {
+                            chars.insert(pos + i, c);
+                        }
+                        *value = chars.into_iter().collect();
+                        self.field_cursors[self.active_idx] += filtered.chars().count();
                     }
-                    self.field_values[self.active_idx] = chars.into_iter().collect();
-                    self.field_cursors[self.active_idx] += filtered.chars().count();
                 }
                 true
             }
@@ -729,9 +816,10 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('F'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                if self.field_cursors[self.active_idx]
-                    < self.field_values[self.active_idx].chars().count()
-                {
+                let FormFieldValue::String(s) = &self.field_values[self.active_idx] else {
+                    unreachable!()
+                };
+                if self.field_cursors[self.active_idx] < s.chars().count() {
                     self.field_cursors[self.active_idx] += 1;
                 }
                 true
@@ -753,8 +841,10 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('E'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                self.field_cursors[self.active_idx] =
-                    self.field_values[self.active_idx].chars().count();
+                let FormFieldValue::String(s) = &self.field_values[self.active_idx] else {
+                    unreachable!()
+                };
+                self.field_cursors[self.active_idx] = s.chars().count();
                 true
             }
             InputEvent::Key(KeyEvent {
@@ -765,11 +855,15 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('D'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
-                let pos = self.field_cursors[self.active_idx];
-                if pos < chars.len() {
-                    chars.remove(pos);
-                    self.field_values[self.active_idx] = chars.into_iter().collect();
+                if let Some(FormFieldValue::String(value)) =
+                    self.field_values.get_mut(self.active_idx)
+                {
+                    let pos = self.field_cursors[self.active_idx];
+                    let mut chars: Vec<char> = value.chars().collect();
+                    if pos < chars.len() {
+                        chars.remove(pos);
+                        *value = chars.into_iter().collect();
+                    }
                 }
                 true
             }
@@ -778,38 +872,52 @@ impl<'a> FormState<'a> {
                 modifiers,
             }) => {
                 if modifiers.is_empty() || *modifiers == Modifiers::SHIFT {
-                    let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
-                    let pos = self.field_cursors[self.active_idx];
-                    chars.insert(pos, *c);
-                    self.field_values[self.active_idx] = chars.into_iter().collect();
-                    self.field_cursors[self.active_idx] += 1;
+                    if let Some(FormFieldValue::String(value)) =
+                        self.field_values.get_mut(self.active_idx)
+                    {
+                        let pos = self.field_cursors[self.active_idx];
+                        let mut chars: Vec<char> = value.chars().collect();
+                        chars.insert(pos, *c);
+                        *value = chars.into_iter().collect();
+                        self.field_cursors[self.active_idx] += 1;
+                    }
                     true
                 } else if *modifiers == Modifiers::CTRL {
                     match c {
                         'U' => {
-                            self.field_values[self.active_idx].clear();
+                            if let Some(FormFieldValue::String(value)) =
+                                self.field_values.get_mut(self.active_idx)
+                            {
+                                value.clear();
+                            }
                             self.field_cursors[self.active_idx] = 0;
                         }
                         'K' => {
-                            let chars: Vec<char> =
-                                self.field_values[self.active_idx].chars().collect();
-                            let pos = self.field_cursors[self.active_idx];
-                            self.field_values[self.active_idx] = chars[0..pos].iter().collect();
+                            if let Some(FormFieldValue::String(value)) =
+                                self.field_values.get_mut(self.active_idx)
+                            {
+                                let pos = self.field_cursors[self.active_idx];
+                                let chars: Vec<char> = value.chars().collect();
+                                *value = chars[0..pos].iter().collect();
+                            }
                         }
                         'W' => {
-                            let mut chars: Vec<char> =
-                                self.field_values[self.active_idx].chars().collect();
-                            let mut pos = self.field_cursors[self.active_idx];
-                            let orig_pos = pos;
-                            while pos > 0 && chars[pos - 1].is_whitespace() {
-                                pos -= 1;
+                            if let Some(FormFieldValue::String(value)) =
+                                self.field_values.get_mut(self.active_idx)
+                            {
+                                let orig_pos = self.field_cursors[self.active_idx];
+                                let mut chars: Vec<char> = value.chars().collect();
+                                let mut pos = orig_pos;
+                                while pos > 0 && chars[pos - 1].is_whitespace() {
+                                    pos -= 1;
+                                }
+                                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                                    pos -= 1;
+                                }
+                                chars.drain(pos..orig_pos);
+                                *value = chars.into_iter().collect();
+                                self.field_cursors[self.active_idx] = pos;
                             }
-                            while pos > 0 && !chars[pos - 1].is_whitespace() {
-                                pos -= 1;
-                            }
-                            chars.drain(pos..orig_pos);
-                            self.field_values[self.active_idx] = chars.into_iter().collect();
-                            self.field_cursors[self.active_idx] = pos;
                         }
                         _ => return false,
                     }
@@ -822,12 +930,16 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Backspace,
                 ..
             }) => {
-                let mut chars: Vec<char> = self.field_values[self.active_idx].chars().collect();
-                let pos = self.field_cursors[self.active_idx];
-                if pos > 0 {
-                    chars.remove(pos - 1);
-                    self.field_values[self.active_idx] = chars.into_iter().collect();
-                    self.field_cursors[self.active_idx] -= 1;
+                if let Some(FormFieldValue::String(value)) =
+                    self.field_values.get_mut(self.active_idx)
+                {
+                    let pos = self.field_cursors[self.active_idx];
+                    if pos > 0 {
+                        let mut chars: Vec<char> = value.chars().collect();
+                        chars.remove(pos - 1);
+                        *value = chars.into_iter().collect();
+                        self.field_cursors[self.active_idx] -= 1;
+                    }
                 }
                 true
             }
@@ -838,7 +950,9 @@ impl<'a> FormState<'a> {
     /// Try to submit the form. Returns true if submitted, false if validation failed.
     fn try_submit(&mut self) -> bool {
         for (idx, field) in self.args.fields.iter().enumerate() {
-            if field.required && self.field_values[idx].trim().is_empty() {
+            if field.required
+                && matches!(&self.field_values[idx], FormFieldValue::String(s) if s.trim().is_empty())
+            {
                 self.active_idx = idx;
                 return false;
             }
@@ -849,10 +963,13 @@ impl<'a> FormState<'a> {
 
     fn run_loop(&mut self) -> anyhow::Result<()> {
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
+            let is_checkbox = self.is_checkbox_field(self.active_idx);
             let is_selector = self.is_selector_field(self.active_idx);
 
             // Handle field-specific input first
-            let handled = if is_selector {
+            let handled = if is_checkbox {
+                self.handle_checkbox_input(&event)
+            } else if is_selector {
                 self.handle_selector_input(&event)
             } else {
                 self.handle_text_field_input(&event)
@@ -980,7 +1097,7 @@ impl<'a> FormState<'a> {
 #[derive(FromDynamic, ToDynamic)]
 struct FormFieldResult {
     id: String,
-    value: String,
+    value: FormFieldValue,
 }
 
 #[derive(FromDynamic, ToDynamic)]
@@ -1019,12 +1136,54 @@ async fn do_event(
     Ok(())
 }
 
+/// Validates that checkbox fields don't have incompatible options.
+fn validate_form_fields(args: &InputForm) -> anyhow::Result<()> {
+    for field in &args.fields {
+        let is_checkbox = field
+            .initial_value
+            .as_ref()
+            .map(|v| v.is_bool())
+            .unwrap_or(false);
+
+        if is_checkbox {
+            let mut errors = Vec::new();
+
+            if field.required {
+                errors.push("required");
+            }
+            if !field.choices.is_empty() {
+                errors.push("choices");
+            }
+            if field.is_password {
+                errors.push("is_password");
+            }
+            if field.placeholder.is_some() {
+                errors.push("placeholder");
+            }
+
+            if !errors.is_empty() {
+                anyhow::bail!(
+                    "Checkbox field '{}' has incompatible options: {}. \
+                     When initial_value is a boolean, the following options are not applicable: \
+                     required, choices, is_password, placeholder.",
+                    field.label,
+                    errors.join(", ")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn show_input_form_overlay(
     term: TermWizTerminal,
     args: InputForm,
     window: GuiWin,
     pane: MuxPane,
 ) -> anyhow::Result<()> {
+    // Validate checkbox fields don't have incompatible options
+    validate_form_fields(&args)?;
+
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
 
