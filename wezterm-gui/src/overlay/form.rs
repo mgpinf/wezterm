@@ -309,6 +309,7 @@ impl<'a> FormState<'a> {
             let is_checkbox = self.is_checkbox_field(idx);
             let is_selector = !field.choices.is_empty();
             let dropdown_open = self.is_dropdown_open(idx);
+            let label_chars_count = field.label.chars().count();
 
             // If this field comes after a dropdown, offset it by dropdown height
             let is_after_dropdown = if let Some((dropdown_idx, _start, height)) = dropdown_info {
@@ -371,7 +372,7 @@ impl<'a> FormState<'a> {
                 if is_active {
                     cursor_y = current_row;
                     // Position cursor inside the checkbox brackets
-                    cursor_x = field.label.chars().count() + CHECKBOX_PREFIX_WIDTH + 1;
+                    cursor_x = label_chars_count + CHECKBOX_PREFIX_WIDTH + 1;
                 }
             } else if is_selector {
                 // For selector fields
@@ -387,7 +388,7 @@ impl<'a> FormState<'a> {
                         ]);
                         if is_active {
                             cursor_y = current_row;
-                            cursor_x = field.label.chars().count()
+                            cursor_x = label_chars_count
                                 + FIELD_PREFIX_WIDTH
                                 + 1
                                 + selector_state.filter_term.chars().count();
@@ -431,7 +432,7 @@ impl<'a> FormState<'a> {
 
                         if is_active {
                             cursor_y = current_row;
-                            cursor_x = field.label.chars().count() + FIELD_PREFIX_WIDTH;
+                            cursor_x = label_chars_count + FIELD_PREFIX_WIDTH;
                         }
                     }
                 }
@@ -462,8 +463,7 @@ impl<'a> FormState<'a> {
 
                 if is_active {
                     cursor_y = current_row;
-                    cursor_x =
-                        field.label.chars().count() + FIELD_PREFIX_WIDTH + self.field_cursors[idx];
+                    cursor_x = label_chars_count + FIELD_PREFIX_WIDTH + self.field_cursors[idx];
                 }
 
                 self.buf.add_changes(vec![
