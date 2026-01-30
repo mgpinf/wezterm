@@ -134,19 +134,26 @@ impl<'a> TransientSwitch<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        let mut changes = vec![
+        let mut changes = Vec::with_capacity(10);
+        changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
-        ];
+        ]);
 
         if self.value.get() {
-            changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
-            changes.push(Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)));
+            changes.push(Change::Attribute(AttributeChange::Intensity(
+                Intensity::Bold,
+            )));
+            changes.push(Change::Attribute(AttributeChange::Foreground(
+                colors.active_flag_fg,
+            )));
         } else {
-            changes.push(Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)));
+            changes.push(Change::Attribute(AttributeChange::Foreground(
+                colors.inactive_flag_fg,
+            )));
         }
 
         changes.push(Change::Text(delegate.flag.clone()));
@@ -172,13 +179,14 @@ impl<'a> TransientOption<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        let mut changes = vec![
+        let mut changes = Vec::with_capacity(13);
+        changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
-        ];
+        ]);
 
         if let Some(val) = self.value.borrow().as_ref() {
             changes.extend([
@@ -218,13 +226,15 @@ impl<'a> TransientCyclicSwitch<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        let mut changes = vec![
+        // Base: 12 elements + up to 5 per choice (when active choice is highlighted)
+        let mut changes = Vec::with_capacity(12 + delegate.choices.len() * 5);
+        changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
-        ];
+        ]);
 
         if let Some(idx) = self.active_idx.get() {
             changes.extend([
@@ -402,13 +412,15 @@ impl<'a> TransientState<'a> {
         ]);
 
         if let Some(context) = self.context {
-            let mut changes = vec![
+            // 5 base elements + 5 per entry
+            let mut changes = Vec::with_capacity(5 + context.entries.len() * 5);
+            changes.extend([
                 Change::Text("\r\n\r\n".to_string()),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.context_header_fg)),
                 Change::Text(context.header.clone()),
                 Change::AllAttributes(CellAttributes::default()),
-            ];
+            ]);
 
             for entry in &context.entries {
                 changes.extend([
@@ -479,8 +491,11 @@ impl<'a> TransientState<'a> {
                     let max_width = cols.saturating_sub(6);
 
                     let selector_size = selector_state.choices.len().min(selector_state.max_items);
+                    let visible_rows = selector_size.min(selector_state.max_items + 1);
 
-                    let mut changes = vec![
+                    // 8 base elements + ~10 per visible row (varies due to line.changes)
+                    let mut changes = Vec::with_capacity(8 + visible_rows * 10);
+                    changes.extend([
                         Change::CursorPosition {
                             x: Position::Absolute(0),
                             y: Position::Absolute(rows.saturating_sub(selector_size + 3)),
@@ -498,7 +513,7 @@ impl<'a> TransientState<'a> {
                             ),
                             max_width,
                         )),
-                    ];
+                    ]);
 
                     for (row_num, (entry_idx, entry)) in selector_state
                         .filtered_entries
