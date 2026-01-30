@@ -589,12 +589,13 @@ impl<'a> FormState<'a> {
             }
         }
 
-        // Hide cursor for checkbox fields or when a selector field is active but dropdown is closed
-        // (no text input happening in those states)
-        let cursor_visible = match self.field_kind(self.active_idx) {
-            FieldKind::Checkbox => false,
-            FieldKind::Selector => self.is_dropdown_open(self.active_idx),
-            FieldKind::Text => true,
+        // Cursor is visible only when text input is active (text field or open selector dropdown)
+        let cursor_visibility = match self.field_kind(self.active_idx) {
+            FieldKind::Text => CursorVisibility::Visible,
+            FieldKind::Selector if self.is_dropdown_open(self.active_idx) => {
+                CursorVisibility::Visible
+            }
+            _ => CursorVisibility::Hidden,
         };
 
         self.buf.add_changes(vec![
@@ -602,11 +603,7 @@ impl<'a> FormState<'a> {
                 x: Position::Absolute(cursor_x),
                 y: Position::Absolute(cursor_y),
             },
-            Change::CursorVisibility(if cursor_visible {
-                CursorVisibility::Visible
-            } else {
-                CursorVisibility::Hidden
-            }),
+            Change::CursorVisibility(cursor_visibility),
         ]);
 
         self.buf.flush()?;
