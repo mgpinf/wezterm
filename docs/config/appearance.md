@@ -165,6 +165,8 @@ config.colors = {
   form_border_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   form_separator_fg = 'Default', -- {{since('nightly', inline=True)}}
   form_header_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
+  form_checkbox_checked_fg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
+  form_checkbox_bracket_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
 
   image_selector_description_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
   image_selector_error_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
