@@ -256,22 +256,18 @@ impl<'a> FormState<'a> {
     }
 
     fn field_kind(&self, idx: usize) -> FieldKind {
-        self.field_kinds
-            .get(idx)
-            .copied()
-            .unwrap_or(FieldKind::Text)
+        self.field_kinds[idx]
     }
 
     fn toggle_checkbox(&mut self, idx: usize) {
-        if let Some(b) = self.field_values.get_mut(idx).and_then(|v| v.as_bool_mut()) {
+        if let Some(b) = self.field_values[idx].as_bool_mut() {
             *b = !*b;
         }
     }
 
     fn is_dropdown_open(&self, idx: usize) -> bool {
-        self.selector_states
-            .get(idx)
-            .and_then(|s| s.as_ref())
+        self.selector_states[idx]
+            .as_ref()
             .map(|s| s.dropdown_open)
             .unwrap_or(false)
     }
@@ -307,7 +303,7 @@ impl<'a> FormState<'a> {
         let mut dropdown_info: Option<(usize, usize, usize)> = None; // (field_idx, start_row, height)
         for (idx, _field) in self.args.fields.iter().enumerate() {
             if self.is_dropdown_open(idx) {
-                if let Some(Some(selector_state)) = self.selector_states.get(idx) {
+                if let Some(selector_state) = &self.selector_states[idx] {
                     let start_row = HEADER_ROWS + idx + 1; // row after this field
                     let max_height = rows.saturating_sub(start_row + HEADER_ROWS); // leave room for submit
                     let height = if selector_state.filtered_choices.is_empty() {
@@ -381,11 +377,7 @@ impl<'a> FormState<'a> {
 
             if field_kind == FieldKind::Checkbox {
                 // For checkbox fields
-                let checked = self
-                    .field_values
-                    .get(idx)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let checked = self.field_values[idx].as_bool().unwrap_or(false);
 
                 self.buf.add_changes(vec![
                     Change::Attribute(AttributeChange::Foreground(self.colors.checkbox_bracket_fg)),
@@ -423,11 +415,7 @@ impl<'a> FormState<'a> {
                         }
                     } else {
                         // Show selected value when dropdown is closed
-                        let value = self
-                            .field_values
-                            .get(idx)
-                            .and_then(|v| v.as_string())
-                            .unwrap_or("");
+                        let value = self.field_values[idx].as_string().unwrap_or("");
                         let display_label = field
                             .choices
                             .iter()
@@ -466,11 +454,7 @@ impl<'a> FormState<'a> {
                 }
             } else {
                 // For regular text fields
-                let value = self
-                    .field_values
-                    .get(idx)
-                    .and_then(|v| v.as_string())
-                    .unwrap_or("");
+                let value = self.field_values[idx].as_string().unwrap_or("");
                 let display_value = if field.is_password && !value.is_empty() {
                     "*".repeat(value.len())
                 } else if value.is_empty() {
@@ -506,7 +490,7 @@ impl<'a> FormState<'a> {
 
         // Render dropdown if open
         if let Some((field_idx, dropdown_start_row, total_height)) = dropdown_info {
-            if let Some(Some(selector_state)) = self.selector_states.get(field_idx) {
+            if let Some(selector_state) = &self.selector_states[field_idx] {
                 let field = &self.args.fields[field_idx];
                 let label_offset = field.label.chars().count() + FIELD_PREFIX_WIDTH;
                 let dropdown_width =
@@ -630,7 +614,7 @@ impl<'a> FormState<'a> {
     }
 
     fn close_dropdown(&mut self) {
-        if let Some(Some(selector_state)) = self.selector_states.get_mut(self.active_idx) {
+        if let Some(selector_state) = &mut self.selector_states[self.active_idx] {
             selector_state.dropdown_open = false;
             selector_state.filter_term.clear();
             let field = &self.args.fields[self.active_idx];
@@ -639,7 +623,7 @@ impl<'a> FormState<'a> {
     }
 
     fn open_dropdown(&mut self) {
-        if let Some(Some(selector_state)) = self.selector_states.get_mut(self.active_idx) {
+        if let Some(selector_state) = &mut self.selector_states[self.active_idx] {
             selector_state.dropdown_open = true;
             selector_state.filter_term.clear();
             let field = &self.args.fields[self.active_idx];
@@ -649,7 +633,7 @@ impl<'a> FormState<'a> {
 
     fn select_current_choice(&mut self) {
         let field_idx = self.active_idx;
-        if let Some(Some(selector_state)) = self.selector_states.get_mut(field_idx) {
+        if let Some(selector_state) = &mut self.selector_states[field_idx] {
             if let Some(choice) = selector_state
                 .filtered_choices
                 .get(selector_state.active_choice_idx)
@@ -699,7 +683,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('P'),
                 modifiers: Modifiers::CTRL,
             }) if dropdown_open => {
-                if let Some(Some(selector_state)) = self.selector_states.get_mut(field_idx) {
+                if let Some(selector_state) = &mut self.selector_states[field_idx] {
                     selector_state.active_choice_idx =
                         selector_state.active_choice_idx.saturating_sub(1);
                     if selector_state.active_choice_idx < selector_state.top_row {
@@ -716,7 +700,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('N'),
                 modifiers: Modifiers::CTRL,
             }) if dropdown_open => {
-                if let Some(Some(selector_state)) = self.selector_states.get_mut(field_idx) {
+                if let Some(selector_state) = &mut self.selector_states[field_idx] {
                     let max_idx = selector_state.filtered_choices.len().saturating_sub(1);
                     selector_state.active_choice_idx =
                         (selector_state.active_choice_idx + 1).min(max_idx);
@@ -733,7 +717,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char(c),
                 modifiers,
             }) if dropdown_open && (modifiers.is_empty() || *modifiers == Modifiers::SHIFT) => {
-                if let Some(Some(selector_state)) = self.selector_states.get_mut(field_idx) {
+                if let Some(selector_state) = &mut self.selector_states[field_idx] {
                     selector_state.filter_term.push(*c);
                     let field = &self.args.fields[field_idx];
                     selector_state.update_filter(&field.choices);
@@ -744,7 +728,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Backspace,
                 ..
             }) if dropdown_open => {
-                if let Some(Some(selector_state)) = self.selector_states.get_mut(field_idx) {
+                if let Some(selector_state) = &mut self.selector_states[field_idx] {
                     if selector_state.filter_term.pop().is_none() {
                         // Close dropdown if backspace on empty filter
                         selector_state.dropdown_open = false;
@@ -759,7 +743,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('U'),
                 modifiers: Modifiers::CTRL,
             }) if dropdown_open => {
-                if let Some(Some(selector_state)) = self.selector_states.get_mut(field_idx) {
+                if let Some(selector_state) = &mut self.selector_states[field_idx] {
                     selector_state.filter_term.clear();
                     let field = &self.args.fields[field_idx];
                     selector_state.update_filter(&field.choices);
@@ -828,11 +812,7 @@ impl<'a> FormState<'a> {
                     .filter(|c| !c.is_control() && *c != '\n' && *c != '\r')
                     .collect();
                 if !filtered.is_empty() {
-                    if let Some(value) = self
-                        .field_values
-                        .get_mut(self.active_idx)
-                        .and_then(|v| v.as_string_mut())
-                    {
+                    if let Some(value) = self.field_values[self.active_idx].as_string_mut() {
                         let pos = self.field_cursors[self.active_idx];
                         let mut chars: Vec<char> = value.chars().collect();
                         for (i, c) in filtered.chars().enumerate() {
@@ -865,11 +845,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('F'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                let Some(s) = self
-                    .field_values
-                    .get(self.active_idx)
-                    .and_then(|v| v.as_string())
-                else {
+                let Some(s) = self.field_values[self.active_idx].as_string() else {
                     return true;
                 };
                 if self.field_cursors[self.active_idx] < s.chars().count() {
@@ -894,11 +870,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('E'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                let Some(s) = self
-                    .field_values
-                    .get(self.active_idx)
-                    .and_then(|v| v.as_string())
-                else {
+                let Some(s) = self.field_values[self.active_idx].as_string() else {
                     return true;
                 };
                 self.field_cursors[self.active_idx] = s.chars().count();
@@ -912,11 +884,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Char('D'),
                 modifiers: Modifiers::CTRL,
             }) => {
-                if let Some(value) = self
-                    .field_values
-                    .get_mut(self.active_idx)
-                    .and_then(|v| v.as_string_mut())
-                {
+                if let Some(value) = self.field_values[self.active_idx].as_string_mut() {
                     let pos = self.field_cursors[self.active_idx];
                     let mut chars: Vec<char> = value.chars().collect();
                     if pos < chars.len() {
@@ -931,11 +899,7 @@ impl<'a> FormState<'a> {
                 modifiers,
             }) => {
                 if modifiers.is_empty() || *modifiers == Modifiers::SHIFT {
-                    if let Some(value) = self
-                        .field_values
-                        .get_mut(self.active_idx)
-                        .and_then(|v| v.as_string_mut())
-                    {
+                    if let Some(value) = self.field_values[self.active_idx].as_string_mut() {
                         let pos = self.field_cursors[self.active_idx];
                         let mut chars: Vec<char> = value.chars().collect();
                         chars.insert(pos, *c);
@@ -946,20 +910,14 @@ impl<'a> FormState<'a> {
                 } else if *modifiers == Modifiers::CTRL {
                     match c {
                         'U' => {
-                            if let Some(value) = self
-                                .field_values
-                                .get_mut(self.active_idx)
-                                .and_then(|v| v.as_string_mut())
+                            if let Some(value) = self.field_values[self.active_idx].as_string_mut()
                             {
                                 value.clear();
                             }
                             self.field_cursors[self.active_idx] = 0;
                         }
                         'K' => {
-                            if let Some(value) = self
-                                .field_values
-                                .get_mut(self.active_idx)
-                                .and_then(|v| v.as_string_mut())
+                            if let Some(value) = self.field_values[self.active_idx].as_string_mut()
                             {
                                 let pos = self.field_cursors[self.active_idx];
                                 let chars: Vec<char> = value.chars().collect();
@@ -967,10 +925,7 @@ impl<'a> FormState<'a> {
                             }
                         }
                         'W' => {
-                            if let Some(value) = self
-                                .field_values
-                                .get_mut(self.active_idx)
-                                .and_then(|v| v.as_string_mut())
+                            if let Some(value) = self.field_values[self.active_idx].as_string_mut()
                             {
                                 let orig_pos = self.field_cursors[self.active_idx];
                                 let mut chars: Vec<char> = value.chars().collect();
@@ -997,11 +952,7 @@ impl<'a> FormState<'a> {
                 key: KeyCode::Backspace,
                 ..
             }) => {
-                if let Some(value) = self
-                    .field_values
-                    .get_mut(self.active_idx)
-                    .and_then(|v| v.as_string_mut())
-                {
+                if let Some(value) = self.field_values[self.active_idx].as_string_mut() {
                     let pos = self.field_cursors[self.active_idx];
                     if pos > 0 {
                         let mut chars: Vec<char> = value.chars().collect();
