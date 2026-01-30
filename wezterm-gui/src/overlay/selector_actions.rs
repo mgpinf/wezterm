@@ -60,6 +60,7 @@ struct SelectorState<'a> {
     cancel: Option<Box<KeyAssignment>>,
     repeat: [u8; 2],
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
+    separator_line: String,
 }
 
 impl<'a> SelectorState<'a> {
@@ -96,6 +97,9 @@ impl<'a> SelectorState<'a> {
             .clone()
             .unwrap_or_else(|| args.description.clone());
 
+        let (cols, _) = buf.dimensions();
+        let separator_line = "─".repeat(cols);
+
         SelectorState {
             active_idx: 0,
             max_items,
@@ -117,6 +121,7 @@ impl<'a> SelectorState<'a> {
             cancel: args.cancel.clone(),
             repeat: [1, 1],
             buf,
+            separator_line,
         }
     }
 
@@ -232,7 +237,8 @@ impl<'a> SelectorState<'a> {
         // Estimate capacity: base changes + context + section + selector entries
         let context_entries = self.context.as_ref().map_or(0, |c| c.entries.len());
         let visible_entries = self.filtered_entries.len().min(max_items + 1);
-        let capacity = 20 + context_entries * 6 + self.section.arguments.len() * 5 + visible_entries * 10;
+        let capacity =
+            20 + context_entries * 6 + self.section.arguments.len() * 5 + visible_entries * 10;
         let mut changes = Vec::with_capacity(capacity);
 
         // Initial setup
@@ -245,14 +251,20 @@ impl<'a> SelectorState<'a> {
 
         // Context section
         if let Some(context) = self.context.as_ref() {
-            changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
-            changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.context_header_fg)));
+            changes.push(Change::Attribute(AttributeChange::Intensity(
+                Intensity::Bold,
+            )));
+            changes.push(Change::Attribute(AttributeChange::Foreground(
+                self.colors.context_header_fg,
+            )));
             changes.push(Change::Text(context.header.clone()));
             changes.push(Change::AllAttributes(CellAttributes::default()));
 
             for entry in &context.entries {
                 changes.push(Change::Text("\r\n".to_string()));
-                changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)));
+                changes.push(Change::Attribute(AttributeChange::Foreground(
+                    self.colors.context_label_fg,
+                )));
                 changes.push(Change::Text(entry.label.clone()));
                 changes.push(Change::AllAttributes(CellAttributes::default()));
                 changes.push(Change::Text(concat_str(": ", &entry.id)));
@@ -263,14 +275,20 @@ impl<'a> SelectorState<'a> {
         }
 
         // Section header and arguments
-        changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
-        changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.section_header_fg)));
+        changes.push(Change::Attribute(AttributeChange::Intensity(
+            Intensity::Bold,
+        )));
+        changes.push(Change::Attribute(AttributeChange::Foreground(
+            self.colors.section_header_fg,
+        )));
         changes.push(Change::Text(self.section.header.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
 
         for positional_arg in &self.section.arguments {
             changes.push(Change::Text("\r\n  ".to_string()));
-            changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.key_fg)));
+            changes.push(Change::Attribute(AttributeChange::Foreground(
+                self.colors.key_fg,
+            )));
             changes.push(Change::Text(positional_arg.key.clone()));
             changes.push(Change::AllAttributes(CellAttributes::default()));
             changes.push(Change::Text(concat_str(" ", &positional_arg.description)));
@@ -281,12 +299,18 @@ impl<'a> SelectorState<'a> {
             x: Position::Absolute(0),
             y: Position::Absolute(selector_start_row),
         });
-        changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)));
-        changes.push(Change::Text("─".repeat(cols)));
+        changes.push(Change::Attribute(AttributeChange::Foreground(
+            self.colors.separator_fg,
+        )));
+        changes.push(Change::Text(self.separator_line.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
         changes.push(Change::Text("\r\n".to_string()));
-        changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
-        changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)));
+        changes.push(Change::Attribute(AttributeChange::Intensity(
+            Intensity::Bold,
+        )));
+        changes.push(Change::Attribute(AttributeChange::Foreground(
+            self.colors.description_fg,
+        )));
         changes.push(Change::Text(truncate_right(&self.description, max_width)));
         changes.push(Change::AllAttributes(CellAttributes::default()));
         changes.push(Change::Text("\r\n".to_string()));
@@ -315,7 +339,9 @@ impl<'a> SelectorState<'a> {
                         self.colors.multiple_marker_bg,
                     )));
                     changes.push(Change::Text(" ".to_string()));
-                    changes.push(Change::Attribute(AttributeChange::Background(ColorAttribute::Default)));
+                    changes.push(Change::Attribute(AttributeChange::Background(
+                        ColorAttribute::Default,
+                    )));
                 } else {
                     changes.push(Change::Text(" ".to_string()));
                 }
@@ -349,8 +375,12 @@ impl<'a> SelectorState<'a> {
                 y: Position::Absolute(selector_start_row + 1),
             });
             changes.push(Change::ClearToEndOfLine(ColorAttribute::Default));
-            changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
-            changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)));
+            changes.push(Change::Attribute(AttributeChange::Intensity(
+                Intensity::Bold,
+            )));
+            changes.push(Change::Attribute(AttributeChange::Foreground(
+                self.colors.description_fg,
+            )));
             changes.push(Change::Text(filter_prefix));
             changes.push(Change::AllAttributes(CellAttributes::default()));
             changes.push(Change::Text(concat_str(": ", &self.filter_term)));
@@ -563,6 +593,7 @@ impl<'a> SelectorState<'a> {
                     let positional_args_size = self.section.arguments.len() + 1;
                     let overhead = context_size + positional_args_size + 3;
                     self.max_items = rows.saturating_sub(overhead);
+                    self.separator_line = "─".repeat(cols);
 
                     self.buf.resize(cols, rows);
                 }

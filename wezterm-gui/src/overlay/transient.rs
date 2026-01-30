@@ -362,6 +362,8 @@ struct TransientState<'a> {
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
     context: Option<&'a KTransientContext>,
     mode: Option<InputMode<'a>>,
+    description_separator: String,
+    cols_separator: String,
 }
 
 impl<'a> TransientState<'a> {
@@ -375,6 +377,13 @@ impl<'a> TransientState<'a> {
     ) -> Self {
         let context = args.context.as_ref();
 
+        let description_len =
+            crate::tabbar::parse_status_text(&args.description, CellAttributes::blank()).len();
+        let description_separator = "─".repeat(description_len);
+
+        let (cols, _) = buf.dimensions();
+        let cols_separator = "─".repeat(cols);
+
         Self {
             window,
             pane,
@@ -387,13 +396,12 @@ impl<'a> TransientState<'a> {
             buf,
             context,
             mode: None,
+            description_separator,
+            cols_separator,
         }
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        let description_len =
-            crate::tabbar::parse_status_text(&self.description, CellAttributes::blank()).len();
-
         self.buf.add_changes(vec![
             Change::ClearScreen(ColorAttribute::Default),
             Change::CursorPosition {
@@ -407,7 +415,7 @@ impl<'a> TransientState<'a> {
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-            Change::Text("─".repeat(description_len)),
+            Change::Text(self.description_separator.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
@@ -452,7 +460,7 @@ impl<'a> TransientState<'a> {
         if let Some(input_mode) = self.mode.as_ref() {
             match input_mode {
                 InputMode::Prompt(prompt_state) => {
-                    let (cols, rows) = self.buf.dimensions();
+                    let (_, rows) = self.buf.dimensions();
 
                     self.buf.add_changes(vec![
                         Change::CursorPosition {
@@ -461,7 +469,7 @@ impl<'a> TransientState<'a> {
                         },
                         Change::ClearToEndOfScreen(ColorAttribute::Default),
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-                        Change::Text("─".repeat(cols)),
+                        Change::Text(self.cols_separator.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text("\r\n".to_string()),
                         Change::Text(prompt_state.option.delegate.description.clone()),
@@ -502,7 +510,7 @@ impl<'a> TransientState<'a> {
                         },
                         Change::ClearToEndOfScreen(ColorAttribute::Default),
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-                        Change::Text("─".repeat(cols)),
+                        Change::Text(self.cols_separator.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text(truncate_right(
                             &concat_str4(
@@ -736,6 +744,7 @@ impl<'a> TransientState<'a> {
                         }
                     }
                     InputEvent::Resized { cols, rows } => {
+                        self.cols_separator = "─".repeat(cols);
                         self.buf.resize(cols, rows);
                     }
                     _ => {}
@@ -791,6 +800,7 @@ impl<'a> TransientState<'a> {
                     }
                     InputEvent::Resized { cols, rows } => {
                         selector_state.max_items = rows.saturating_sub(ROW_OVERHEAD);
+                        self.cols_separator = "─".repeat(cols);
                         self.buf.resize(cols, rows);
                     }
                     _ => {}
