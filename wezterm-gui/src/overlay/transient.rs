@@ -134,30 +134,26 @@ impl<'a> TransientSwitch<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        buf.add_changes(vec![
+        let mut changes = vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
-        ]);
+        ];
 
         if self.value.get() {
-            buf.add_changes(vec![
-                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
-            ]);
+            changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
+            changes.push(Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)));
         } else {
-            buf.add_change(Change::Attribute(AttributeChange::Foreground(
-                colors.inactive_flag_fg,
-            )));
+            changes.push(Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)));
         }
 
-        buf.add_changes(vec![
-            Change::Text(delegate.flag.clone()),
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text(")".to_string()),
-        ]);
+        changes.push(Change::Text(delegate.flag.clone()));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+        changes.push(Change::Text(")".to_string()));
+
+        buf.add_changes(changes);
 
         Ok(())
     }
@@ -176,16 +172,16 @@ impl<'a> TransientOption<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        buf.add_changes(vec![
+        let mut changes = vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
-        ]);
+        ];
 
         if let Some(val) = self.value.borrow().as_ref() {
-            buf.add_changes(vec![
+            changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
@@ -194,16 +190,16 @@ impl<'a> TransientOption<'a> {
                 Change::Text(val.to_string()),
             ]);
         } else {
-            buf.add_changes(vec![
+            changes.extend([
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                 Change::Text(delegate.flag.to_string()),
             ]);
         }
 
-        buf.add_changes(vec![
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text(")".to_string()),
-        ]);
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+        changes.push(Change::Text(")".to_string()));
+
+        buf.add_changes(changes);
 
         Ok(())
     }
@@ -222,29 +218,29 @@ impl<'a> TransientCyclicSwitch<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        buf.add_changes(vec![
+        let mut changes = vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(delegate.key.to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
-        ]);
+        ];
 
         if let Some(idx) = self.active_idx.get() {
-            buf.add_changes(vec![
+            changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if !delegate.choices.is_empty() {
-                buf.add_change(Change::Attribute(AttributeChange::Foreground(
+                changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
                     if cur_idx == idx {
-                        buf.add_changes(vec![
+                        changes.extend([
                             Change::Text(prefix.to_string()),
                             Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                             Change::Text(choice.to_string()),
@@ -252,41 +248,39 @@ impl<'a> TransientCyclicSwitch<'a> {
                             Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                         ]);
                     } else {
-                        buf.add_change(Change::Text(concat_str(prefix, choice)));
+                        changes.push(Change::Text(concat_str(prefix, choice)));
                     }
                     if cur_idx == 0 {
                         prefix = "|";
                     }
                 }
-                buf.add_changes(vec![
-                    Change::Text("]".to_string()),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
+                changes.push(Change::Text("]".to_string()));
+                changes.push(Change::AllAttributes(CellAttributes::default()));
             }
         } else {
-            buf.add_changes(vec![
+            changes.extend([
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if !delegate.choices.is_empty() {
-                buf.add_change(Change::Attribute(AttributeChange::Foreground(
+                changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
-                    buf.add_change(Change::Text(concat_str(prefix, choice)));
+                    changes.push(Change::Text(concat_str(prefix, choice)));
                     if cur_idx == 0 {
                         prefix = "|";
                     }
                 }
-                buf.add_changes(vec![
-                    Change::Text("]".to_string()),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
+                changes.push(Change::Text("]".to_string()));
+                changes.push(Change::AllAttributes(CellAttributes::default()));
             }
         }
-        buf.add_change(Change::Text(")".to_string()));
+        changes.push(Change::Text(")".to_string()));
+
+        buf.add_changes(changes);
 
         Ok(())
     }
@@ -408,16 +402,16 @@ impl<'a> TransientState<'a> {
         ]);
 
         if let Some(context) = self.context {
-            self.buf.add_changes(vec![
+            let mut changes = vec![
                 Change::Text("\r\n\r\n".to_string()),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.context_header_fg)),
                 Change::Text(context.header.clone()),
                 Change::AllAttributes(CellAttributes::default()),
-            ]);
+            ];
 
             for entry in &context.entries {
-                self.buf.add_changes(vec![
+                changes.extend([
                     Change::Text("\r\n".to_string()),
                     Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)),
                     Change::Text(entry.label.clone()),
@@ -425,6 +419,8 @@ impl<'a> TransientState<'a> {
                     Change::Text(concat_str(": ", &entry.id)),
                 ]);
             }
+
+            self.buf.add_changes(changes);
         }
 
         for section in self.sections {
@@ -484,7 +480,7 @@ impl<'a> TransientState<'a> {
 
                     let selector_size = selector_state.choices.len().min(selector_state.max_items);
 
-                    self.buf.add_changes(vec![
+                    let mut changes = vec![
                         Change::CursorPosition {
                             x: Position::Absolute(0),
                             y: Position::Absolute(rows.saturating_sub(selector_size + 3)),
@@ -502,7 +498,7 @@ impl<'a> TransientState<'a> {
                             ),
                             max_width,
                         )),
-                    ]);
+                    ];
 
                     for (row_num, (entry_idx, entry)) in selector_state
                         .filtered_entries
@@ -515,32 +511,29 @@ impl<'a> TransientState<'a> {
                             break;
                         }
 
-                        self.buf.add_change(Change::Text("\r\n".to_string()));
+                        changes.push(Change::Text("\r\n".to_string()));
 
                         let mut attr = CellAttributes::blank();
 
                         if entry_idx == selector_state.active_idx {
-                            self.buf
-                                .add_change(Change::Attribute(AttributeChange::Reverse(true)));
+                            changes.push(Change::Attribute(AttributeChange::Reverse(true)));
                             attr.set_reverse(true);
                         }
 
-                        self.buf.add_change(Change::Text("    ".to_string()));
+                        changes.push(Change::Text("    ".to_string()));
                         let mut line = crate::tabbar::parse_status_text(entry, attr.clone());
                         if line.len() > max_width {
                             line.resize(max_width, termwiz::surface::SEQ_ZERO);
                         }
-                        self.buf.add_changes(line.changes(&attr));
-                        self.buf.add_change(Change::Text(" ".to_string()));
+                        changes.extend(line.changes(&attr));
+                        changes.push(Change::Text(" ".to_string()));
                         if entry_idx == selector_state.active_idx {
-                            self.buf
-                                .add_change(Change::Attribute(AttributeChange::Reverse(false)));
+                            changes.push(Change::Attribute(AttributeChange::Reverse(false)));
                         }
-                        self.buf
-                            .add_change(Change::AllAttributes(CellAttributes::default()));
+                        changes.push(Change::AllAttributes(CellAttributes::default()));
                     }
 
-                    self.buf.add_changes(vec![
+                    changes.extend([
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
                             x: Position::Absolute(
@@ -550,6 +543,8 @@ impl<'a> TransientState<'a> {
                             y: Position::Absolute(rows.saturating_sub(selector_size + 2)),
                         },
                     ]);
+
+                    self.buf.add_changes(changes);
                 }
             }
         }
