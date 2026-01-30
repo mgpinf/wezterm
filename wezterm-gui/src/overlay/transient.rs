@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
-use termwiz::surface::{Change, CursorVisibility, Position, Surface};
+use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
@@ -446,9 +446,12 @@ impl<'a> TransientState<'a> {
                 InputMode::Prompt(prompt_state) => {
                     let (cols, rows) = self.buf.dimensions();
 
-                    let mut prompt_surface = Surface::new(cols, 3);
-                    prompt_surface.add_changes(vec![
-                        Change::ClearScreen(ColorAttribute::Default),
+                    self.buf.add_changes(vec![
+                        Change::CursorPosition {
+                            x: Position::Absolute(0),
+                            y: Position::Absolute(rows - 3),
+                        },
+                        Change::ClearToEndOfScreen(ColorAttribute::Default),
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
                         Change::Text("─".repeat(cols)),
                         Change::AllAttributes(CellAttributes::default()),
@@ -456,25 +459,21 @@ impl<'a> TransientState<'a> {
                         Change::Text(prompt_state.option.delegate.description.clone()),
                     ]);
 
+                    let mut cursor_x = prompt_state.option.delegate.description.len()
+                        + 2
+                        + prompt_state.line.len();
+
                     if let Some(default) = prompt_state.option.delegate.default.as_ref() {
-                        prompt_surface.add_change(Change::Text(concat_str3(
-                            " (default ",
-                            default,
-                            ")",
-                        )));
+                        let default_text = concat_str3(" (default ", default, ")");
+                        cursor_x += default_text.len();
+                        self.buf.add_change(Change::Text(default_text));
                     }
 
-                    prompt_surface.add_change(Change::Text(concat_str(": ", &prompt_state.line)));
-                    self.buf.draw_from_screen(&prompt_surface, 0, rows - 3);
-
-                    let (xpos, _) = prompt_surface.cursor_position();
-
-                    // Adjust the cursor position because it is reset after the selector surface is drawn to
-                    // the buffered terminal
                     self.buf.add_changes(vec![
+                        Change::Text(concat_str(": ", &prompt_state.line)),
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
-                            x: Position::Absolute(xpos),
+                            x: Position::Absolute(cursor_x),
                             y: Position::Absolute(rows - 2),
                         },
                     ]);
@@ -485,8 +484,11 @@ impl<'a> TransientState<'a> {
 
                     let selector_size = selector_state.choices.len().min(selector_state.max_items);
 
-                    let mut selector_surface = Surface::new(cols, selector_size + 3);
-                    selector_surface.add_changes(vec![
+                    self.buf.add_changes(vec![
+                        Change::CursorPosition {
+                            x: Position::Absolute(0),
+                            y: Position::Absolute(rows.saturating_sub(selector_size + 3)),
+                        },
                         Change::ClearToEndOfScreen(ColorAttribute::Default),
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
                         Change::Text("─".repeat(cols)),
@@ -513,36 +515,31 @@ impl<'a> TransientState<'a> {
                             break;
                         }
 
-                        selector_surface.add_change(Change::Text("\r\n".to_string()));
+                        self.buf.add_change(Change::Text("\r\n".to_string()));
 
                         let mut attr = CellAttributes::blank();
 
                         if entry_idx == selector_state.active_idx {
-                            selector_surface
+                            self.buf
                                 .add_change(Change::Attribute(AttributeChange::Reverse(true)));
                             attr.set_reverse(true);
                         }
 
-                        selector_surface.add_change(Change::Text("    ".to_string()));
+                        self.buf.add_change(Change::Text("    ".to_string()));
                         let mut line = crate::tabbar::parse_status_text(entry, attr.clone());
                         if line.len() > max_width {
                             line.resize(max_width, termwiz::surface::SEQ_ZERO);
                         }
-                        selector_surface.add_changes(line.changes(&attr));
-                        selector_surface.add_change(Change::Text(" ".to_string()));
+                        self.buf.add_changes(line.changes(&attr));
+                        self.buf.add_change(Change::Text(" ".to_string()));
                         if entry_idx == selector_state.active_idx {
-                            selector_surface
+                            self.buf
                                 .add_change(Change::Attribute(AttributeChange::Reverse(false)));
                         }
-                        selector_surface
+                        self.buf
                             .add_change(Change::AllAttributes(CellAttributes::default()));
                     }
 
-                    self.buf
-                        .draw_from_screen(&selector_surface, 0, rows - selector_size - 3);
-
-                    // Adjust the cursor position because it is reset after the selector surface is drawn to
-                    // the buffered terminal
                     self.buf.add_changes(vec![
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
@@ -550,7 +547,7 @@ impl<'a> TransientState<'a> {
                                 2 + selector_state.option.delegate.description.len()
                                     + selector_state.filter_term.len(),
                             ),
-                            y: Position::Absolute(rows - selector_size - 2),
+                            y: Position::Absolute(rows.saturating_sub(selector_size + 2)),
                         },
                     ]);
                 }
