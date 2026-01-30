@@ -29,6 +29,10 @@ const FIELD_PREFIX_WIDTH: usize = 4;
 /// Width of field prefix for checkbox fields: "* " (2) + " " (1) = 3 (no colon).
 const CHECKBOX_PREFIX_WIDTH: usize = 3;
 
+/// Estimated capacity for render changes vector.
+/// Covers typical forms (header ~12 + ~10 fields × ~13 changes + dropdown ~80 + cursor 2).
+const RENDER_CHANGES_CAPACITY: usize = 256;
+
 struct FormColors {
     label_fg: ColorAttribute,
     active_label_fg: ColorAttribute,
@@ -274,30 +278,7 @@ impl<'a> FormState<'a> {
 
     fn render(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
-        self.buf.add_changes(vec![
-            Change::ClearScreen(ColorAttribute::Default),
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(0),
-            },
-        ]);
-
         let title = &self.args.title;
-        self.buf.add_changes(vec![
-            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(self.colors.header_fg)),
-            Change::Text(title.clone()),
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text("\r\n".to_string()),
-            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-            Change::Text("─".repeat(title.len())),
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text("\r\n".to_string()),
-        ]);
-
-        let mut cursor_x = 0;
-        let mut cursor_y = 0;
-        let mut current_row = HEADER_ROWS;
 
         // Pre-calculate dropdown info to know how to offset rows
         let mut dropdown_info: Option<(usize, usize, usize)> = None; // (field_idx, start_row, height)
@@ -322,6 +303,30 @@ impl<'a> FormState<'a> {
             }
         }
 
+        let mut changes = Vec::with_capacity(RENDER_CHANGES_CAPACITY);
+
+        // Header
+        changes.extend([
+            Change::ClearScreen(ColorAttribute::Default),
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(0),
+            },
+            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+            Change::Attribute(AttributeChange::Foreground(self.colors.header_fg)),
+            Change::Text(title.clone()),
+            Change::AllAttributes(CellAttributes::default()),
+            Change::Text("\r\n".to_string()),
+            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
+            Change::Text("─".repeat(title.len())),
+            Change::AllAttributes(CellAttributes::default()),
+            Change::Text("\r\n".to_string()),
+        ]);
+
+        let mut cursor_x = 0;
+        let mut cursor_y = 0;
+        let mut current_row = HEADER_ROWS;
+
         for (idx, field) in self.args.fields.iter().enumerate() {
             let is_active = idx == self.active_idx;
             let field_kind = self.field_kind(idx);
@@ -333,10 +338,10 @@ impl<'a> FormState<'a> {
                 if idx > dropdown_idx {
                     // Position this field after the dropdown
                     let field_row = HEADER_ROWS + idx + height;
-                    self.buf.add_changes(vec![Change::CursorPosition {
+                    changes.push(Change::CursorPosition {
                         x: Position::Absolute(0),
                         y: Position::Absolute(field_row),
-                    }]);
+                    });
                     current_row = field_row;
                     true
                 } else {
@@ -348,10 +353,10 @@ impl<'a> FormState<'a> {
 
             // Add newline for fields that aren't explicitly positioned
             if !is_after_dropdown {
-                self.buf.add_changes(vec![Change::Text("\r\n".to_string())]);
+                changes.push(Change::Text("\r\n".to_string()));
             }
 
-            self.buf.add_changes(vec![
+            changes.extend([
                 Change::Attribute(AttributeChange::Foreground(self.colors.required_fg)),
                 Change::Text(if field.required {
                     "* ".to_string()
@@ -379,7 +384,7 @@ impl<'a> FormState<'a> {
                 // For checkbox fields
                 let checked = self.field_values[idx].as_bool().unwrap_or(false);
 
-                self.buf.add_changes(vec![
+                changes.extend([
                     Change::Attribute(AttributeChange::Foreground(self.colors.checkbox_bracket_fg)),
                     Change::Text("[".to_string()),
                     Change::Attribute(AttributeChange::Foreground(self.colors.checkbox_checked_fg)),
@@ -400,7 +405,7 @@ impl<'a> FormState<'a> {
                     if dropdown_open {
                         // Show filter input when dropdown is open
                         let filter_display = format!("/{}", selector_state.filter_term);
-                        self.buf.add_changes(vec![
+                        changes.extend([
                             Change::Attribute(AttributeChange::Foreground(self.colors.input_fg)),
                             Change::Text(filter_display),
                             Change::AllAttributes(CellAttributes::default()),
@@ -439,7 +444,7 @@ impl<'a> FormState<'a> {
                             self.colors.placeholder_fg
                         };
 
-                        self.buf.add_changes(vec![
+                        changes.extend([
                             Change::Attribute(AttributeChange::Foreground(input_color)),
                             Change::Text(display_value),
                             Change::AllAttributes(CellAttributes::default()),
@@ -478,7 +483,7 @@ impl<'a> FormState<'a> {
                     cursor_x = label_chars_count + FIELD_PREFIX_WIDTH + self.field_cursors[idx];
                 }
 
-                self.buf.add_changes(vec![
+                changes.extend([
                     Change::Attribute(AttributeChange::Foreground(input_color)),
                     Change::Text(display_value),
                     Change::AllAttributes(CellAttributes::default()),
@@ -498,37 +503,38 @@ impl<'a> FormState<'a> {
                 // total_height includes the border row, so actual choice rows = total_height - 1
                 let choice_rows = total_height.saturating_sub(1);
 
-                // Clear the dropdown area and draw a border for choice rows only
+                // Clear the dropdown area and draw borders
+                let border_x = label_offset.saturating_sub(1);
+                let padding = " ".repeat(dropdown_width);
+                let bottom_border = "─".repeat(dropdown_width);
+
                 for row in 0..choice_rows {
-                    let display_row = dropdown_start_row + row;
-                    self.buf.add_changes(vec![
+                    changes.extend([
                         Change::CursorPosition {
-                            x: Position::Absolute(label_offset.saturating_sub(1)),
-                            y: Position::Absolute(display_row),
+                            x: Position::Absolute(border_x),
+                            y: Position::Absolute(dropdown_start_row + row),
                         },
                         Change::Attribute(AttributeChange::Foreground(self.colors.border_fg)),
                         Change::Text("│".to_string()),
                         Change::AllAttributes(CellAttributes::default()),
-                        // Clear the rest of the line for the dropdown
-                        Change::Text(" ".repeat(dropdown_width)),
+                        Change::Text(padding.clone()),
                     ]);
                 }
-
-                // Draw bottom border after the choice rows
-                self.buf.add_changes(vec![
+                // Bottom border
+                changes.extend([
                     Change::CursorPosition {
-                        x: Position::Absolute(label_offset.saturating_sub(1)),
+                        x: Position::Absolute(border_x),
                         y: Position::Absolute(dropdown_start_row + choice_rows),
                     },
                     Change::Attribute(AttributeChange::Foreground(self.colors.border_fg)),
                     Change::Text("└".to_string()),
-                    Change::Text("─".repeat(dropdown_width)),
+                    Change::Text(bottom_border),
                     Change::AllAttributes(CellAttributes::default()),
                 ]);
 
                 if selector_state.filtered_choices.is_empty() {
                     // Show "No matches" when filter returns no results
-                    self.buf.add_changes(vec![
+                    changes.extend([
                         Change::CursorPosition {
                             x: Position::Absolute(label_offset),
                             y: Position::Absolute(dropdown_start_row),
@@ -542,26 +548,19 @@ impl<'a> FormState<'a> {
                         .filtered_choices
                         .iter()
                         .skip(selector_state.top_row)
+                        .take(choice_rows)
                         .enumerate()
                     {
-                        if row_num >= choice_rows {
-                            break;
-                        }
-
                         let choice_idx = row_num + selector_state.top_row;
-
                         let is_highlighted = choice_idx == selector_state.active_choice_idx;
-                        let display_row = dropdown_start_row + row_num;
 
-                        self.buf.add_changes(vec![Change::CursorPosition {
+                        changes.push(Change::CursorPosition {
                             x: Position::Absolute(label_offset),
-                            y: Position::Absolute(display_row),
-                        }]);
+                            y: Position::Absolute(dropdown_start_row + row_num),
+                        });
 
                         if is_highlighted {
-                            self.buf.add_changes(vec![Change::Attribute(
-                                AttributeChange::Reverse(true),
-                            )]);
+                            changes.push(Change::Attribute(AttributeChange::Reverse(true)));
                         }
 
                         let choice_label: String = choice
@@ -569,27 +568,23 @@ impl<'a> FormState<'a> {
                             .chars()
                             .take(dropdown_width.saturating_sub(2))
                             .collect();
-                        let padded_label = format!(
+                        changes.push(Change::Text(format!(
                             "{:width$}",
                             choice_label,
                             width = dropdown_width.saturating_sub(1)
-                        );
-                        self.buf.add_changes(vec![Change::Text(padded_label)]);
+                        )));
 
                         if is_highlighted {
-                            self.buf.add_changes(vec![Change::Attribute(
-                                AttributeChange::Reverse(false),
-                            )]);
+                            changes.push(Change::Attribute(AttributeChange::Reverse(false)));
                         }
 
-                        self.buf
-                            .add_changes(vec![Change::AllAttributes(CellAttributes::default())]);
+                        changes.push(Change::AllAttributes(CellAttributes::default()));
                     }
                 }
             }
         }
 
-        // Cursor is visible only when text input is active (text field or open selector dropdown)
+        // Cursor visibility and position
         let cursor_visibility = match self.field_kind(self.active_idx) {
             FieldKind::Text => CursorVisibility::Visible,
             FieldKind::Selector if self.is_dropdown_open(self.active_idx) => {
@@ -598,7 +593,7 @@ impl<'a> FormState<'a> {
             _ => CursorVisibility::Hidden,
         };
 
-        self.buf.add_changes(vec![
+        changes.extend([
             Change::CursorPosition {
                 x: Position::Absolute(cursor_x),
                 y: Position::Absolute(cursor_y),
@@ -606,6 +601,7 @@ impl<'a> FormState<'a> {
             Change::CursorVisibility(cursor_visibility),
         ]);
 
+        self.buf.add_changes(changes);
         self.buf.flush()?;
         Ok(())
     }
