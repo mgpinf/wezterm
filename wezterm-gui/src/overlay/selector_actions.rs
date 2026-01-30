@@ -224,77 +224,74 @@ impl<'a> SelectorState<'a> {
 
     fn render(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
-
-        self.buf.add_changes(vec![
-            Change::ClearScreen(ColorAttribute::Default),
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(0),
-            },
-            Change::CursorVisibility(CursorVisibility::Hidden),
-        ]);
-
-        if let Some(context) = self.context.as_ref() {
-            self.buf.add_changes(vec![
-                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(self.colors.context_header_fg)),
-                Change::Text(context.header.clone()),
-                Change::AllAttributes(CellAttributes::default()),
-            ]);
-
-            for entry in &context.entries {
-                self.buf.add_changes(vec![
-                    Change::Text("\r\n".to_string()),
-                    Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)),
-                    Change::Text(entry.label.clone()),
-                    Change::AllAttributes(CellAttributes::default()),
-                    Change::Text(concat_str(": ", &entry.id)),
-                    Change::AllAttributes(CellAttributes::default()),
-                ]);
-            }
-
-            self.buf.add_change(Change::Text("\r\n\r\n".to_string()));
-        }
-
-        self.buf.add_changes(vec![
-            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(self.colors.section_header_fg)),
-            Change::Text(self.section.header.clone()),
-            Change::AllAttributes(CellAttributes::default()),
-        ]);
-        for positional_arg in &self.section.arguments {
-            self.buf.add_changes(vec![
-                Change::Text("\r\n  ".to_string()),
-                Change::Attribute(AttributeChange::Foreground(self.colors.key_fg)),
-                Change::Text(positional_arg.key.clone()),
-                Change::AllAttributes(CellAttributes::default()),
-                Change::Text(concat_str(" ", &positional_arg.description)),
-            ]);
-        }
-
         let max_width = cols.saturating_sub(6);
         let selector_size = self.choices.len().min(self.max_items);
         let selector_start_row = rows - selector_size - 3;
-
-        // Position cursor at selector area and render separator + description
-        self.buf.add_changes(vec![
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(selector_start_row),
-            },
-            Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
-            Change::Text("─".repeat(cols)),
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text("\r\n".to_string()),
-            Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-            Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
-            Change::Text(truncate_right(&self.description, max_width)),
-            Change::AllAttributes(CellAttributes::default()),
-            Change::Text("\r\n".to_string()),
-        ]);
-
         let max_items = self.max_items;
 
+        // Estimate capacity: base changes + context + section + selector entries
+        let context_entries = self.context.as_ref().map_or(0, |c| c.entries.len());
+        let visible_entries = self.filtered_entries.len().min(max_items + 1);
+        let capacity = 20 + context_entries * 6 + self.section.arguments.len() * 5 + visible_entries * 10;
+        let mut changes = Vec::with_capacity(capacity);
+
+        // Initial setup
+        changes.push(Change::ClearScreen(ColorAttribute::Default));
+        changes.push(Change::CursorPosition {
+            x: Position::Absolute(0),
+            y: Position::Absolute(0),
+        });
+        changes.push(Change::CursorVisibility(CursorVisibility::Hidden));
+
+        // Context section
+        if let Some(context) = self.context.as_ref() {
+            changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
+            changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.context_header_fg)));
+            changes.push(Change::Text(context.header.clone()));
+            changes.push(Change::AllAttributes(CellAttributes::default()));
+
+            for entry in &context.entries {
+                changes.push(Change::Text("\r\n".to_string()));
+                changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)));
+                changes.push(Change::Text(entry.label.clone()));
+                changes.push(Change::AllAttributes(CellAttributes::default()));
+                changes.push(Change::Text(concat_str(": ", &entry.id)));
+                changes.push(Change::AllAttributes(CellAttributes::default()));
+            }
+
+            changes.push(Change::Text("\r\n\r\n".to_string()));
+        }
+
+        // Section header and arguments
+        changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
+        changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.section_header_fg)));
+        changes.push(Change::Text(self.section.header.clone()));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+
+        for positional_arg in &self.section.arguments {
+            changes.push(Change::Text("\r\n  ".to_string()));
+            changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.key_fg)));
+            changes.push(Change::Text(positional_arg.key.clone()));
+            changes.push(Change::AllAttributes(CellAttributes::default()));
+            changes.push(Change::Text(concat_str(" ", &positional_arg.description)));
+        }
+
+        // Selector area: separator + description
+        changes.push(Change::CursorPosition {
+            x: Position::Absolute(0),
+            y: Position::Absolute(selector_start_row),
+        });
+        changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)));
+        changes.push(Change::Text("─".repeat(cols)));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+        changes.push(Change::Text("\r\n".to_string()));
+        changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
+        changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)));
+        changes.push(Change::Text(truncate_right(&self.description, max_width)));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+        changes.push(Change::Text("\r\n".to_string()));
+
+        // Selector entries
         for (row_num, (entry_idx, entry)) in self
             .filtered_entries
             .iter()
@@ -307,70 +304,64 @@ impl<'a> SelectorState<'a> {
             }
 
             if row_num != 0 {
-                self.buf.add_change(Change::Text("\r\n".to_string()));
+                changes.push(Change::Text("\r\n".to_string()));
             }
 
             let mut attr = CellAttributes::blank();
 
             if let Some(multiple_idx) = self.multiple_idx.as_ref() {
                 if multiple_idx[self.filtered_entries[entry_idx].idx] {
-                    self.buf.add_changes(vec![
-                        Change::Attribute(AttributeChange::Background(
-                            self.colors.multiple_marker_bg,
-                        )),
-                        Change::Text(" ".to_string()),
-                        Change::Attribute(AttributeChange::Background(ColorAttribute::Default)),
-                    ]);
+                    changes.push(Change::Attribute(AttributeChange::Background(
+                        self.colors.multiple_marker_bg,
+                    )));
+                    changes.push(Change::Text(" ".to_string()));
+                    changes.push(Change::Attribute(AttributeChange::Background(ColorAttribute::Default)));
                 } else {
-                    self.buf.add_change(Change::Text(" ".to_string()));
+                    changes.push(Change::Text(" ".to_string()));
                 }
             }
 
             if entry_idx == self.active_idx {
-                self.buf
-                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
+                changes.push(Change::Attribute(AttributeChange::Reverse(true)));
                 attr.set_reverse(true);
             }
 
-            self.buf.add_change(Change::Text("    ".to_string()));
+            changes.push(Change::Text("    ".to_string()));
             let mut line = crate::tabbar::parse_status_text(&entry.delegate.label, attr.clone());
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
-            self.buf.add_changes(line.changes(&attr));
-            self.buf.add_change(Change::Text(" ".to_string()));
+            changes.extend(line.changes(&attr));
+            changes.push(Change::Text(" ".to_string()));
             if entry_idx == self.active_idx {
-                self.buf
-                    .add_change(Change::Attribute(AttributeChange::Reverse(false)));
+                changes.push(Change::Attribute(AttributeChange::Reverse(false)));
             }
-            self.buf
-                .add_change(Change::AllAttributes(CellAttributes::default()));
+            changes.push(Change::AllAttributes(CellAttributes::default()));
         }
 
+        // Filter input overlay
         if self.filtering {
-            // Calculate cursor position for filter input
             let filter_prefix = truncate_right(&self.fuzzy_description, max_width);
             let cursor_x = filter_prefix.len() + 2 + self.filter_term.len(); // +2 for ": "
 
-            self.buf.add_changes(vec![
-                Change::CursorPosition {
-                    x: Position::Absolute(0),
-                    y: Position::Absolute(selector_start_row + 1),
-                },
-                Change::ClearToEndOfLine(ColorAttribute::Default),
-                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
-                Change::Text(filter_prefix),
-                Change::AllAttributes(CellAttributes::default()),
-                Change::Text(concat_str(": ", &self.filter_term)),
-                Change::CursorPosition {
-                    x: Position::Absolute(cursor_x),
-                    y: Position::Absolute(selector_start_row + 1),
-                },
-                Change::CursorVisibility(CursorVisibility::Visible),
-            ]);
+            changes.push(Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(selector_start_row + 1),
+            });
+            changes.push(Change::ClearToEndOfLine(ColorAttribute::Default));
+            changes.push(Change::Attribute(AttributeChange::Intensity(Intensity::Bold)));
+            changes.push(Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)));
+            changes.push(Change::Text(filter_prefix));
+            changes.push(Change::AllAttributes(CellAttributes::default()));
+            changes.push(Change::Text(concat_str(": ", &self.filter_term)));
+            changes.push(Change::CursorPosition {
+                x: Position::Absolute(cursor_x),
+                y: Position::Absolute(selector_start_row + 1),
+            });
+            changes.push(Change::CursorVisibility(CursorVisibility::Visible));
         }
 
+        self.buf.add_changes(changes);
         self.buf.flush()?;
 
         Ok(())
