@@ -11,7 +11,7 @@ use mux_lua::MuxPane;
 use rayon::prelude::*;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
-use termwiz::surface::{Change, CursorVisibility, Position, Surface};
+use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
@@ -273,11 +273,15 @@ impl<'a> SelectorState<'a> {
         }
 
         let max_width = cols.saturating_sub(6);
-
         let selector_size = self.choices.len().min(self.max_items);
-        let mut selector_surface = Surface::new(cols, selector_size + 3);
+        let selector_start_row = rows - selector_size - 3;
 
-        selector_surface.add_changes(vec![
+        // Position cursor at selector area and render separator + description
+        self.buf.add_changes(vec![
+            Change::CursorPosition {
+                x: Position::Absolute(0),
+                y: Position::Absolute(selector_start_row),
+            },
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text("─".repeat(cols)),
             Change::AllAttributes(CellAttributes::default()),
@@ -303,14 +307,14 @@ impl<'a> SelectorState<'a> {
             }
 
             if row_num != 0 {
-                selector_surface.add_change(Change::Text("\r\n".to_string()));
+                self.buf.add_change(Change::Text("\r\n".to_string()));
             }
 
             let mut attr = CellAttributes::blank();
 
             if let Some(multiple_idx) = self.multiple_idx.as_ref() {
                 if multiple_idx[self.filtered_entries[entry_idx].idx] {
-                    selector_surface.add_changes(vec![
+                    self.buf.add_changes(vec![
                         Change::Attribute(AttributeChange::Background(
                             self.colors.multiple_marker_bg,
                         )),
@@ -318,58 +322,54 @@ impl<'a> SelectorState<'a> {
                         Change::Attribute(AttributeChange::Background(ColorAttribute::Default)),
                     ]);
                 } else {
-                    selector_surface.add_change(Change::Text(" ".to_string()));
+                    self.buf.add_change(Change::Text(" ".to_string()));
                 }
             }
 
             if entry_idx == self.active_idx {
-                selector_surface.add_change(Change::Attribute(AttributeChange::Reverse(true)));
+                self.buf
+                    .add_change(Change::Attribute(AttributeChange::Reverse(true)));
                 attr.set_reverse(true);
             }
 
-            selector_surface.add_change(Change::Text("    ".to_string()));
+            self.buf.add_change(Change::Text("    ".to_string()));
             let mut line = crate::tabbar::parse_status_text(&entry.delegate.label, attr.clone());
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
-            selector_surface.add_changes(line.changes(&attr));
-            selector_surface.add_change(Change::Text(" ".to_string()));
+            self.buf.add_changes(line.changes(&attr));
+            self.buf.add_change(Change::Text(" ".to_string()));
             if entry_idx == self.active_idx {
-                selector_surface.add_change(Change::Attribute(AttributeChange::Reverse(false)));
+                self.buf
+                    .add_change(Change::Attribute(AttributeChange::Reverse(false)));
             }
-            selector_surface.add_change(Change::AllAttributes(CellAttributes::default()));
+            self.buf
+                .add_change(Change::AllAttributes(CellAttributes::default()));
         }
 
         if self.filtering {
-            self.buf
-                .add_change(Change::CursorVisibility(CursorVisibility::Visible));
+            // Calculate cursor position for filter input
+            let filter_prefix = truncate_right(&self.fuzzy_description, max_width);
+            let cursor_x = filter_prefix.len() + 2 + self.filter_term.len(); // +2 for ": "
 
-            selector_surface.add_changes(vec![
+            self.buf.add_changes(vec![
                 Change::CursorPosition {
                     x: Position::Absolute(0),
-                    y: Position::Absolute(1),
+                    y: Position::Absolute(selector_start_row + 1),
                 },
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
-                Change::Text(truncate_right(&self.fuzzy_description, max_width)),
+                Change::Text(filter_prefix),
                 Change::AllAttributes(CellAttributes::default()),
                 Change::Text(concat_str(": ", &self.filter_term)),
+                Change::CursorPosition {
+                    x: Position::Absolute(cursor_x),
+                    y: Position::Absolute(selector_start_row + 1),
+                },
+                Change::CursorVisibility(CursorVisibility::Visible),
             ]);
         }
-
-        let selector_size = self.choices.len().min(self.max_items);
-        self.buf
-            .draw_from_screen(&selector_surface, 0, rows - selector_size - 3);
-
-        let (xpos, _) = selector_surface.cursor_position();
-
-        // Adjust the cursor position because it is reset after the selector surface is drawn to
-        // the buffered terminal
-        self.buf.add_change(Change::CursorPosition {
-            x: Position::Absolute(xpos),
-            y: Position::Absolute(rows - selector_size - 2),
-        });
 
         self.buf.flush()?;
 
