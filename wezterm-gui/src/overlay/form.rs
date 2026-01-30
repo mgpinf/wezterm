@@ -90,6 +90,17 @@ impl FormColors {
     }
 }
 
+/// The kind of form field
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FieldKind {
+    /// A text input field
+    Text,
+    /// A dropdown selector field with choices
+    Selector,
+    /// A checkbox (boolean) field
+    Checkbox,
+}
+
 /// State for selector fields
 struct SelectorFieldState {
     /// The filter/search term for fuzzy matching
@@ -162,6 +173,8 @@ struct FormState<'a> {
     active_idx: usize,
     field_values: Vec<FormFieldValue>,
     field_cursors: Vec<usize>,
+    /// The kind of each field (text, selector, or checkbox)
+    field_kinds: Vec<FieldKind>,
     /// State for selector fields (only populated for fields with choices)
     selector_states: Vec<Option<SelectorFieldState>>,
     colors: FormColors,
@@ -213,6 +226,21 @@ impl<'a> FormState<'a> {
             })
             .collect();
 
+        let field_kinds: Vec<FieldKind> = args
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(idx, f)| {
+                if field_values[idx].is_bool() {
+                    FieldKind::Checkbox
+                } else if !f.choices.is_empty() {
+                    FieldKind::Selector
+                } else {
+                    FieldKind::Text
+                }
+            })
+            .collect();
+
         Self {
             args,
             window,
@@ -220,24 +248,18 @@ impl<'a> FormState<'a> {
             active_idx: 0,
             field_values,
             field_cursors,
+            field_kinds,
             selector_states,
             colors: FormColors::new(),
             buf,
         }
     }
 
-    fn is_selector_field(&self, idx: usize) -> bool {
-        self.selector_states
+    fn field_kind(&self, idx: usize) -> FieldKind {
+        self.field_kinds
             .get(idx)
-            .map(|s| s.is_some())
-            .unwrap_or(false)
-    }
-
-    fn is_checkbox_field(&self, idx: usize) -> bool {
-        self.field_values
-            .get(idx)
-            .map(|v| v.is_bool())
-            .unwrap_or(false)
+            .copied()
+            .unwrap_or(FieldKind::Text)
     }
 
     fn toggle_checkbox(&mut self, idx: usize) {
@@ -306,8 +328,7 @@ impl<'a> FormState<'a> {
 
         for (idx, field) in self.args.fields.iter().enumerate() {
             let is_active = idx == self.active_idx;
-            let is_checkbox = self.is_checkbox_field(idx);
-            let is_selector = !field.choices.is_empty();
+            let field_kind = self.field_kind(idx);
             let dropdown_open = self.is_dropdown_open(idx);
             let label_chars_count = field.label.chars().count();
 
@@ -348,10 +369,17 @@ impl<'a> FormState<'a> {
                 })),
                 Change::Text(field.label.clone()),
                 Change::AllAttributes(CellAttributes::default()),
-                Change::Text(if is_checkbox { " " } else { ": " }.to_string()),
+                Change::Text(
+                    if field_kind == FieldKind::Checkbox {
+                        " "
+                    } else {
+                        ": "
+                    }
+                    .to_string(),
+                ),
             ]);
 
-            if is_checkbox {
+            if field_kind == FieldKind::Checkbox {
                 // For checkbox fields
                 let checked = self
                     .field_values
@@ -374,7 +402,7 @@ impl<'a> FormState<'a> {
                     // Position cursor inside the checkbox brackets
                     cursor_x = label_chars_count + CHECKBOX_PREFIX_WIDTH + 1;
                 }
-            } else if is_selector {
+            } else if field_kind == FieldKind::Selector {
                 // For selector fields
                 if let Some(selector_state) = &self.selector_states[idx] {
                     if dropdown_open {
@@ -526,16 +554,17 @@ impl<'a> FormState<'a> {
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
                 } else {
-                    for (row_num, (choice_idx, choice)) in selector_state
+                    for (row_num, choice) in selector_state
                         .filtered_choices
                         .iter()
-                        .enumerate()
                         .skip(selector_state.top_row)
                         .enumerate()
                     {
                         if row_num >= choice_rows {
                             break;
                         }
+
+                        let choice_idx = row_num + selector_state.top_row;
 
                         let is_highlighted = choice_idx == selector_state.active_choice_idx;
                         let display_row = dropdown_start_row + row_num;
@@ -578,12 +607,10 @@ impl<'a> FormState<'a> {
 
         // Hide cursor for checkbox fields or when a selector field is active but dropdown is closed
         // (no text input happening in those states)
-        let cursor_visible = if self.is_checkbox_field(self.active_idx) {
-            false
-        } else if self.is_selector_field(self.active_idx) {
-            self.is_dropdown_open(self.active_idx)
-        } else {
-            true
+        let cursor_visible = match self.field_kind(self.active_idx) {
+            FieldKind::Checkbox => false,
+            FieldKind::Selector => self.is_dropdown_open(self.active_idx),
+            FieldKind::Text => true,
         };
 
         self.buf.add_changes(vec![
@@ -1005,16 +1032,13 @@ impl<'a> FormState<'a> {
 
     fn run_loop(&mut self) -> anyhow::Result<()> {
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
-            let is_checkbox = self.is_checkbox_field(self.active_idx);
-            let is_selector = self.is_selector_field(self.active_idx);
+            let field_kind = self.field_kind(self.active_idx);
 
             // Handle field-specific input first
-            let handled = if is_checkbox {
-                self.handle_checkbox_input(&event)
-            } else if is_selector {
-                self.handle_selector_input(&event)
-            } else {
-                self.handle_text_field_input(&event)
+            let handled = match field_kind {
+                FieldKind::Checkbox => self.handle_checkbox_input(&event),
+                FieldKind::Selector => self.handle_selector_input(&event),
+                FieldKind::Text => self.handle_text_field_input(&event),
             };
 
             if handled {
