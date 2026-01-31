@@ -11267,6 +11267,8 @@ impl<'a> EditorState<'a> {
                                     }
                                     ('g', 'g') => {
                                         // gg - go to first line
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = 0;
                                         let line_len = self.line_char_count(self.cursor.0);
                                         self.cursor.1 = self.desired_col.min(line_len);
@@ -11324,6 +11326,8 @@ impl<'a> EditorState<'a> {
                                         // 'a - extend selection to mark line (first non-blank)
                                         if let Some(&(row, _)) = self.marks.get(&mark) {
                                             if row < self.lines.len() {
+                                                // Save position before jump for '' and ``
+                                                self.last_jump_position = Some(self.cursor);
                                                 self.cursor.0 = row;
                                                 // Move to first non-blank on that line
                                                 let line = &self.lines[row];
@@ -11337,14 +11341,93 @@ impl<'a> EditorState<'a> {
                                         }
                                         true
                                     }
+                                    ('\'', '.') => {
+                                        // '. - extend selection to last change position (first non-blank)
+                                        if let Some((row, _)) = self.last_change_position {
+                                            if row < self.lines.len() {
+                                                self.last_jump_position = Some(self.cursor);
+                                                self.cursor.0 = row;
+                                                self.move_to_first_non_blank();
+                                                self.update_desired_col();
+                                            }
+                                        }
+                                        true
+                                    }
+                                    ('\'', '^') => {
+                                        // '^ - extend selection to last insert position (first non-blank)
+                                        if let Some((row, _)) = self.last_insert_position {
+                                            if row < self.lines.len() {
+                                                self.last_jump_position = Some(self.cursor);
+                                                self.cursor.0 = row;
+                                                self.move_to_first_non_blank();
+                                                self.update_desired_col();
+                                            }
+                                        }
+                                        true
+                                    }
+                                    ('\'', '\'') => {
+                                        // '' - extend selection to last jump position (first non-blank)
+                                        if let Some((row, _)) = self.last_jump_position {
+                                            if row < self.lines.len() {
+                                                let old_pos = self.cursor;
+                                                self.cursor.0 = row;
+                                                self.move_to_first_non_blank();
+                                                self.update_desired_col();
+                                                self.last_jump_position = Some(old_pos);
+                                            }
+                                        }
+                                        true
+                                    }
                                     ('`', mark) if mark.is_ascii_lowercase() => {
                                         // `a - extend selection to exact mark position
                                         if let Some(&(row, col)) = self.marks.get(&mark) {
                                             if row < self.lines.len() {
+                                                // Save position before jump for '' and ``
+                                                self.last_jump_position = Some(self.cursor);
                                                 self.cursor.0 = row;
                                                 let line_len = self.line_char_count(row);
                                                 self.cursor.1 = col.min(line_len);
                                                 self.update_desired_col();
+                                            }
+                                        }
+                                        true
+                                    }
+                                    ('`', '.') => {
+                                        // `. - extend selection to exact last change position
+                                        if let Some((row, col)) = self.last_change_position {
+                                            if row < self.lines.len() {
+                                                self.last_jump_position = Some(self.cursor);
+                                                self.cursor.0 = row;
+                                                let line_len = self.line_char_count(row);
+                                                self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                                self.update_desired_col();
+                                            }
+                                        }
+                                        true
+                                    }
+                                    ('`', '^') => {
+                                        // `^ - extend selection to exact last insert position
+                                        if let Some((row, col)) = self.last_insert_position {
+                                            if row < self.lines.len() {
+                                                self.last_jump_position = Some(self.cursor);
+                                                self.cursor.0 = row;
+                                                let line_len = self.line_char_count(row);
+                                                self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                                self.update_desired_col();
+                                            }
+                                        }
+                                        true
+                                    }
+                                    ('`', '`') => {
+                                        // `` - extend selection to exact last jump position
+                                        if let Some((row, col)) = self.last_jump_position {
+                                            if row < self.lines.len() {
+                                                let old_pos = self.cursor;
+                                                self.cursor.0 = row;
+                                                let line_len = self.line_char_count(row);
+                                                self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                                self.update_desired_col();
+                                                self.last_jump_position = Some(old_pos);
                                             }
                                         }
                                         true
@@ -11417,6 +11500,8 @@ impl<'a> EditorState<'a> {
                                         }
                                     }
                                     'G' => {
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = self.lines.len() - 1;
                                         let line_len = self.line_char_count(self.cursor.0);
                                         self.cursor.1 = self.desired_col.min(line_len);
