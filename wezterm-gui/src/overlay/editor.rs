@@ -503,6 +503,10 @@ struct EditorState<'a> {
     sub_display_prefix: String,
     /// Marks: named positions (a-z) -> (row, col)
     marks: HashMap<char, (usize, usize)>,
+    /// Last change position for '. and `. marks
+    last_change_position: Option<(usize, usize)>,
+    /// Last insert position for '^ and `^ marks (where insert mode was last exited)
+    last_insert_position: Option<(usize, usize)>,
     /// Visual block mode: selection extends to end of line (set by $)
     visual_block_extends_to_eol: bool,
     /// Render optimization: pre-allocated buffer for Change objects
@@ -585,6 +589,8 @@ impl<'a> EditorState<'a> {
             sub_line_range: None,
             sub_display_prefix: String::new(),
             marks: HashMap::new(),
+            last_change_position: None,
+            last_insert_position: None,
             visual_block_extends_to_eol: false,
             render_changes: Vec::with_capacity(512),
         }
@@ -776,6 +782,8 @@ impl<'a> EditorState<'a> {
             self.history.truncate(self.history_idx + 1);
         }
         if self.lines_version != self.history_version {
+            // Track the position where the change was made for '. and `. marks
+            self.last_change_position = Some(self.cursor);
             self.history.push((self.lines.clone(), self.cursor));
             self.history_idx = self.history.len() - 1;
             self.history_version = self.lines_version;
@@ -804,6 +812,8 @@ impl<'a> EditorState<'a> {
             }
             return;
         }
+        // Track the position where the change was made for '. and `. marks
+        self.last_change_position = Some(cursor);
         self.history.push((self.lines.clone(), cursor));
         self.history_idx = self.history.len() - 1;
         self.history_version = self.lines_version;
@@ -10204,9 +10214,47 @@ impl<'a> EditorState<'a> {
                                         self.update_desired_col();
                                     }
                                 }
+                            } else if first == KeyCode::Char('\'') && c == '.' {
+                                // '. - jump to last change position (first non-blank)
+                                if let Some((row, _)) = self.last_change_position {
+                                    if row < self.lines.len() {
+                                        self.cursor.0 = row;
+                                        self.move_to_first_non_blank();
+                                        self.update_desired_col();
+                                    }
+                                }
+                            } else if first == KeyCode::Char('\'') && c == '^' {
+                                // '^ - jump to last insert position (first non-blank)
+                                if let Some((row, _)) = self.last_insert_position {
+                                    if row < self.lines.len() {
+                                        self.cursor.0 = row;
+                                        self.move_to_first_non_blank();
+                                        self.update_desired_col();
+                                    }
+                                }
                             } else if first == KeyCode::Char('`') && c.is_ascii_lowercase() {
                                 // `{a-z} - jump to exact mark position
                                 if let Some(&(row, col)) = self.marks.get(&c) {
+                                    if row < self.lines.len() {
+                                        self.cursor.0 = row;
+                                        let line_len = self.line_char_count(row);
+                                        self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                        self.update_desired_col();
+                                    }
+                                }
+                            } else if first == KeyCode::Char('`') && c == '.' {
+                                // `. - jump to exact last change position
+                                if let Some((row, col)) = self.last_change_position {
+                                    if row < self.lines.len() {
+                                        self.cursor.0 = row;
+                                        let line_len = self.line_char_count(row);
+                                        self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                        self.update_desired_col();
+                                    }
+                                }
+                            } else if first == KeyCode::Char('`') && c == '^' {
+                                // `^ - jump to exact last insert position
+                                if let Some((row, col)) = self.last_insert_position {
                                     if row < self.lines.len() {
                                         self.cursor.0 = row;
                                         let line_len = self.line_char_count(row);
@@ -10688,6 +10736,8 @@ impl<'a> EditorState<'a> {
                                 }
                             }
 
+                            // Track insert position before cursor moves (for '^ and `^ marks)
+                            self.last_insert_position = Some(self.cursor);
                             self.mode = EditorMode::Normal;
                             // Move cursor left first (Vim behavior when leaving Insert mode)
                             if self.cursor.1 > 0 {
@@ -10697,6 +10747,8 @@ impl<'a> EditorState<'a> {
                             self.update_desired_col();
                             self.record_change();
                         } else {
+                            // Track insert position before cursor moves (for '^ and `^ marks)
+                            self.last_insert_position = Some(self.cursor);
                             self.mode = EditorMode::Normal;
                             // Move cursor left first (Vim behavior when leaving Insert mode)
                             if self.cursor.1 > 0 {
