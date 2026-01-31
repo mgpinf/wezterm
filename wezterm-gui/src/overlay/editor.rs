@@ -507,6 +507,8 @@ struct EditorState<'a> {
     last_change_position: Option<(usize, usize)>,
     /// Last insert position for '^ and `^ marks (where insert mode was last exited)
     last_insert_position: Option<(usize, usize)>,
+    /// Last jump position for '' and `` marks (position before last jump)
+    last_jump_position: Option<(usize, usize)>,
     /// Visual block mode: selection extends to end of line (set by $)
     visual_block_extends_to_eol: bool,
     /// Render optimization: pre-allocated buffer for Change objects
@@ -591,6 +593,7 @@ impl<'a> EditorState<'a> {
             marks: HashMap::new(),
             last_change_position: None,
             last_insert_position: None,
+            last_jump_position: None,
             visual_block_extends_to_eol: false,
             render_changes: Vec::with_capacity(512),
         }
@@ -10126,6 +10129,8 @@ impl<'a> EditorState<'a> {
                         if !self.pending_keys.is_empty() {
                             let first = self.pending_keys[0];
                             if first == KeyCode::Char('g') && c == 'g' {
+                                // Save position before jump for '' and ``
+                                self.last_jump_position = Some(self.cursor);
                                 self.cursor.0 = 0;
                                 // Use desired_col like vertical movement
                                 let line_len = self.line_char_count(self.cursor.0);
@@ -10209,6 +10214,8 @@ impl<'a> EditorState<'a> {
                                 // '{a-z} - jump to mark line (first non-blank)
                                 if let Some(&(row, _)) = self.marks.get(&c) {
                                     if row < self.lines.len() {
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = row;
                                         self.move_to_first_non_blank();
                                         self.update_desired_col();
@@ -10218,6 +10225,8 @@ impl<'a> EditorState<'a> {
                                 // '. - jump to last change position (first non-blank)
                                 if let Some((row, _)) = self.last_change_position {
                                     if row < self.lines.len() {
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = row;
                                         self.move_to_first_non_blank();
                                         self.update_desired_col();
@@ -10227,15 +10236,31 @@ impl<'a> EditorState<'a> {
                                 // '^ - jump to last insert position (first non-blank)
                                 if let Some((row, _)) = self.last_insert_position {
                                     if row < self.lines.len() {
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = row;
                                         self.move_to_first_non_blank();
                                         self.update_desired_col();
+                                    }
+                                }
+                            } else if first == KeyCode::Char('\'') && c == '\'' {
+                                // '' - jump to last jump position (first non-blank)
+                                if let Some((row, _)) = self.last_jump_position {
+                                    if row < self.lines.len() {
+                                        // Save current position before jumping
+                                        let old_pos = self.cursor;
+                                        self.cursor.0 = row;
+                                        self.move_to_first_non_blank();
+                                        self.update_desired_col();
+                                        self.last_jump_position = Some(old_pos);
                                     }
                                 }
                             } else if first == KeyCode::Char('`') && c.is_ascii_lowercase() {
                                 // `{a-z} - jump to exact mark position
                                 if let Some(&(row, col)) = self.marks.get(&c) {
                                     if row < self.lines.len() {
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = row;
                                         let line_len = self.line_char_count(row);
                                         self.cursor.1 = col.min(line_len.saturating_sub(1));
@@ -10246,6 +10271,8 @@ impl<'a> EditorState<'a> {
                                 // `. - jump to exact last change position
                                 if let Some((row, col)) = self.last_change_position {
                                     if row < self.lines.len() {
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = row;
                                         let line_len = self.line_char_count(row);
                                         self.cursor.1 = col.min(line_len.saturating_sub(1));
@@ -10256,10 +10283,25 @@ impl<'a> EditorState<'a> {
                                 // `^ - jump to exact last insert position
                                 if let Some((row, col)) = self.last_insert_position {
                                     if row < self.lines.len() {
+                                        // Save position before jump for '' and ``
+                                        self.last_jump_position = Some(self.cursor);
                                         self.cursor.0 = row;
                                         let line_len = self.line_char_count(row);
                                         self.cursor.1 = col.min(line_len.saturating_sub(1));
                                         self.update_desired_col();
+                                    }
+                                }
+                            } else if first == KeyCode::Char('`') && c == '`' {
+                                // `` - jump to exact last jump position
+                                if let Some((row, col)) = self.last_jump_position {
+                                    if row < self.lines.len() {
+                                        // Save current position before jumping
+                                        let old_pos = self.cursor;
+                                        self.cursor.0 = row;
+                                        let line_len = self.line_char_count(row);
+                                        self.cursor.1 = col.min(line_len.saturating_sub(1));
+                                        self.update_desired_col();
+                                        self.last_jump_position = Some(old_pos);
                                     }
                                 }
                             }
@@ -10462,6 +10504,8 @@ impl<'a> EditorState<'a> {
                                 self.update_desired_col();
                             }
                             'G' => {
+                                // Save position before jump for '' and ``
+                                self.last_jump_position = Some(self.cursor);
                                 // With count: go to line N, without count: go to last line
                                 let target_line = if let Some(count) = self.count_prefix.take() {
                                     // Line numbers are 1-based
