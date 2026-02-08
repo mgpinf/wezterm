@@ -697,6 +697,10 @@ impl<'a> TransientState<'a> {
                     }) => {
                         self.typed.pop();
                     }
+                    InputEvent::Resized { cols, rows } => {
+                        self.cols_separator = "─".repeat(cols);
+                        self.buf.resize(cols, rows);
+                    }
                     _ => {}
                 },
                 Some(InputMode::Prompt(prompt_state)) => match event {
