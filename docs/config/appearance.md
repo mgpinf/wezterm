@@ -237,6 +237,12 @@ config.colors = {
   scrollback_search_selected_line_fg = { AnsiColor = 'White' }, -- {{since('nightly', inline=True)}}
   scrollback_search_fg = { AnsiColor = 'Silver' }, -- {{since('nightly', inline=True)}}
   scrollback_search_label_fg = 'Default', -- {{since('nightly', inline=True)}}
+
+  typing_test_correct_fg = { AnsiColor = 'Lime' }, -- {{since('nightly', inline=True)}}
+  typing_test_error_fg = { AnsiColor = 'Red' }, -- {{since('nightly', inline=True)}}
+  typing_test_accent_fg = { AnsiColor = 'Blue' }, -- {{since('nightly', inline=True)}}
+  typing_test_speed_fg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
+  typing_test_pending_fg = { AnsiColor = 'Silver' }, -- {{since('nightly', inline=True)}}
 }
 
 return config
