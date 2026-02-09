@@ -43,6 +43,7 @@ struct TypingTestColors {
     error: ColorAttribute,
     accent: ColorAttribute,
     speed: ColorAttribute,
+    pending: Option<ColorAttribute>,
 }
 
 impl TypingTestColors {
@@ -67,6 +68,7 @@ impl TypingTestColors {
                 .typing_test_speed_fg
                 .map(Into::into)
                 .unwrap_or_else(|| AnsiColor::Green.into()),
+            pending: colors.typing_test_pending_fg.map(Into::into),
         }
     }
 }
@@ -490,6 +492,8 @@ fn render_test_screen(
                         AttributeChange::Underline(Underline::Single).into(),
                     ]);
                 }
+            } else if let Some(pending) = colors.pending {
+                buf.add_change(AttributeChange::Foreground(pending));
             } else {
                 buf.add_change(AttributeChange::Intensity(termwiz::cell::Intensity::Half));
             }

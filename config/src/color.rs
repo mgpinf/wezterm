@@ -280,6 +280,7 @@ pub struct Palette {
     pub typing_test_error_fg: Option<ColorSpec>,
     pub typing_test_accent_fg: Option<ColorSpec>,
     pub typing_test_speed_fg: Option<ColorSpec>,
+    pub typing_test_pending_fg: Option<ColorSpec>,
 }
 impl_lua_conversion_dynamic!(Palette);
 
@@ -430,6 +431,7 @@ impl Palette {
             typing_test_error_fg: overlay!(typing_test_error_fg),
             typing_test_accent_fg: overlay!(typing_test_accent_fg),
             typing_test_speed_fg: overlay!(typing_test_speed_fg),
+            typing_test_pending_fg: overlay!(typing_test_pending_fg),
         }
     }
 }
