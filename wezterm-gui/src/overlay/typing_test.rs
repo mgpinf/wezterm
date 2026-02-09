@@ -431,29 +431,27 @@ fn center_x(width: usize, text_len: usize) -> usize {
 }
 
 fn push_bottom_instructions(
-    buf: &mut BufferedTerminal<TermWizTerminal>,
+    changes: &mut Vec<Change>,
     width: usize,
     height: usize,
     colors: &TypingTestColors,
 ) {
     let text = "ctrl-r to restart, ctrl-c to quit ";
-    buf.add_changes(vec![
-        Change::CursorPosition {
-            x: termwiz::surface::Position::Absolute(center_x(width, text.len())),
-            y: termwiz::surface::Position::Absolute(height - 3),
-        },
-        AttributeChange::Foreground(colors.accent).into(),
-        Change::Text("ctrl-r".to_string()),
-        Change::AllAttributes(CellAttributes::default()),
-        AttributeChange::Intensity(termwiz::cell::Intensity::Half).into(),
-        Change::Text(" to restart, ".to_string()),
-        Change::AllAttributes(CellAttributes::default()),
-        AttributeChange::Foreground(colors.accent).into(),
-        Change::Text("ctrl-c".to_string()),
-        Change::AllAttributes(CellAttributes::default()),
-        AttributeChange::Intensity(termwiz::cell::Intensity::Half).into(),
-        Change::Text(" to quit ".to_string()),
-    ]);
+    changes.push(Change::CursorPosition {
+        x: termwiz::surface::Position::Absolute(center_x(width, text.len())),
+        y: termwiz::surface::Position::Absolute(height - 3),
+    });
+    changes.push(AttributeChange::Foreground(colors.accent).into());
+    changes.push(Change::Text("ctrl-r".to_string()));
+    changes.push(Change::AllAttributes(CellAttributes::default()));
+    changes.push(AttributeChange::Intensity(termwiz::cell::Intensity::Half).into());
+    changes.push(Change::Text(" to restart, ".to_string()));
+    changes.push(Change::AllAttributes(CellAttributes::default()));
+    changes.push(AttributeChange::Foreground(colors.accent).into());
+    changes.push(Change::Text("ctrl-c".to_string()));
+    changes.push(Change::AllAttributes(CellAttributes::default()));
+    changes.push(AttributeChange::Intensity(termwiz::cell::Intensity::Half).into());
+    changes.push(Change::Text(" to quit ".to_string()));
 }
 
 fn render_test_screen(
@@ -463,62 +461,65 @@ fn render_test_screen(
 ) -> anyhow::Result<()> {
     let (width, height) = buf.dimensions();
 
-    buf.add_changes(vec![
-        Change::ClearScreen(Default::default()),
-        Change::Title("Typing Test".to_string()),
-    ]);
-
     let target_text: String = state.target_chars.iter().collect();
     let max_line_width = (width * 2 / 5).max(50);
     let wrapped_lines = wrap_text(&target_text, max_line_width);
     let start_y = (height.saturating_sub(wrapped_lines.len())) / 2 - 1;
 
+    // Pre-allocate: 2 (clear+title) + ~3 per char + ~12 (instructions) + 3 (cursor)
+    let mut changes = Vec::with_capacity(state.target_chars.len() * 3 + 20);
+
+    changes.push(Change::ClearScreen(Default::default()));
+    changes.push(Change::Title("Typing Test".to_string()));
+
     let mut char_index = 0;
     for (line_idx, line) in wrapped_lines.iter().enumerate() {
         let line_x = center_x(width, line.chars().count());
-        buf.add_change(Change::CursorPosition {
+        changes.push(Change::CursorPosition {
             x: termwiz::surface::Position::Absolute(line_x),
             y: termwiz::surface::Position::Absolute(start_y + line_idx),
         });
 
         for target_char in line.chars() {
-            buf.add_change(Change::AllAttributes(CellAttributes::default()));
+            changes.push(Change::AllAttributes(CellAttributes::default()));
             if char_index < state.input_chars.len() {
                 if state.input_chars[char_index] == target_char {
-                    buf.add_change(AttributeChange::Foreground(colors.correct));
+                    changes.push(AttributeChange::Foreground(colors.correct).into());
                 } else {
-                    buf.add_changes(vec![
-                        AttributeChange::Foreground(colors.error).into(),
-                        AttributeChange::Underline(Underline::Single).into(),
-                    ]);
+                    changes.push(AttributeChange::Foreground(colors.error).into());
+                    changes.push(AttributeChange::Underline(Underline::Single).into());
                 }
             } else if let Some(pending) = colors.pending {
-                buf.add_change(AttributeChange::Foreground(pending));
+                changes.push(AttributeChange::Foreground(pending).into());
             } else {
-                buf.add_change(AttributeChange::Intensity(termwiz::cell::Intensity::Half));
+                changes.push(AttributeChange::Intensity(termwiz::cell::Intensity::Half).into());
             }
-            buf.add_change(Change::Text(target_char.to_string()));
+            changes.push(Change::Text(target_char.to_string()));
             char_index += 1;
         }
     }
-    buf.add_change(Change::AllAttributes(CellAttributes::default()));
+    changes.push(Change::AllAttributes(CellAttributes::default()));
 
-    push_bottom_instructions(buf, width, height, colors);
+    push_bottom_instructions(&mut changes, width, height, colors);
 
     if let Some((line_idx, char_in_line)) =
         find_cursor_position(&wrapped_lines, state.input_chars.len())
     {
         let line_x = center_x(width, wrapped_lines[line_idx].chars().count());
-        buf.add_change(Change::CursorPosition {
+        changes.push(Change::CursorPosition {
             x: termwiz::surface::Position::Absolute(line_x + char_in_line),
             y: termwiz::surface::Position::Absolute(start_y + line_idx),
         });
     }
 
-    buf.add_changes(vec![
-        Change::CursorShape(termwiz::surface::CursorShape::BlinkingBar),
-        Change::CursorVisibility(termwiz::surface::CursorVisibility::Visible),
-    ]);
+    changes.push(Change::CursorShape(
+        termwiz::surface::CursorShape::BlinkingBar,
+    ));
+    changes.push(Change::CursorVisibility(
+        termwiz::surface::CursorVisibility::Visible,
+    ));
+
+    buf.add_changes(changes);
 
     buf.flush()?;
     Ok(())
@@ -574,69 +575,64 @@ fn show_results(
     let (width, height) = buf.dimensions();
     let center_y = height / 2 - 1;
 
-    buf.add_changes(vec![
-        Change::ClearScreen(Default::default()),
-        Change::Title("Typing Test Results".to_string()),
-    ]);
-
     let time_text = format!(
         "Took {}s for {} words of {}",
         results.duration_secs().round() as u64,
         results.total_words,
         wordlist_name
     );
-    buf.add_changes(vec![
-        Change::CursorPosition {
-            x: termwiz::surface::Position::Absolute(center_x(width, time_text.len())),
-            y: termwiz::surface::Position::Absolute(center_y - 2),
-        },
-        Change::AllAttributes(CellAttributes::default()),
-        Change::Text(time_text),
-    ]);
-
     let acc_text = format!("Accuracy: {:.1}%", results.accuracy() * 100.0);
-    buf.add_changes(vec![
-        Change::CursorPosition {
-            x: termwiz::surface::Position::Absolute(center_x(width, acc_text.len())),
-            y: termwiz::surface::Position::Absolute(center_y - 1),
-        },
-        AttributeChange::Foreground(colors.accent).into(),
-        Change::Text(acc_text),
-        Change::AllAttributes(CellAttributes::default()),
-    ]);
-
     let mistakes_text = format!(
         "Mistakes: {} out of {} characters",
         results.total_char_errors, results.total_chars_in_text
     );
-    buf.add_changes(vec![
-        Change::CursorPosition {
-            x: termwiz::surface::Position::Absolute(center_x(width, mistakes_text.len())),
-            y: termwiz::surface::Position::Absolute(center_y),
-        },
-        Change::Text(mistakes_text),
-    ]);
-
     let speed_prefix = "Speed: ";
     let speed_wpm = format!("{:.1} wpm", results.wpm());
     let speed_suffix = " (words per minute)";
     let speed_len = speed_prefix.len() + speed_wpm.len() + speed_suffix.len();
-    buf.add_changes(vec![
-        Change::CursorPosition {
-            x: termwiz::surface::Position::Absolute(center_x(width, speed_len)),
-            y: termwiz::surface::Position::Absolute(center_y + 1),
-        },
-        Change::Text(speed_prefix.to_string()),
-        AttributeChange::Foreground(colors.speed).into(),
-        Change::Text(speed_wpm),
-        Change::AllAttributes(CellAttributes::default()),
-        Change::Text(speed_suffix.to_string()),
-    ]);
 
-    push_bottom_instructions(buf, width, height, colors);
-    buf.add_change(Change::CursorVisibility(
+    let mut changes = Vec::with_capacity(32);
+
+    changes.push(Change::ClearScreen(Default::default()));
+    changes.push(Change::Title("Typing Test Results".to_string()));
+
+    changes.push(Change::CursorPosition {
+        x: termwiz::surface::Position::Absolute(center_x(width, time_text.len())),
+        y: termwiz::surface::Position::Absolute(center_y - 2),
+    });
+    changes.push(Change::AllAttributes(CellAttributes::default()));
+    changes.push(Change::Text(time_text));
+
+    changes.push(Change::CursorPosition {
+        x: termwiz::surface::Position::Absolute(center_x(width, acc_text.len())),
+        y: termwiz::surface::Position::Absolute(center_y - 1),
+    });
+    changes.push(AttributeChange::Foreground(colors.accent).into());
+    changes.push(Change::Text(acc_text));
+    changes.push(Change::AllAttributes(CellAttributes::default()));
+
+    changes.push(Change::CursorPosition {
+        x: termwiz::surface::Position::Absolute(center_x(width, mistakes_text.len())),
+        y: termwiz::surface::Position::Absolute(center_y),
+    });
+    changes.push(Change::Text(mistakes_text));
+
+    changes.push(Change::CursorPosition {
+        x: termwiz::surface::Position::Absolute(center_x(width, speed_len)),
+        y: termwiz::surface::Position::Absolute(center_y + 1),
+    });
+    changes.push(Change::Text(speed_prefix.to_string()));
+    changes.push(AttributeChange::Foreground(colors.speed).into());
+    changes.push(Change::Text(speed_wpm));
+    changes.push(Change::AllAttributes(CellAttributes::default()));
+    changes.push(Change::Text(speed_suffix.to_string()));
+
+    push_bottom_instructions(&mut changes, width, height, colors);
+    changes.push(Change::CursorVisibility(
         termwiz::surface::CursorVisibility::Hidden,
     ));
+
+    buf.add_changes(changes);
 
     buf.flush()?;
 
