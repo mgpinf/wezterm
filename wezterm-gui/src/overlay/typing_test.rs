@@ -7,7 +7,7 @@ use std::fs;
 use std::rc::Rc;
 use std::time::Instant;
 use termwiz::cell::{AttributeChange, CellAttributes, Underline};
-use termwiz::color::AnsiColor;
+use termwiz::color::{AnsiColor, ColorAttribute};
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers};
 use termwiz::surface::Change;
 use termwiz::terminal::buffered::BufferedTerminal;
@@ -36,6 +36,40 @@ const PUNCTUATION_SURROUNDING: &[(char, char)] = &[
 ];
 
 const MAX_WORDS_PER_LINE: usize = 10;
+
+#[derive(Clone, Copy)]
+struct TypingTestColors {
+    correct: ColorAttribute,
+    error: ColorAttribute,
+    accent: ColorAttribute,
+    speed: ColorAttribute,
+}
+
+impl TypingTestColors {
+    fn new() -> Self {
+        let config = config::configuration();
+        let colors = &config.resolved_palette;
+
+        Self {
+            correct: colors
+                .typing_test_correct_fg
+                .map(Into::into)
+                .unwrap_or_else(|| AnsiColor::Lime.into()),
+            error: colors
+                .typing_test_error_fg
+                .map(Into::into)
+                .unwrap_or_else(|| AnsiColor::Red.into()),
+            accent: colors
+                .typing_test_accent_fg
+                .map(Into::into)
+                .unwrap_or_else(|| AnsiColor::Blue.into()),
+            speed: colors
+                .typing_test_speed_fg
+                .map(Into::into)
+                .unwrap_or_else(|| AnsiColor::Green.into()),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct TypingTestResults {
@@ -283,10 +317,11 @@ pub fn show_typing_test_overlay(
 
     let num_words = args.num_words.clamp(5, 100);
     let wordlist_name = get_wordlist_name(&args);
+    let colors = TypingTestColors::new();
 
     loop {
         let words = word_selector.select_words(num_words);
-        match run_typing_test(&mut buf, words, &wordlist_name)? {
+        match run_typing_test(&mut buf, words, &wordlist_name, &colors)? {
             TestAction::Restart => continue,
             TestAction::Quit => break,
         }
@@ -349,9 +384,10 @@ fn run_typing_test(
     buf: &mut BufferedTerminal<TermWizTerminal>,
     words: Vec<String>,
     wordlist_name: &str,
+    colors: &TypingTestColors,
 ) -> anyhow::Result<TestAction> {
     let mut state = TypingTestState::new(&words);
-    render_test_screen(buf, &state)?;
+    render_test_screen(buf, &state, colors)?;
 
     loop {
         match buf.terminal().poll_input(None) {
@@ -361,18 +397,18 @@ fn run_typing_test(
                     (true, KeyCode::Char('R')) => return Ok(TestAction::Restart),
                     (true, KeyCode::Char('W')) => {
                         state.delete_last_word();
-                        render_test_screen(buf, &state)?;
+                        render_test_screen(buf, &state, colors)?;
                     }
                     (false, KeyCode::Char(c)) => {
                         state.type_char(c);
                         if state.is_complete() {
-                            return show_results(buf, &state.get_results(), wordlist_name);
+                            return show_results(buf, &state.get_results(), wordlist_name, colors);
                         }
-                        render_test_screen(buf, &state)?;
+                        render_test_screen(buf, &state, colors)?;
                     }
                     (false, KeyCode::Backspace) => {
                         if state.input_chars.pop().is_some() {
-                            render_test_screen(buf, &state)?;
+                            render_test_screen(buf, &state, colors)?;
                         }
                     }
                     _ => {}
@@ -380,7 +416,7 @@ fn run_typing_test(
             }
             Ok(Some(InputEvent::Resized { .. })) => {
                 buf.check_for_resize()?;
-                render_test_screen(buf, &state)?;
+                render_test_screen(buf, &state, colors)?;
             }
             Ok(None) | Ok(Some(_)) => {}
             Err(_) => return Ok(TestAction::Quit),
@@ -396,6 +432,7 @@ fn push_bottom_instructions(
     buf: &mut BufferedTerminal<TermWizTerminal>,
     width: usize,
     height: usize,
+    colors: &TypingTestColors,
 ) {
     let text = "ctrl-r to restart, ctrl-c to quit ";
     buf.add_changes(vec![
@@ -403,13 +440,13 @@ fn push_bottom_instructions(
             x: termwiz::surface::Position::Absolute(center_x(width, text.len())),
             y: termwiz::surface::Position::Absolute(height - 3),
         },
-        AttributeChange::Foreground(AnsiColor::Blue.into()).into(),
+        AttributeChange::Foreground(colors.accent).into(),
         Change::Text("ctrl-r".to_string()),
         Change::AllAttributes(CellAttributes::default()),
         AttributeChange::Intensity(termwiz::cell::Intensity::Half).into(),
         Change::Text(" to restart, ".to_string()),
         Change::AllAttributes(CellAttributes::default()),
-        AttributeChange::Foreground(AnsiColor::Blue.into()).into(),
+        AttributeChange::Foreground(colors.accent).into(),
         Change::Text("ctrl-c".to_string()),
         Change::AllAttributes(CellAttributes::default()),
         AttributeChange::Intensity(termwiz::cell::Intensity::Half).into(),
@@ -420,6 +457,7 @@ fn push_bottom_instructions(
 fn render_test_screen(
     buf: &mut BufferedTerminal<TermWizTerminal>,
     state: &TypingTestState,
+    colors: &TypingTestColors,
 ) -> anyhow::Result<()> {
     let (width, height) = buf.dimensions();
 
@@ -445,10 +483,10 @@ fn render_test_screen(
             buf.add_change(Change::AllAttributes(CellAttributes::default()));
             if char_index < state.input_chars.len() {
                 if state.input_chars[char_index] == target_char {
-                    buf.add_change(AttributeChange::Foreground(AnsiColor::Lime.into()));
+                    buf.add_change(AttributeChange::Foreground(colors.correct));
                 } else {
                     buf.add_changes(vec![
-                        AttributeChange::Foreground(AnsiColor::Red.into()).into(),
+                        AttributeChange::Foreground(colors.error).into(),
                         AttributeChange::Underline(Underline::Single).into(),
                     ]);
                 }
@@ -461,7 +499,7 @@ fn render_test_screen(
     }
     buf.add_change(Change::AllAttributes(CellAttributes::default()));
 
-    push_bottom_instructions(buf, width, height);
+    push_bottom_instructions(buf, width, height, colors);
 
     if let Some((line_idx, char_in_line)) =
         find_cursor_position(&wrapped_lines, state.input_chars.len())
@@ -527,6 +565,7 @@ fn show_results(
     buf: &mut BufferedTerminal<TermWizTerminal>,
     results: &TypingTestResults,
     wordlist_name: &str,
+    colors: &TypingTestColors,
 ) -> anyhow::Result<TestAction> {
     let (width, height) = buf.dimensions();
     let center_y = height / 2 - 1;
@@ -557,7 +596,7 @@ fn show_results(
             x: termwiz::surface::Position::Absolute(center_x(width, acc_text.len())),
             y: termwiz::surface::Position::Absolute(center_y - 1),
         },
-        AttributeChange::Foreground(AnsiColor::Blue.into()).into(),
+        AttributeChange::Foreground(colors.accent).into(),
         Change::Text(acc_text),
         Change::AllAttributes(CellAttributes::default()),
     ]);
@@ -584,13 +623,13 @@ fn show_results(
             y: termwiz::surface::Position::Absolute(center_y + 1),
         },
         Change::Text(speed_prefix.to_string()),
-        AttributeChange::Foreground(AnsiColor::Green.into()).into(),
+        AttributeChange::Foreground(colors.speed).into(),
         Change::Text(speed_wpm),
         Change::AllAttributes(CellAttributes::default()),
         Change::Text(speed_suffix.to_string()),
     ]);
 
-    push_bottom_instructions(buf, width, height);
+    push_bottom_instructions(buf, width, height, colors);
     buf.add_change(Change::CursorVisibility(
         termwiz::surface::CursorVisibility::Hidden,
     ));
