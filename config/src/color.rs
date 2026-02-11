@@ -252,6 +252,8 @@ pub struct Palette {
     pub command_runner_list_header_fg: Option<ColorSpec>,
     pub command_runner_list_marker_fg: Option<ColorSpec>,
     pub command_runner_output_label_fg: Option<ColorSpec>,
+    pub command_runner_output_context_label_fg: Option<ColorSpec>,
+    pub command_runner_output_context_value_fg: Option<ColorSpec>,
     pub command_runner_output_separator_fg: Option<ColorSpec>,
     pub command_runner_output_margin_fg: Option<ColorSpec>,
     pub command_runner_output_line_number_fg: Option<ColorSpec>,
@@ -401,6 +403,12 @@ impl Palette {
             command_runner_list_header_fg: overlay!(command_runner_list_header_fg),
             command_runner_list_marker_fg: overlay!(command_runner_list_marker_fg),
             command_runner_output_label_fg: overlay!(command_runner_output_label_fg),
+            command_runner_output_context_label_fg: overlay!(
+                command_runner_output_context_label_fg
+            ),
+            command_runner_output_context_value_fg: overlay!(
+                command_runner_output_context_value_fg
+            ),
             command_runner_output_separator_fg: overlay!(command_runner_output_separator_fg),
             command_runner_output_margin_fg: overlay!(command_runner_output_margin_fg),
             command_runner_output_line_number_fg: overlay!(command_runner_output_line_number_fg),

@@ -214,6 +214,8 @@ config.colors = {
   command_runner_list_header_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   command_runner_list_marker_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
   command_runner_output_label_fg = { AnsiColor = 'Olive' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_context_label_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
+  command_runner_output_context_value_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   command_runner_output_separator_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   command_runner_output_margin_fg = { AnsiColor = 'Teal' }, -- {{since('nightly', inline=True)}}
   command_runner_output_line_number_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}

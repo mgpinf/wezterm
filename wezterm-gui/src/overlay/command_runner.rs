@@ -26,6 +26,8 @@ struct CommandRunnerColors {
     list_header_fg: ColorAttribute,
     list_marker_fg: ColorAttribute,
     output_label_fg: ColorAttribute,
+    output_context_label_fg: ColorAttribute,
+    output_context_value_fg: ColorAttribute,
     separator_fg: ColorAttribute,
     margin_fg: ColorAttribute,
     line_number_fg: ColorAttribute,
@@ -42,6 +44,9 @@ impl CommandRunnerColors {
     fn new() -> Self {
         let config = configuration();
         let colors = &config.resolved_palette;
+        let separator_fg = colors
+            .command_runner_output_separator_fg
+            .map_or_else(|| ColorAttribute::Default, |fg| fg.into());
 
         Self {
             list_header_fg: colors
@@ -56,9 +61,13 @@ impl CommandRunnerColors {
                 .command_runner_output_label_fg
                 .unwrap_or(AnsiColor::Olive.into())
                 .into(),
-            separator_fg: colors
-                .command_runner_output_separator_fg
-                .map_or_else(|| ColorAttribute::Default, |fg| fg.into()),
+            output_context_label_fg: colors
+                .command_runner_output_context_label_fg
+                .map_or(separator_fg, |fg| fg.into()),
+            output_context_value_fg: colors
+                .command_runner_output_context_value_fg
+                .map_or(separator_fg, |fg| fg.into()),
+            separator_fg,
             margin_fg: colors
                 .command_runner_output_margin_fg
                 .unwrap_or(AnsiColor::Teal.into())
@@ -1821,6 +1830,8 @@ impl CommandRunnerState {
             CommandStatus::Killed => "Killed",
         };
         let label_fg = self.colors.output_label_fg;
+        let context_label_fg = self.colors.output_context_label_fg;
+        let context_value_fg = self.colors.output_context_value_fg;
         let separator_fg = self.colors.separator_fg;
         let margin_fg = self.colors.margin_fg;
         let line_number_fg = self.colors.line_number_fg;
@@ -1886,15 +1897,15 @@ impl CommandRunnerState {
         // Context line: Context: ±<n> │ Mode: <mode>
         {
             let mut writer = SegmentWriter::new(&mut changes, self.screen_cols);
-            writer.push("Context", Some(label_fg));
-            writer.push(":", None);
-            writer.push(" ", None);
-            writer.push(&format!("±{}", context), None);
+            writer.push("Context", Some(context_label_fg));
+            writer.push(":", Some(context_label_fg));
+            writer.push(" ", Some(context_label_fg));
+            writer.push(&format!("±{}", context), Some(context_value_fg));
             writer.push(" │ ", Some(separator_fg));
-            writer.push("Mode", Some(label_fg));
-            writer.push(":", None);
-            writer.push(" ", None);
-            writer.push(mode.display(), None);
+            writer.push("Mode", Some(context_label_fg));
+            writer.push(":", Some(context_label_fg));
+            writer.push(" ", Some(context_label_fg));
+            writer.push(mode.display(), Some(context_value_fg));
             writer.fill_remaining();
         }
         changes.extend([
