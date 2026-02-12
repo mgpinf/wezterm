@@ -439,6 +439,23 @@ impl<'a> SegmentWriter<'a> {
         }
     }
 
+    fn push_bold_label(&mut self, text: &str, color: Option<ColorAttribute>) {
+        if self.remaining == 0 || text.is_empty() {
+            return;
+        }
+
+        let segment: String = text.chars().take(self.remaining).collect();
+        self.remaining = self.remaining.saturating_sub(segment.chars().count());
+
+        self.changes
+            .push(AttributeChange::Intensity(Intensity::Bold).into());
+        if let Some(color) = color {
+            self.changes.push(AttributeChange::Foreground(color).into());
+        }
+        self.changes.push(Change::Text(segment));
+        self.changes.push(Change::AllAttributes(Default::default()));
+    }
+
     fn fill_remaining(&mut self) {
         if self.remaining > 0 {
             self.changes.push(Change::Text(" ".repeat(self.remaining)));
@@ -1839,12 +1856,12 @@ impl CommandRunnerState {
         // Header line: Command: <title> │ Status: <status> [│ Exit Code: <code>]
         {
             let mut writer = SegmentWriter::new(&mut changes, self.screen_cols);
-            writer.push("Command", Some(label_fg));
+            writer.push_bold_label("Command", Some(label_fg));
             writer.push(":", None);
             writer.push(" ", None);
             writer.push(&cmd_title, None);
             writer.push(" │ ", Some(separator_fg));
-            writer.push("Status", Some(label_fg));
+            writer.push_bold_label("Status", Some(label_fg));
             writer.push(":", None);
             writer.push(" ", None);
             writer.push(status, Some(status_color));
@@ -1884,7 +1901,7 @@ impl CommandRunnerState {
         // Search line: Search: <pattern>
         {
             let mut writer = SegmentWriter::new(&mut changes, self.screen_cols);
-            writer.push("Search", Some(label_fg));
+            writer.push_bold_label("Search", Some(label_fg));
             writer.push(":", None);
             writer.push(" ", None);
             writer.push(&search_pattern, None);
