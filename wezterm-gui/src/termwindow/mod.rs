@@ -382,6 +382,7 @@ pub struct TermWindow {
     terminal_size: TerminalSize,
     pub mux_window_id: MuxWindowId,
     pub mux_window_id_for_subscriptions: Arc<Mutex<MuxWindowId>>,
+    mux_subscription_dead: Arc<AtomicBool>,
     pub render_metrics: RenderMetrics,
     render_state: Option<RenderState>,
     input_map: InputMap,
@@ -698,6 +699,7 @@ impl TermWindow {
             focused: None,
             mux_window_id,
             mux_window_id_for_subscriptions: Arc::new(Mutex::new(mux_window_id)),
+            mux_subscription_dead: Arc::new(AtomicBool::new(false)),
             fonts: Rc::clone(&fontconfig),
             render_metrics,
             dimensions,
@@ -1342,6 +1344,7 @@ impl TermWindow {
                 self.current_highlight.take();
                 self.invalidate_fancy_tab_bar();
                 self.invalidate_modal();
+                self.subscribe_to_pane_updates();
 
                 let mux = Mux::get();
                 if let Some(window) = mux.get_window(self.mux_window_id) {
@@ -1541,11 +1544,14 @@ impl TermWindow {
         true
     }
 
-    fn subscribe_to_pane_updates(&self) {
+    fn subscribe_to_pane_updates(&mut self) {
+        self.mux_subscription_dead.store(true, Ordering::Relaxed);
+        let dead = Arc::new(AtomicBool::new(false));
+        self.mux_subscription_dead = Arc::clone(&dead);
+
         let window = self.window.clone().expect("window to be valid on startup");
         let mux_window_id = Arc::clone(&self.mux_window_id_for_subscriptions);
         let mux = Mux::get();
-        let dead = Arc::new(AtomicBool::new(false));
         mux.subscribe(move |n| {
             if dead.load(Ordering::Relaxed) {
                 return false;
