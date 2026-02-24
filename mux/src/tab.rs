@@ -1158,7 +1158,7 @@ impl TabInner {
 
     fn iter_splits(&mut self) -> Vec<PositionedSplit> {
         let mut dividers = vec![];
-        if self.zoomed.is_some() {
+        if self.zoomed.is_some() || (self.floating.is_some() && !self.floating_hidden) {
             return dividers;
         }
 
@@ -2668,5 +2668,47 @@ mod test {
         assert_eq!(1, panes.len());
         assert_eq!(false, panes[0].is_floating);
         assert_eq!(1, panes[0].pane.pane_id());
+    }
+
+    #[test]
+    fn test_floating_pane_hides_splits() {
+        let size = TerminalSize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 800,
+            pixel_height: 600,
+            dpi: 96,
+        };
+        let tab = Tab::new(&size);
+        let pane1 = FakePane::new(1, size);
+        tab.assign_pane(&pane1);
+
+        let split_size = tab
+            .compute_split_size(
+                0,
+                SplitRequest {
+                    direction: SplitDirection::Horizontal,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        tab.split_and_insert(
+            0,
+            SplitRequest {
+                direction: SplitDirection::Horizontal,
+                ..Default::default()
+            },
+            FakePane::new(2, split_size.second),
+        )
+        .unwrap();
+
+        assert_eq!(1, tab.iter_splits().len());
+
+        let floating_pane = FakePane::new(3, size);
+        tab.assign_floating_pane(&floating_pane);
+        assert!(tab.iter_splits().is_empty());
+
+        tab.toggle_floating_pane();
+        assert_eq!(1, tab.iter_splits().len());
     }
 }
