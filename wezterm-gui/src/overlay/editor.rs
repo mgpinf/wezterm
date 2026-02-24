@@ -4618,30 +4618,41 @@ impl<'a> EditorState<'a> {
         }
     }
 
+    fn join_line_at_row(&mut self, row: usize, no_space: bool) -> bool {
+        if row + 1 >= self.lines.len() {
+            return false;
+        }
+
+        let next_line = self.lines.remove(row + 1);
+        let current_line = &mut self.lines[row];
+        self.cursor = (row, current_line.len());
+
+        if no_space {
+            current_line.push_str(&next_line);
+            return true;
+        }
+
+        let mut needs_space = true;
+        if current_line.ends_with(' ') || next_line.starts_with(')') {
+            needs_space = false;
+        }
+        if current_line.is_empty() {
+            needs_space = false;
+        }
+
+        let next_line_trimmed = next_line.trim_start();
+        if needs_space {
+            current_line.push(' ');
+        }
+        current_line.push_str(next_line_trimmed);
+        true
+    }
+
     fn join_lines(&mut self) {
         if self.cursor.0 < self.lines.len() - 1 {
             self.save_undo_state();
             self.lines_version += 1;
-            let next_line = self.lines.remove(self.cursor.0 + 1);
-            let current_line = &mut self.lines[self.cursor.0];
-
-            let mut needs_space = true;
-            if current_line.ends_with(' ') || next_line.starts_with(')') {
-                needs_space = false;
-            }
-            if current_line.is_empty() {
-                needs_space = false;
-            }
-
-            let next_line_trimmed = next_line.trim_start();
-
-            self.cursor.1 = current_line.len();
-            if needs_space {
-                current_line.push(' ');
-                self.cursor.1 += 0;
-            }
-
-            current_line.push_str(next_line_trimmed);
+            self.join_line_at_row(self.cursor.0, false);
             self.record_change();
         }
     }
@@ -4650,12 +4661,27 @@ impl<'a> EditorState<'a> {
         if self.cursor.0 < self.lines.len() - 1 {
             self.save_undo_state();
             self.lines_version += 1;
-            let next_line = self.lines.remove(self.cursor.0 + 1);
-            let current_line = &mut self.lines[self.cursor.0];
-            self.cursor.1 = current_line.len();
-            current_line.push_str(&next_line);
+            self.join_line_at_row(self.cursor.0, true);
             self.record_change();
         }
+    }
+
+    fn join_visual_selection(&mut self, no_space: bool) {
+        let (start, end) = self.get_visual_selection();
+        if start.0 == end.0 {
+            self.mode = EditorMode::Normal;
+            return;
+        }
+
+        self.save_undo_state_with_cursor(start);
+        self.lines_version += 1;
+        for _ in start.0..end.0 {
+            if !self.join_line_at_row(start.0, no_space) {
+                break;
+            }
+        }
+        self.mode = EditorMode::Normal;
+        self.record_change();
     }
 
     fn toggle_case(&mut self) {
@@ -11274,6 +11300,12 @@ impl<'a> EditorState<'a> {
                                         self.cursor.1 = self.desired_col.min(line_len);
                                         true
                                     }
+                                    ('g', 'J') => {
+                                        // gJ - join selected lines without inserting spaces
+                                        self.join_visual_selection(true);
+                                        self.last_change = LastChange::JoinLinesNoSpace;
+                                        true
+                                    }
                                     ('i', 'p') => {
                                         // ip - inner paragraph
                                         if let Some((start_row, end_row)) =
@@ -11634,6 +11666,10 @@ impl<'a> EditorState<'a> {
                                             self.delete_visual_lines();
                                         }
                                     }
+                                    'J' => {
+                                        self.join_visual_selection(false);
+                                        self.last_change = LastChange::JoinLines;
+                                    }
                                     'C' => {
                                         // In Visual/VisualLine mode, C deletes entire lines and enters insert
                                         // In VisualBlock mode, delete from left edge to end of line, then insert
@@ -11870,7 +11906,7 @@ impl<'a> EditorState<'a> {
                                     'i' | 'a' => {
                                         self.pending_keys.push(KeyCode::Char(c));
                                     }
-                                    // 'g' prefix for gg command
+                                    // 'g' prefix for gg/gJ commands
                                     'g' => {
                                         self.pending_keys.push(KeyCode::Char('g'));
                                     }
@@ -13708,6 +13744,54 @@ mod tests {
 
             self.cursor = (start.0, 0);
             self.mode = EditorMode::Insert;
+        }
+
+        fn join_line_at_row(&mut self, row: usize, no_space: bool) -> bool {
+            if row + 1 >= self.lines.len() {
+                return false;
+            }
+
+            let next_line = self.lines.remove(row + 1);
+            let current_line = &mut self.lines[row];
+            self.cursor = (row, current_line.len());
+
+            if no_space {
+                current_line.push_str(&next_line);
+                return true;
+            }
+
+            let mut needs_space = true;
+            if current_line.ends_with(' ') || next_line.starts_with(')') {
+                needs_space = false;
+            }
+            if current_line.is_empty() {
+                needs_space = false;
+            }
+
+            let next_line_trimmed = next_line.trim_start();
+            if needs_space {
+                current_line.push(' ');
+            }
+            current_line.push_str(next_line_trimmed);
+            true
+        }
+
+        fn join_visual_selection(&mut self, no_space: bool) {
+            let (start, end) = self.get_visual_selection();
+            if start.0 == end.0 {
+                self.mode = EditorMode::Normal;
+                return;
+            }
+
+            self.save_undo_state_with_cursor(start);
+            self.lines_version += 1;
+            for _ in start.0..end.0 {
+                if !self.join_line_at_row(start.0, no_space) {
+                    break;
+                }
+            }
+            self.mode = EditorMode::Normal;
+            self.record_change();
         }
 
         fn delete_block_to_eol(&mut self) {
@@ -16516,6 +16600,53 @@ mod tests {
         editor.change_visual_lines();
         assert_eq!(editor.text(), "\nline3");
         assert_eq!(editor.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn test_visual_j_joins_selected_lines() {
+        let mut editor = TestEditor::new("alpha\n  beta\ngamma");
+        editor.mode = EditorMode::VisualLine;
+        editor.visual_start = (0, 0);
+        editor.cursor = (2, 0);
+
+        editor.join_visual_selection(false);
+
+        assert_eq!(editor.text(), "alpha beta gamma");
+        assert_eq!(editor.mode, EditorMode::Normal);
+
+        editor.undo();
+        assert_eq!(editor.text(), "alpha\n  beta\ngamma");
+        assert_eq!(editor.cursor, (0, 0));
+    }
+
+    #[test]
+    fn test_visual_gj_joins_selected_lines_without_space() {
+        let mut editor = TestEditor::new("alpha\n  beta\ngamma");
+        editor.mode = EditorMode::VisualLine;
+        editor.visual_start = (0, 0);
+        editor.cursor = (2, 0);
+
+        editor.join_visual_selection(true);
+
+        assert_eq!(editor.text(), "alpha  betagamma");
+        assert_eq!(editor.mode, EditorMode::Normal);
+
+        editor.undo();
+        assert_eq!(editor.text(), "alpha\n  beta\ngamma");
+        assert_eq!(editor.cursor, (0, 0));
+    }
+
+    #[test]
+    fn test_visual_j_single_line_selection_exits_visual_mode() {
+        let mut editor = TestEditor::new("alpha beta");
+        editor.mode = EditorMode::Visual;
+        editor.visual_start = (0, 0);
+        editor.cursor = (0, 4);
+
+        editor.join_visual_selection(false);
+
+        assert_eq!(editor.text(), "alpha beta");
+        assert_eq!(editor.mode, EditorMode::Normal);
     }
 
     #[test]
