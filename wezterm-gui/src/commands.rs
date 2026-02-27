@@ -1702,6 +1702,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Window"],
             icon: None,
         },
+        ToggleTabOverlay => CommandDef {
+            brief: "Toggle Tab Overlay".into(),
+            doc: "Toggles visibility of the active tab overlay while preserving its state.".into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Window"],
+            icon: None,
+        },
         ActivateLastTab => CommandDef {
             brief: "Activate the last active tab".into(),
             doc: "If there was no prior active tab, has no effect.".into(),
@@ -2242,6 +2250,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ActivatePaneDirection(PaneDirection::Down),
         TogglePaneZoomState,
         ToggleFloatingPane,
+        ToggleTabOverlay,
         ActivateLastTab,
         ShowLauncher,
         ShowTabNavigator,

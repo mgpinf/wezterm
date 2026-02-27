@@ -1268,6 +1268,7 @@ pub enum KeyAssignment {
     SpawnCommandInNewWindow(SpawnCommand),
     SpawnCommandInFloatingPane(FloatingPaneSpawn),
     ToggleFloatingPane,
+    ToggleTabOverlay,
     SplitHorizontal(SpawnCommand),
     SplitVertical(SpawnCommand),
     ShowLauncher,
