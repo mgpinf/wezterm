@@ -19,6 +19,7 @@ The default key assignments in DisplayText are as follows:
 |          | <kbd>Ctrl</kbd> + <kbd>C</kbd> |
 |          | <kbd>Ctrl</kbd> + <kbd>D</kbd> |
 |          | <kbd>Ctrl</kbd> + <kbd>&#91;</kbd> |
+|          | <kbd>q</kbd> |
 |          | <kbd>Escape</kbd> |
 
 ## Example of displaying the status of wezterm run_child_process
