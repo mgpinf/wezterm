@@ -23,6 +23,10 @@ pub fn show_display_text_overlay(
                 modifiers: Modifiers::CTRL,
             })
             | InputEvent::Key(KeyEvent {
+                key: KeyCode::Char('q'),
+                modifiers: Modifiers::NONE,
+            })
+            | InputEvent::Key(KeyEvent {
                 key: KeyCode::Escape,
                 ..
             }) => {
