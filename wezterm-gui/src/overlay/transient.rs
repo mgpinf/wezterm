@@ -13,6 +13,7 @@ use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::surface::{Change, CursorVisibility, Position};
@@ -819,50 +820,39 @@ impl<'a> TransientState<'a> {
 }
 
 #[derive(FromDynamic, ToDynamic)]
-struct TransientResultEntry {
-    flag: String,
-    value: Value,
-    #[dynamic(default)]
-    tag: Option<String>,
-}
-
-#[derive(FromDynamic, ToDynamic)]
 struct TransientResult {
-    entries: Vec<TransientResultEntry>,
+    entries: HashMap<String, Value>,
 }
 impl_lua_conversion_dynamic!(TransientResult);
 
 impl From<&Vec<TransientSection<'_>>> for TransientResult {
     fn from(value: &Vec<TransientSection<'_>>) -> Self {
-        let mut entries: Vec<TransientResultEntry> = vec![];
+        let mut entries = HashMap::new();
 
         for section in value {
             for entity in &section.entries {
                 match entity {
                     RenderableEntity::Opt(option) => {
-                        entries.push(TransientResultEntry {
-                            flag: option.delegate.flag.clone(),
-                            value: option.value.borrow().to_dynamic(),
-                            tag: option.delegate.tag.clone(),
-                        });
+                        entries.insert(
+                            option.delegate.flag.clone(),
+                            option.value.borrow().to_dynamic(),
+                        );
                     }
                     RenderableEntity::Switch(switch) => {
-                        entries.push(TransientResultEntry {
-                            flag: switch.delegate.flag.clone(),
-                            value: switch.value.get().to_dynamic(),
-                            tag: switch.delegate.tag.clone(),
-                        });
+                        entries.insert(
+                            switch.delegate.flag.clone(),
+                            switch.value.get().to_dynamic(),
+                        );
                     }
                     RenderableEntity::CyclicSwitch(cyclic_switch) => {
-                        entries.push(TransientResultEntry {
-                            flag: cyclic_switch.delegate.flag.clone(),
-                            value: cyclic_switch
+                        entries.insert(
+                            cyclic_switch.delegate.flag.clone(),
+                            cyclic_switch
                                 .active_idx
                                 .get()
                                 .map(|idx| cyclic_switch.delegate.choices.get(idx).cloned())
                                 .to_dynamic(),
-                            tag: cyclic_switch.delegate.tag.clone(),
-                        });
+                        );
                     }
                     _ => {}
                 }
