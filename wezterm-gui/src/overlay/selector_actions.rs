@@ -558,7 +558,11 @@ impl<'a> SelectorState<'a> {
 
                             let result = SelectorActionsResult { choices };
                             self.trigger_event(name, Some(result));
-                            break;
+                            if positional_arg.keep_overlay {
+                                self.typed.clear();
+                            } else {
+                                break;
+                            }
                         }
                         KeyLookup::Prefix => {}
                         KeyLookup::NotFound => self.typed.clear(),

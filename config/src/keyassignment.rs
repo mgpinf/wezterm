@@ -712,6 +712,8 @@ pub struct TransientArgument {
     pub key: String,
     pub description: String,
     pub action: Box<KeyAssignment>,
+    #[dynamic(default)]
+    pub keep_overlay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, ToDynamic)]

@@ -683,7 +683,9 @@ impl<'a> TransientState<'a> {
 
                                         let result = TransientResult::from(self.sections);
                                         self.trigger_event(name, Some(result));
-                                        break;
+                                        if !positional_arg.delegate.keep_overlay {
+                                            break;
+                                        }
                                     }
                                 }
                                 self.typed.clear();
