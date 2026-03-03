@@ -5,6 +5,7 @@ use bstr::BString;
 use config::lua::get_or_create_module;
 use config::lua::mlua::{self, Lua, Value as LuaValue};
 use luahelper::impl_lua_conversion_dynamic;
+use smol::io::AsyncWriteExt;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 /// Extended options for running a child process.
@@ -18,6 +19,8 @@ struct ChildProcessOptions {
     set_environment_variables: Option<HashMap<String, String>>,
     #[dynamic(default)]
     trim_newline: bool,
+    #[dynamic(default)]
+    stdin: Option<String>,
 }
 
 impl_lua_conversion_dynamic!(ChildProcessOptions);
@@ -63,6 +66,7 @@ fn parse_child_process_args<'lua>(
                     cwd: None,
                     set_environment_variables: None,
                     trim_newline: false,
+                    stdin: None,
                 })
             } else {
                 // It's a table with named fields - extended syntax
@@ -112,7 +116,21 @@ async fn run_child_process<'lua>(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output().await.map_err(mlua::Error::external)?;
+    let output = if let Some(stdin_data) = &opts.stdin {
+        cmd.stdin(smol::process::Stdio::piped());
+        cmd.stdout(smol::process::Stdio::piped());
+        cmd.stderr(smol::process::Stdio::piped());
+        let mut child = cmd.spawn().map_err(mlua::Error::external)?;
+        let mut child_stdin = child.stdin.take().unwrap();
+        child_stdin
+            .write_all(stdin_data.as_bytes())
+            .await
+            .map_err(mlua::Error::external)?;
+        drop(child_stdin);
+        child.output().await.map_err(mlua::Error::external)?
+    } else {
+        cmd.output().await.map_err(mlua::Error::external)?
+    };
 
     let (stdout, stderr) = if opts.trim_newline {
         (
