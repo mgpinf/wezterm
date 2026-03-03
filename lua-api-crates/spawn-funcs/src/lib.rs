@@ -6,6 +6,7 @@ use config::lua::get_or_create_module;
 use config::lua::mlua::{self, Lua, Value as LuaValue};
 use futures::future::join_all;
 use luahelper::impl_lua_conversion_dynamic;
+use smol::io::AsyncWriteExt;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 /// Extended options for running a child process.
@@ -19,6 +20,8 @@ struct ChildProcessOptions {
     set_environment_variables: Option<HashMap<String, String>>,
     #[dynamic(default)]
     trim_newline: bool,
+    #[dynamic(default)]
+    stdin: Option<String>,
 }
 
 impl_lua_conversion_dynamic!(ChildProcessOptions);
@@ -77,6 +80,7 @@ fn parse_child_process_args<'lua>(
                     cwd: None,
                     set_environment_variables: None,
                     trim_newline: false,
+                    stdin: None,
                 })
             } else {
                 // It's a table with named fields - extended syntax
@@ -125,7 +129,21 @@ async fn run_child_process<'lua>(
         cmd.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output().await.map_err(mlua::Error::external)?;
+    let output = if let Some(stdin_data) = &opts.stdin {
+        cmd.stdin(smol::process::Stdio::piped());
+        cmd.stdout(smol::process::Stdio::piped());
+        cmd.stderr(smol::process::Stdio::piped());
+        let mut child = cmd.spawn().map_err(mlua::Error::external)?;
+        let mut child_stdin = child.stdin.take().unwrap();
+        child_stdin
+            .write_all(stdin_data.as_bytes())
+            .await
+            .map_err(mlua::Error::external)?;
+        drop(child_stdin);
+        child.output().await.map_err(mlua::Error::external)?
+    } else {
+        cmd.output().await.map_err(mlua::Error::external)?
+    };
 
     let (stdout, stderr) = if opts.trim_newline {
         (
@@ -215,30 +233,71 @@ async fn execute_command(opts: &ChildProcessOptions) -> ProcessResult {
         cmd.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
     }
 
-    match cmd.output().await {
-        Ok(output) => {
-            let (stdout, stderr) = if opts.trim_newline {
-                (
-                    String::from_utf8_lossy(&trim_trailing_newlines(&output.stdout)).into_owned(),
-                    String::from_utf8_lossy(&trim_trailing_newlines(&output.stderr)).into_owned(),
-                )
-            } else {
-                (
-                    String::from_utf8_lossy(&output.stdout).into_owned(),
-                    String::from_utf8_lossy(&output.stderr).into_owned(),
-                )
+    let output = if let Some(stdin_data) = &opts.stdin {
+        cmd.stdin(smol::process::Stdio::piped());
+        cmd.stdout(smol::process::Stdio::piped());
+        cmd.stderr(smol::process::Stdio::piped());
+
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                return ProcessResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: format!("Failed to spawn command: {}", e),
+                }
+            }
+        };
+
+        let mut child_stdin = child.stdin.take().unwrap();
+        if let Err(e) = child_stdin.write_all(stdin_data.as_bytes()).await {
+            return ProcessResult {
+                success: false,
+                stdout: String::new(),
+                stderr: format!("Failed to write data to stdin: {}", e),
             };
-            ProcessResult {
-                success: output.status.success(),
-                stdout,
-                stderr,
+        }
+        drop(child_stdin);
+
+        match child.output().await {
+            Ok(output) => output,
+            Err(e) => {
+                return ProcessResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: format!("Failed to execute command: {}", e),
+                }
             }
         }
-        Err(e) => ProcessResult {
-            success: false,
-            stdout: String::new(),
-            stderr: format!("Failed to execute command: {}", e),
-        },
+    } else {
+        match cmd.output().await {
+            Ok(output) => output,
+            Err(e) => {
+                return ProcessResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: format!("Failed to execute command: {}", e),
+                }
+            }
+        }
+    };
+
+    let (stdout, stderr) = if opts.trim_newline {
+        (
+            String::from_utf8_lossy(&trim_trailing_newlines(&output.stdout)).into_owned(),
+            String::from_utf8_lossy(&trim_trailing_newlines(&output.stderr)).into_owned(),
+        )
+    } else {
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    ProcessResult {
+        success: output.status.success(),
+        stdout,
+        stderr,
     }
 }
 
