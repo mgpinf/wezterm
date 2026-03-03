@@ -15,8 +15,8 @@ It is a lua object with the following fields:
 * `default` - optional argument indicating default value.
   If omitted, option is not set
 * `description` - text to describe the option
-* `flag` - text that is passed against label in the callback
-  when an argument is activated
+* `flag` - text used as the key in the [TransientResult](./TransientResult.md)
+  entries table
 * `allow_nil` - optional argument that determines whether to allow
   setting the option to `nil` if previously set to a string.
   If omitted, option is set to false if previously set.
@@ -26,9 +26,6 @@ It is a lua object with the following fields:
   when setting an option. Else, a line prompt is displayed
   If omitted, when setting an option, a line prompt is displayed
   when setting an option
-* `tag` - optional string that is passed along with the result to the callback.
-  This is not displayed in the overlay and can be used to associate
-  additional metadata with the entry
 
 
 Example of `TransientOption` object:
@@ -41,6 +38,5 @@ local option = {
   flag = '--tail=',
   allow_nil = true,
   choices = { 'choice1', 'choice2' },
-  tag = 'tail_lines',
 }
 ```

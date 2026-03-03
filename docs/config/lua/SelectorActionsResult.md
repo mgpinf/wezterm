@@ -20,7 +20,11 @@ Example of `SelectorActionsResult` object:
 ```lua
 local result = {
   choices = {
-    { label = 'choice1', id = 'random_id', metadata = { status = 'running' } },
+    {
+      label = 'choice1',
+      id = 'random_id',
+      metadata = { status = 'running' },
+    },
     { label = 'choice2' },
   },
 }

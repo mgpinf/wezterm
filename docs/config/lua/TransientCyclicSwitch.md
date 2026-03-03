@@ -16,17 +16,14 @@ It is a lua object with the following fields:
 * `default` - optional argument indicating default value.
   If omitted, cyclic switch is not set
 * `description` - text to describe the cyclic switch
-* `flag` - text that is passed against label in the callback
-  when an argument is activated
+* `flag` - text used as the key in the [TransientResult](./TransientResult.md)
+  entries table
 * `allow_nil` - Optional argument that determines whether to
   allow to set the cyclic switch to `nil` if currently at the
   last choice. If omitted, cyclic switch is set to `nil` if
   at the last choice. Else cyclic switch is set to first choice.
   Defaults to `true`
 * `choices` - the list of choices to toggle between
-* `tag` - optional string that is passed along with the result to the callback.
-  This is not displayed in the overlay and can be used to associate
-  additional metadata with the entry
 
 
 Example of `TransientCyclicSwitch` object:
@@ -39,6 +36,5 @@ local cyclic_switch = {
   flag = '--sample-flag',
   choices = { 'choice1', 'choice2' },
   allow_nil = true,
-  tag = 'sample_switch',
 }
 ```

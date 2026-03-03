@@ -15,11 +15,8 @@ It is a lua object with the following fields:
 * `default` - optional argument indicating default value.
   If omitted, switch is not set
 * `description` - text to describe the switch
-* `flag` - text that is passed against flag in the callback
-  when an argument is activated
-* `tag` - optional string that is passed along with the result to the callback.
-  This is not displayed in the overlay and can be used to associate
-  additional metadata with the entry
+* `flag` - text used as the key in the [TransientResult](./TransientResult.md)
+  entries table
 
 
 Example of `TransientSwitch` object:
@@ -30,6 +27,5 @@ local switch = {
   default = false,
   description = 'Follow',
   flag = '--follow',
-  tag = 'follow_logs',
 }
 ```
