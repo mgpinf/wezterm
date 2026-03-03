@@ -29,6 +29,9 @@ You can now pass a table with named fields for more control:
   child process (optional)
 * `trim_newline` - if `true`, trims trailing newlines (`\n` and `\r`) from stdout
   and stderr (optional, defaults to `false`)
+* `stdin` - a string to pipe to the child process's standard input (optional).
+  The data is written to the process's stdin pipe and then the pipe is closed
+  (sending EOF) before collecting the output.
 
 ```lua
 local wezterm = require 'wezterm'
@@ -40,6 +43,22 @@ local success, stdout, stderr = wezterm.run_child_process {
     SOMETHING = 'a value',
   },
 }
+```
+
+The `stdin` option allows you to pipe data to a child process without
+needing a shell wrapper:
+
+```lua
+local wezterm = require 'wezterm'
+
+-- Pipe a string to cat's stdin
+local success, stdout, stderr = wezterm.run_child_process {
+  args = { 'cat' },
+  stdin = 'hello from stdin',
+  trim_newline = true,
+}
+
+wezterm.log_info('Output: ' .. stdout) -- Output: hello from stdin
 ```
 
 The `trim_newline` option is useful when you want to use the output directly
