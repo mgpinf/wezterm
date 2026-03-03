@@ -82,6 +82,7 @@ The extended syntax supports:
   the child process (optional)
 * `trim_newline` - if `true`, trims trailing newlines (`\n` and `\r`) from stdout
   and stderr (optional, defaults to `false`)
+* `stdin` - a string to pipe to the child process's standard input (optional)
 
 ## Example: Status Bar with Multiple Data Sources
 
