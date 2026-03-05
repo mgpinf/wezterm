@@ -47,6 +47,17 @@ impl<'a, T> Default for KeyMap<'a, T> {
     }
 }
 
+pub fn display_key<'a>(key: &'a str, label: Option<&'a str>) -> &'a str {
+    if let Some(label) = label {
+        return label;
+    }
+    if key == " " {
+        "<space>"
+    } else {
+        key
+    }
+}
+
 /// Common colors used by transient-style overlays
 pub struct OverlayColors {
     pub key_fg: ColorAttribute,

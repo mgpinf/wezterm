@@ -1,4 +1,4 @@
-use crate::overlay::common::{KeyLookup, KeyMap, OverlayColors};
+use crate::overlay::common::{display_key, KeyLookup, KeyMap, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -139,7 +139,7 @@ impl<'a> TransientSwitch<'a> {
         changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(delegate.key.to_string()),
+            Change::Text(display_key(&delegate.key, delegate.label.as_deref()).to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -184,7 +184,7 @@ impl<'a> TransientOption<'a> {
         changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(delegate.key.to_string()),
+            Change::Text(display_key(&delegate.key, delegate.label.as_deref()).to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -232,7 +232,7 @@ impl<'a> TransientCyclicSwitch<'a> {
         changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(delegate.key.to_string()),
+            Change::Text(display_key(&delegate.key, delegate.label.as_deref()).to_string()),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -310,7 +310,9 @@ impl<'a> TransientArgument<'a> {
         buf.add_changes(vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(self.delegate.key.clone()),
+            Change::Text(
+                display_key(&self.delegate.key, self.delegate.label.as_deref()).to_string(),
+            ),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str(" ", &self.delegate.description)),
         ]);

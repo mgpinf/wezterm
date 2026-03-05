@@ -1,4 +1,4 @@
-use crate::overlay::common::{KeyLookup, KeyMap, OverlayColors};
+use crate::overlay::common::{display_key, KeyLookup, KeyMap, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -289,7 +289,9 @@ impl<'a> SelectorState<'a> {
             changes.push(Change::Attribute(AttributeChange::Foreground(
                 self.colors.key_fg,
             )));
-            changes.push(Change::Text(positional_arg.key.clone()));
+            changes.push(Change::Text(
+                display_key(&positional_arg.key, positional_arg.label.as_deref()).to_string(),
+            ));
             changes.push(Change::AllAttributes(CellAttributes::default()));
             changes.push(Change::Text(concat_str(" ", &positional_arg.description)));
         }
