@@ -16,6 +16,7 @@ use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
+use wezterm_term::unicode_column_width;
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::{Clipboard, Modifiers, WindowOps};
 
@@ -37,6 +38,7 @@ struct SelectorEntry<'a> {
 struct ArgumentSection<'a> {
     header: String,
     arguments: Vec<&'a TransientArgument>,
+    max_key_width: usize,
 }
 
 struct SelectorState<'a> {
@@ -83,6 +85,16 @@ impl<'a> SelectorState<'a> {
         let filtered_entries = choices.iter().collect();
 
         let arguments: Vec<&TransientArgument> = args.section.arguments.iter().collect();
+
+        let max_key_width = arguments
+            .iter()
+            .map(|a| {
+                a.label
+                    .as_deref()
+                    .map_or(a.key.len(), |label| unicode_column_width(label, None))
+            })
+            .max()
+            .unwrap_or(0);
         let section = ArgumentSection {
             header: args
                 .section
@@ -90,6 +102,7 @@ impl<'a> SelectorState<'a> {
                 .clone()
                 .unwrap_or_else(|| "Default".to_string()),
             arguments,
+            max_key_width,
         };
 
         let fuzzy_description = args
@@ -289,9 +302,11 @@ impl<'a> SelectorState<'a> {
             changes.push(Change::Attribute(AttributeChange::Foreground(
                 self.colors.key_fg,
             )));
-            changes.push(Change::Text(
-                display_key(&positional_arg.key, positional_arg.label.as_deref()).to_string(),
-            ));
+            changes.push(Change::Text(format!(
+                "{:<width$}",
+                display_key(&positional_arg.key, positional_arg.label.as_deref()),
+                width = self.section.max_key_width
+            )));
             changes.push(Change::AllAttributes(CellAttributes::default()));
             changes.push(Change::Text(concat_str(" ", &positional_arg.description)));
         }

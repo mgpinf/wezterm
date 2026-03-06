@@ -21,7 +21,7 @@ use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
-use wezterm_term::{AttributeChange, CellAttributes, Intensity};
+use wezterm_term::{unicode_column_width, AttributeChange, CellAttributes, Intensity};
 use window::Modifiers;
 
 /// Concatenate a prefix and value without format! overhead
@@ -131,6 +131,7 @@ impl<'a> TransientSwitch<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
@@ -139,7 +140,11 @@ impl<'a> TransientSwitch<'a> {
         changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(display_key(&delegate.key, delegate.label.as_deref()).to_string()),
+            Change::Text(format!(
+                "{:<width$}",
+                display_key(&delegate.key, delegate.label.as_deref()),
+                width = max_key_width
+            )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -176,6 +181,7 @@ impl<'a> TransientOption<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
@@ -184,7 +190,11 @@ impl<'a> TransientOption<'a> {
         changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(display_key(&delegate.key, delegate.label.as_deref()).to_string()),
+            Change::Text(format!(
+                "{:<width$}",
+                display_key(&delegate.key, delegate.label.as_deref()),
+                width = max_key_width
+            )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -223,6 +233,7 @@ impl<'a> TransientCyclicSwitch<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
@@ -232,7 +243,11 @@ impl<'a> TransientCyclicSwitch<'a> {
         changes.extend([
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(display_key(&delegate.key, delegate.label.as_deref()).to_string()),
+            Change::Text(format!(
+                "{:<width$}",
+                display_key(&delegate.key, delegate.label.as_deref()),
+                width = max_key_width
+            )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -305,14 +320,17 @@ impl<'a> TransientArgument<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
         buf.add_changes(vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(
-                display_key(&self.delegate.key, self.delegate.label.as_deref()).to_string(),
-            ),
+            Change::Text(format!(
+                "{:<width$}",
+                display_key(&self.delegate.key, self.delegate.label.as_deref()),
+                width = max_key_width
+            )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str(" ", &self.delegate.description)),
         ]);
@@ -324,6 +342,7 @@ impl<'a> TransientArgument<'a> {
 struct TransientSection<'a> {
     delegate: &'a KTransientSection,
     entries: Vec<RenderableEntity<'a>>,
+    max_key_width: usize,
 }
 
 enum RenderableEntity<'a> {
@@ -337,13 +356,14 @@ impl RenderableEntity<'_> {
     fn render(
         &self,
         colors: &OverlayColors,
+        max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
         match self {
-            Self::Opt(option) => option.render(colors, buf),
-            Self::Switch(switch) => switch.render(colors, buf),
-            Self::CyclicSwitch(cyclic_switch) => cyclic_switch.render(colors, buf),
-            Self::Argument(positional_arg) => positional_arg.render(colors, buf),
+            Self::Opt(option) => option.render(colors, max_key_width, buf),
+            Self::Switch(switch) => switch.render(colors, max_key_width, buf),
+            Self::CyclicSwitch(cyclic_switch) => cyclic_switch.render(colors, max_key_width, buf),
+            Self::Argument(positional_arg) => positional_arg.render(colors, max_key_width, buf),
         }
     }
 }
@@ -456,7 +476,7 @@ impl<'a> TransientState<'a> {
             ]);
             for entity in &section.entries {
                 self.buf.add_change(Change::Text("\r\n".to_string()));
-                entity.render(&self.colors, self.buf)?;
+                entity.render(&self.colors, section.max_key_width, self.buf)?;
             }
         }
 
@@ -930,9 +950,45 @@ fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSec
             entries.push(transient_entry);
         }
 
+        let max_key_width = entries
+            .iter()
+            .map(|e| match e {
+                RenderableEntity::Switch(s) => s
+                    .delegate
+                    .label
+                    .as_deref()
+                    .map_or(s.delegate.key.len(), |label| {
+                        unicode_column_width(label, None)
+                    }),
+                RenderableEntity::Opt(o) => o
+                    .delegate
+                    .label
+                    .as_deref()
+                    .map_or(o.delegate.key.len(), |label| {
+                        unicode_column_width(label, None)
+                    }),
+                RenderableEntity::CyclicSwitch(c) => c
+                    .delegate
+                    .label
+                    .as_deref()
+                    .map_or(c.delegate.key.len(), |label| {
+                        unicode_column_width(label, None)
+                    }),
+                RenderableEntity::Argument(a) => a
+                    .delegate
+                    .label
+                    .as_deref()
+                    .map_or(a.delegate.key.len(), |label| {
+                        unicode_column_width(label, None)
+                    }),
+            })
+            .max()
+            .unwrap_or(0);
+
         sections.push(TransientSection {
             delegate: k_section,
             entries,
+            max_key_width,
         });
     }
 }
