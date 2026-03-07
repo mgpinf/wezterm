@@ -11,6 +11,16 @@ pub enum KeyLookup<'a, T> {
     NotFound,
 }
 
+/// Signal returned by keymap input handlers to control the event loop.
+pub enum LoopAction {
+    /// Proceed to render.
+    Render,
+    /// Break out of the event loop.
+    Break,
+    /// Skip rendering and continue to the next event.
+    SkipRender,
+}
+
 impl<'a, T> KeyMap<'a, T> {
     pub fn new() -> Self {
         Self {
@@ -51,10 +61,10 @@ pub fn display_key<'a>(key: &'a str, label: Option<&'a str>) -> &'a str {
     if let Some(label) = label {
         return label;
     }
-    if key == " " {
-        "<space>"
-    } else {
-        key
+    match key {
+        " " => "<space>",
+        "\n" => "<enter>",
+        _ => key,
     }
 }
 

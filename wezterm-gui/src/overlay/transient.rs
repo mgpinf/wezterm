@@ -1,4 +1,4 @@
-use crate::overlay::common::{display_key, KeyLookup, KeyMap, OverlayColors};
+use crate::overlay::common::{display_key, KeyLookup, KeyMap, LoopAction, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -612,6 +612,84 @@ impl<'a> TransientState<'a> {
         .detach();
     }
 
+    /// Handles a keymap character input.
+    fn handle_keymap_char(&mut self, c: char) -> anyhow::Result<LoopAction> {
+        self.typed.push(c);
+
+        match self.keymap.lookup(&self.typed) {
+            KeyLookup::Found(transient_entry) => {
+                match transient_entry {
+                    RenderableEntity::Switch(switch) => {
+                        switch.value.update(|val| !val);
+                    }
+                    RenderableEntity::Opt(option) => {
+                        if option.value.borrow().is_none() || !option.delegate.allow_nil {
+                            self.mode = if let Some(choices) = option.delegate.choices.as_ref() {
+                                let (_, rows) = self.buf.dimensions();
+                                let max_items = rows.saturating_sub(ROW_OVERHEAD);
+                                let filtered_entries =
+                                    choices.iter().map(|choice| choice.as_str()).collect();
+
+                                Some(InputMode::Selector(SelectorState {
+                                    active_idx: 0,
+                                    max_items,
+                                    top_row: 0,
+                                    filter_term: String::new(),
+                                    filtered_entries,
+                                    choices,
+                                    option,
+                                }))
+                            } else {
+                                Some(InputMode::Prompt(PromptState {
+                                    line: String::new(),
+                                    option,
+                                }))
+                            }
+                        } else {
+                            option.value.replace(None);
+                        }
+                    }
+                    RenderableEntity::CyclicSwitch(cyclic_switch) => {
+                        if !cyclic_switch.delegate.choices.is_empty() {
+                            cyclic_switch.active_idx.update(|idx| {
+                                if let Some(idx) = idx {
+                                    if idx == cyclic_switch.delegate.choices.len() - 1 {
+                                        if cyclic_switch.delegate.allow_nil {
+                                            None
+                                        } else {
+                                            Some(0)
+                                        }
+                                    } else {
+                                        Some(idx + 1)
+                                    }
+                                } else {
+                                    Some(0)
+                                }
+                            });
+                        }
+                    }
+                    RenderableEntity::Argument(positional_arg) => {
+                        let name = match *positional_arg.delegate.action {
+                            KeyAssignment::EmitEvent(ref id) => id,
+                            _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
+                        };
+
+                        let result = TransientResult::from(self.sections);
+                        self.trigger_event(name, Some(result));
+                        if !positional_arg.delegate.keep_overlay {
+                            return Ok(LoopAction::Break);
+                        }
+                    }
+                }
+                self.typed.clear();
+            }
+            KeyLookup::Prefix => {}
+            KeyLookup::NotFound => self.typed.clear(),
+        }
+
+        Ok(LoopAction::Render)
+    }
+
     fn run_loop(&mut self) -> anyhow::Result<()> {
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             match &mut self.mode {
@@ -635,85 +713,16 @@ impl<'a> TransientState<'a> {
                         key: KeyCode::Char(c),
                         ..
                     }) => {
-                        self.typed.push(c);
-
-                        match self.keymap.lookup(&self.typed) {
-                            KeyLookup::Found(transient_entry) => {
-                                match transient_entry {
-                                    RenderableEntity::Switch(switch) => {
-                                        switch.value.update(|val| !val);
-                                    }
-                                    RenderableEntity::Opt(option) => {
-                                        if option.value.borrow().is_none()
-                                            || !option.delegate.allow_nil
-                                        {
-                                            self.mode = if let Some(choices) =
-                                                option.delegate.choices.as_ref()
-                                            {
-                                                let (_, rows) = self.buf.dimensions();
-                                                let max_items = rows.saturating_sub(ROW_OVERHEAD);
-                                                let filtered_entries = choices
-                                                    .iter()
-                                                    .map(|choice| choice.as_str())
-                                                    .collect();
-
-                                                Some(InputMode::Selector(SelectorState {
-                                                    active_idx: 0,
-                                                    max_items,
-                                                    top_row: 0,
-                                                    filter_term: String::new(),
-                                                    filtered_entries,
-                                                    choices,
-                                                    option,
-                                                }))
-                                            } else {
-                                                Some(InputMode::Prompt(PromptState {
-                                                    line: String::new(),
-                                                    option,
-                                                }))
-                                            }
-                                        } else {
-                                            option.value.replace(None);
-                                        }
-                                    }
-                                    RenderableEntity::CyclicSwitch(cyclic_switch) => {
-                                        if !cyclic_switch.delegate.choices.is_empty() {
-                                            cyclic_switch.active_idx.update(|idx| {
-                                                if let Some(idx) = idx {
-                                                    if idx
-                                                        == cyclic_switch.delegate.choices.len() - 1
-                                                    {
-                                                        if cyclic_switch.delegate.allow_nil {
-                                                            None
-                                                        } else {
-                                                            Some(0)
-                                                        }
-                                                    } else {
-                                                        Some(idx + 1)
-                                                    }
-                                                } else {
-                                                    Some(0)
-                                                }
-                                            });
-                                        }
-                                    }
-                                    RenderableEntity::Argument(positional_arg) => {
-                                        let name = match *positional_arg.delegate.action {
-                                            KeyAssignment::EmitEvent(ref id) => id,
-                                            _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
-                                        };
-
-                                        let result = TransientResult::from(self.sections);
-                                        self.trigger_event(name, Some(result));
-                                        if !positional_arg.delegate.keep_overlay {
-                                            break;
-                                        }
-                                    }
-                                }
-                                self.typed.clear();
-                            }
-                            KeyLookup::Prefix => {}
-                            KeyLookup::NotFound => self.typed.clear(),
+                        if let LoopAction::Break = self.handle_keymap_char(c)? {
+                            break;
+                        }
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Enter,
+                        ..
+                    }) => {
+                        if let LoopAction::Break = self.handle_keymap_char('\n')? {
+                            break;
                         }
                     }
                     InputEvent::Key(KeyEvent {

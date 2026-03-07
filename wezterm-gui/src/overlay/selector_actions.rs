@@ -1,4 +1,4 @@
-use crate::overlay::common::{display_key, KeyLookup, KeyMap, OverlayColors};
+use crate::overlay::common::{display_key, KeyLookup, KeyMap, LoopAction, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -414,6 +414,64 @@ impl<'a> SelectorState<'a> {
         Ok(())
     }
 
+    /// Handles a keymap character input.
+    fn handle_keymap_char(&mut self, c: char) -> anyhow::Result<LoopAction> {
+        self.typed.push(c);
+
+        match self.keymap.lookup(&self.typed) {
+            KeyLookup::Found(positional_arg) => {
+                let name = match *positional_arg.action {
+                    KeyAssignment::EmitEvent(ref id) => id,
+                    _ => anyhow::bail!(
+                        "SelectorActions requires action to be defined by wezterm.action_callback"
+                    ),
+                };
+
+                let mut choices: Vec<SelectorActionsEntry> = vec![];
+
+                if let Some(multiple_idx) = self.multiple_idx.as_ref() {
+                    choices.extend(
+                        multiple_idx
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, val)| **val)
+                            .map(|(idx, _)| SelectorActionsEntry {
+                                label: self.choices[idx].delegate.label.clone(),
+                                id: self.choices[idx].delegate.id.clone(),
+                                metadata: self.choices[idx].delegate.metadata.clone(),
+                            }),
+                    );
+                }
+
+                if choices.is_empty() && self.filtered_entries.is_empty() {
+                    self.typed.clear();
+                    return Ok(LoopAction::SkipRender);
+                }
+
+                if choices.is_empty() {
+                    let entry = self.filtered_entries[self.active_idx];
+                    choices.push(SelectorActionsEntry {
+                        label: entry.delegate.label.clone(),
+                        id: entry.delegate.id.clone(),
+                        metadata: entry.delegate.metadata.clone(),
+                    });
+                }
+
+                let result = SelectorActionsResult { choices };
+                self.trigger_event(name, Some(result));
+                if positional_arg.keep_overlay {
+                    self.typed.clear();
+                } else {
+                    return Ok(LoopAction::Break);
+                }
+            }
+            KeyLookup::Prefix => {}
+            KeyLookup::NotFound => self.typed.clear(),
+        }
+
+        Ok(LoopAction::Render)
+    }
+
     fn run_loop(&mut self) -> anyhow::Result<()> {
         while let Ok(Some(event)) = self.buf.terminal().poll_input(None) {
             self.repeat[0] = self.repeat[1];
@@ -533,58 +591,11 @@ impl<'a> SelectorState<'a> {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char(c),
                     ..
-                }) => {
-                    self.typed.push(c);
-
-                    match self.keymap.lookup(&self.typed) {
-                        KeyLookup::Found(positional_arg) => {
-                            let name = match *positional_arg.action {
-                                KeyAssignment::EmitEvent(ref id) => id,
-                                _ => anyhow::bail!("SelectorActions requires action to be defined by wezterm.action_callback")
-                            };
-
-                            let mut choices: Vec<SelectorActionsEntry> = vec![];
-
-                            if let Some(multiple_idx) = self.multiple_idx.as_ref() {
-                                choices.extend(
-                                    multiple_idx
-                                        .iter()
-                                        .enumerate()
-                                        .filter(|(_, val)| **val)
-                                        .map(|(idx, _)| SelectorActionsEntry {
-                                            label: self.choices[idx].delegate.label.clone(),
-                                            id: self.choices[idx].delegate.id.clone(),
-                                            metadata: self.choices[idx].delegate.metadata.clone(),
-                                        }),
-                                );
-                            }
-
-                            if choices.is_empty() && self.filtered_entries.is_empty() {
-                                self.typed.clear();
-                                continue;
-                            }
-
-                            if choices.is_empty() {
-                                let entry = self.filtered_entries[self.active_idx];
-                                choices.push(SelectorActionsEntry {
-                                    label: entry.delegate.label.clone(),
-                                    id: entry.delegate.id.clone(),
-                                    metadata: entry.delegate.metadata.clone(),
-                                });
-                            }
-
-                            let result = SelectorActionsResult { choices };
-                            self.trigger_event(name, Some(result));
-                            if positional_arg.keep_overlay {
-                                self.typed.clear();
-                            } else {
-                                break;
-                            }
-                        }
-                        KeyLookup::Prefix => {}
-                        KeyLookup::NotFound => self.typed.clear(),
-                    }
-                }
+                }) => match self.handle_keymap_char(c)? {
+                    LoopAction::Break => break,
+                    LoopAction::SkipRender => continue,
+                    LoopAction::Render => {}
+                },
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Tab,
                     modifiers: Modifiers::NONE,
@@ -606,7 +617,11 @@ impl<'a> SelectorState<'a> {
                     if self.filtering {
                         self.filtering = false;
                     } else {
-                        continue;
+                        match self.handle_keymap_char('\n')? {
+                            LoopAction::Break => break,
+                            LoopAction::SkipRender => continue,
+                            LoopAction::Render => {}
+                        }
                     }
                 }
                 InputEvent::Resized { cols, rows } => {
