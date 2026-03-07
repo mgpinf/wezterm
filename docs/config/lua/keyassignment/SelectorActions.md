@@ -15,6 +15,7 @@ objects
 `SelectorActions` accepts the following fields:
 
 * `description` - text to display at the top of the menu
+* `title` - optional, the title that will be set for the overlay pane
 * `context` - an optional argument that accepts a
   [TransientContext](../TransientContext.md) object
 * `choices` - a lua table consisting of the potential choices. Each entry
