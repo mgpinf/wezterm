@@ -809,6 +809,8 @@ pub struct TransientContext {
 pub struct TransientMenu {
     pub description: String,
     #[dynamic(default)]
+    pub title: String,
+    #[dynamic(default)]
     pub context: Option<TransientContext>,
     pub sections: Vec<TransientSection>,
     #[dynamic(default)]
@@ -839,6 +841,12 @@ impl FromDynamic for TransientMenu {
         };
 
         let description = String::from_dynamic(get_required("description")?, options)?;
+
+        let title = obj
+            .get_by_str("title")
+            .map(|v| String::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or_default();
 
         let context = obj
             .get_by_str("context")
@@ -885,6 +893,7 @@ impl FromDynamic for TransientMenu {
 
         Ok(Self {
             description,
+            title,
             context,
             sections,
             cancel,
@@ -911,6 +920,8 @@ pub struct SelectorActionsEntry {
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct SelectorActions {
     pub description: String,
+    #[dynamic(default)]
+    pub title: String,
     #[dynamic(default)]
     pub context: Option<TransientContext>,
     pub choices: Vec<SelectorActionsEntry>,

@@ -704,6 +704,7 @@ pub fn show_selector_actions_overlay(
 ) -> anyhow::Result<()> {
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
+    buf.add_change(Change::Title(args.title.clone()));
 
     let choices: Vec<SelectorEntry<'_>> = args
         .choices

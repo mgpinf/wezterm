@@ -1040,6 +1040,7 @@ pub fn show_transient_menu_overlay(
 ) -> anyhow::Result<()> {
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
+    buf.add_change(Change::Title(args.title.clone()));
 
     let mut sections = vec![];
     create_sections(&args, &mut sections);
