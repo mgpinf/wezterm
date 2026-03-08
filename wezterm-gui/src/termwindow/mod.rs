@@ -190,6 +190,7 @@ pub struct SemanticZoneCache {
 pub struct OverlayState {
     pub pane: Arc<dyn Pane>,
     pub key_table_state: KeyTableState,
+    pub visible: bool,
 }
 
 #[derive(Default)]
@@ -347,9 +348,6 @@ pub struct TabState {
     /// contents, we're overlaying a little internal application
     /// tab.  We'll also route input to it.
     pub overlay: Option<OverlayState>,
-    /// If is_some(), this tab has a hidden tab-wide overlay that can be
-    /// restored with ToggleTabOverlay.
-    pub hidden_overlay: Option<OverlayState>,
 }
 
 /// Manages the state/queue of lua based event handlers.
@@ -1390,9 +1388,7 @@ impl TermWindow {
             .tab_state
             .borrow()
             .iter()
-            .filter_map(|(tab_id, state)| {
-                (state.overlay.is_some() || state.hidden_overlay.is_some()).then_some(*tab_id)
-            })
+            .filter_map(|(tab_id, state)| (state.overlay.is_some()).then_some(*tab_id))
             .collect::<Vec<_>>();
 
         for tab_id in tab_overlays_to_cancel {
@@ -1828,9 +1824,6 @@ impl TermWindow {
             }
             for state in self.tab_state.borrow().values() {
                 if let Some(overlay) = &state.overlay {
-                    overlay.pane.set_config(Arc::clone(&term_config));
-                }
-                if let Some(overlay) = &state.hidden_overlay {
                     overlay.pane.set_config(Arc::clone(&term_config));
                 }
             }
@@ -3654,12 +3647,16 @@ impl TermWindow {
     }
 
     fn get_tab_overlay(&self, tab_id: TabId) -> Option<Arc<dyn Pane>> {
-        self.tab_state(tab_id).overlay.as_ref().map(|overlay| {
-            self.pane_state(overlay.pane.pane_id())
-                .overlay
-                .as_ref()
-                .map_or_else(|| overlay.pane.clone(), |nested| nested.pane.clone())
-        })
+        self.tab_state(tab_id)
+            .overlay
+            .as_ref()
+            .and_then(|overlay| overlay.visible.then_some(overlay))
+            .map(|overlay| {
+                self.pane_state(overlay.pane.pane_id())
+                    .overlay
+                    .as_ref()
+                    .map_or_else(|| overlay.pane.clone(), |nested| nested.pane.clone())
+            })
     }
 
     fn get_active_pane_no_overlay(&self) -> Option<Arc<dyn Pane>> {
@@ -3836,29 +3833,26 @@ impl TermWindow {
     /// Otherwise: if the overlay (visible or hidden) is the specified pane
     /// for that tab, remove it.
     fn cancel_overlay_for_tab(&mut self, tab_id: TabId, pane_id: Option<PaneId>) {
-        let (visible_overlay, hidden_overlay) = match pane_id {
+        let overlay = match pane_id {
             Some(pane_id) => {
                 let mut state = self.tab_state(tab_id);
                 if state.overlay.as_ref().map(|o| o.pane.pane_id()) == Some(pane_id) {
-                    (state.overlay.take(), None)
-                } else if state.hidden_overlay.as_ref().map(|o| o.pane.pane_id()) == Some(pane_id) {
-                    (None, state.hidden_overlay.take())
+                    state.overlay.take()
                 } else {
                     return;
                 }
             }
             None => {
                 let mut state = self.tab_state(tab_id);
-                (state.overlay.take(), state.hidden_overlay.take())
+                state.overlay.take()
             }
         };
 
-        for overlay in IntoIterator::into_iter([visible_overlay, hidden_overlay]).flatten() {
+        if let Some(overlay) = overlay {
             Mux::get().remove_pane(overlay.pane.pane_id());
-        }
-
-        if let Some(window) = self.window.as_ref() {
-            window.invalidate();
+            if let Some(window) = self.window.as_ref() {
+                window.invalidate();
+            }
         }
     }
 
@@ -3867,23 +3861,17 @@ impl TermWindow {
     }
 
     fn toggle_tab_overlay(&mut self, tab_id: TabId) {
-        let mut overlay_to_resize = None;
-
         {
             let mut state = self.tab_state(tab_id);
-            if let Some(overlay) = state.overlay.take() {
-                state.hidden_overlay.replace(overlay);
-            } else if let Some(overlay) = state.hidden_overlay.take() {
-                overlay_to_resize.replace(overlay.pane.clone());
-                state.overlay.replace(overlay);
-            } else {
+            let Some(overlay) = state.overlay.as_mut() else {
                 return;
-            }
-        }
+            };
 
-        if let Some(overlay) = overlay_to_resize {
-            overlay.resize(self.terminal_size).ok();
-        }
+            overlay.visible = !overlay.visible;
+            if overlay.visible {
+                overlay.pane.resize(self.terminal_size).ok();
+            }
+        };
 
         self.update_title();
         if let Some(window) = self.window.as_ref() {
@@ -3915,6 +3903,7 @@ impl TermWindow {
         self.pane_state(pane_id).overlay.replace(OverlayState {
             pane,
             key_table_state: KeyTableState::default(),
+            visible: true,
         });
         self.update_title();
     }
@@ -3924,6 +3913,7 @@ impl TermWindow {
         self.tab_state(tab_id).overlay.replace(OverlayState {
             pane: overlay,
             key_table_state: KeyTableState::default(),
+            visible: true,
         });
         self.update_title();
     }
