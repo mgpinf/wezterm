@@ -12,7 +12,9 @@ pub fn show_display_text_overlay(
     term.no_grab_mouse_in_raw_mode();
     let mut text = args.text.replace("\r\n", "\n").replace("\n", "\r\n");
     text.push_str("\r\n");
+
     term.render(&[
+        Change::Title(args.title),
         Change::Text(text),
         Change::CursorVisibility(CursorVisibility::Hidden),
     ])?;

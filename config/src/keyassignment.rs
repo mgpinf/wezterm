@@ -1038,6 +1038,8 @@ pub struct SelectorActions {
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct DisplayText {
     pub text: String,
+    #[dynamic(default)]
+    pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
