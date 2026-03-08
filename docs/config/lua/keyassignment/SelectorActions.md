@@ -27,7 +27,8 @@ objects
   The metadata is a table of key-value pairs where both keys and values are
   strings, e.g. `metadata = { container_id = "abc123", status = "running" }`.
 * `section` - an [SelectorActionsArgumentSection](../SelectorActionsArgumentSection.md)
-  object * `multiple` - this is an optional argument. Defaults to `false`.
+  object
+* `multiple` - this is an optional argument. Defaults to `false`.
   If set to `true`, user can select multiple choices.
 * `fuzzy_description` - text to display when in fuzzy finding mode.
   This is an optional argument. Defaults to text mentioned against
