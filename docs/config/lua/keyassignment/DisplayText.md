@@ -8,6 +8,7 @@ Activates an overlay to display the provided text.
 
 * `text` - the content to display in the overlay. You may embed
   escape sequences and/or use [wezterm.format](../wezterm/format.md)
+* `title` - optional, the title that will be set for the overlay pane
 
 ### Key Assignments
 
