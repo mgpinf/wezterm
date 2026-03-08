@@ -170,7 +170,12 @@ impl PaneSelector {
 
         let tab_id = tab.tab_id();
 
-        if term_window.tab_state(tab_id).overlay.is_none() {
+        if !term_window
+            .tab_state(tab_id)
+            .overlay
+            .iter()
+            .any(|o| o.is_some())
+        {
             let panes = tab.iter_panes();
 
             match self.mode {

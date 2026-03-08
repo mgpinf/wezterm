@@ -45,6 +45,27 @@ where
     T: Send + 'static,
     F: Send + 'static + FnOnce(TabId, TermWizTerminal) -> anyhow::Result<T>,
 {
+    start_overlay_at_layer(
+        term_window,
+        tab,
+        crate::termwindow::OVERLAY_LAYER_BASE,
+        func,
+    )
+}
+
+pub fn start_overlay_at_layer<T, F>(
+    term_window: &TermWindow,
+    tab: &Arc<Tab>,
+    layer: usize,
+    func: F,
+) -> (
+    Arc<dyn Pane>,
+    Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>>>>,
+)
+where
+    T: Send + 'static,
+    F: Send + 'static + FnOnce(TabId, TermWizTerminal) -> anyhow::Result<T>,
+{
     let tab_id = tab.tab_id();
     let tab_size = tab.get_size();
     let term_config: Arc<dyn TerminalConfiguration + Send + Sync> =
@@ -57,7 +78,7 @@ where
 
     let future = promise::spawn::spawn_into_new_thread(move || {
         let res = func(tab_id, tw_term);
-        TermWindow::schedule_cancel_overlay(window, tab_id, Some(overlay_pane_id));
+        TermWindow::schedule_cancel_overlay(window, tab_id, Some(overlay_pane_id), layer);
         res
     });
 

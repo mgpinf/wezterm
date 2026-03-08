@@ -815,6 +815,8 @@ pub struct TransientMenu {
     pub sections: Vec<TransientSection>,
     #[dynamic(default)]
     pub cancel: Option<Box<KeyAssignment>>,
+    #[dynamic(default)]
+    pub top_layer: bool,
 }
 
 impl FromDynamic for TransientMenu {
@@ -858,6 +860,12 @@ impl FromDynamic for TransientMenu {
             .map(|v| Box::<KeyAssignment>::from_dynamic(v, options))
             .transpose()?;
 
+        let top_layer = obj
+            .get_by_str("top_layer")
+            .map(|v| bool::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or(false);
+
         let entries_val = obj.get_by_str("entries");
         let sections_val = obj.get_by_str("sections");
         let header_val = obj.get_by_str("header");
@@ -897,6 +905,7 @@ impl FromDynamic for TransientMenu {
             context,
             sections,
             cancel,
+            top_layer,
         })
     }
 }
@@ -934,6 +943,8 @@ pub struct SelectorActions {
     pub fuzzy: bool,
     #[dynamic(default)]
     pub cancel: Option<Box<KeyAssignment>>,
+    #[dynamic(default)]
+    pub top_layer: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
