@@ -939,6 +939,8 @@ pub struct SelectorActions {
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct DisplayText {
     pub text: String,
+    #[dynamic(default)]
+    pub title: String,
 }
 
 /// A single command to run in the CommandRunner overlay.
