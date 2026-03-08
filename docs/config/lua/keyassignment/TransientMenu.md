@@ -24,6 +24,9 @@ of above-mentioned entities passed as an argument.
   callback's function signature is `(window, pane)` where `window` and
   `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
   Called when the user cancels the overlay
+* `top_layer` - optional boolean. Defaults to `false`.
+  If set to `true`, the overlay is activated at tab overlay layer 1 (top layer),
+  which takes precedence over layer 0 without replacing it.
 
 For specifying menu entries, use **one** of the following:
 

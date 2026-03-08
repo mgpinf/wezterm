@@ -41,6 +41,9 @@ objects
   `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
   This is an optional argument. If present, this callback is called when the
   user cancels the current overlay
+* `top_layer` - optional boolean. Defaults to `false`.
+  If set to `true`, the overlay is activated at tab overlay layer 1 (top layer),
+  which takes precedence over layer 0 without replacing it.
 
 
 ### Key Assignments
