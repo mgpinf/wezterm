@@ -32,8 +32,7 @@ use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
     Confirmation, DisplayText, InnerPattern, InputForm, InputText, KeyAssignment,
     LauncherActionArgs, PaneDirection, Pattern, PromptInputLine, QuickSelectArguments,
-    RotationDirection, ScrollbackSearchWithContextArgs, SelectorActions, SpawnCommand, SplitSize,
-    TransientMenu, TypingTest,
+    RotationDirection, SelectorActions, SpawnCommand, SplitSize, TransientMenu, TypingTest,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2578,34 +2577,6 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
-    fn show_scrollback_search(&mut self, args: &ScrollbackSearchWithContextArgs) {
-        let pane = match self.get_active_pane_or_overlay() {
-            Some(pane) => pane,
-            None => return,
-        };
-
-        let mux = Mux::get();
-        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
-            Some(tab) => tab,
-            None => return,
-        };
-
-        let pane_id = pane.pane_id();
-        let window = self.window.clone().expect("window to be set");
-        let auto_refresh = args.auto_refresh;
-
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::scrollback_search::scrollback_search(
-                pane_id,
-                term,
-                window,
-                auto_refresh,
-            )
-        });
-        self.assign_overlay(tab.tab_id(), overlay, OVERLAY_LAYER_BASE);
-        promise::spawn::spawn(future).detach();
-    }
-
     fn show_tab_navigator(&mut self) {
         let mux = Mux::get();
         let active_tab_idx = match mux.get_window(self.mux_window_id) {
@@ -3448,7 +3419,6 @@ impl TermWindow {
             SelectorActions(args) => self.show_selector_actions(args),
             DisplayText(args) => self.show_display_text(args),
             TypingTest(args) => self.show_typing_test(args),
-            ScrollbackSearchWithContext(args) => self.show_scrollback_search(args),
             CommandRunner(args) => self.show_command_runner(args),
         };
         Ok(PerformAssignmentResult::Handled)

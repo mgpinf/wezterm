@@ -19,7 +19,6 @@ pub mod image_selector;
 pub mod launcher;
 pub mod prompt;
 pub mod quickselect;
-pub mod scrollback_search;
 pub mod selector;
 pub mod selector_actions;
 pub mod transient;

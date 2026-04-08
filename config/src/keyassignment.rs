@@ -1366,18 +1366,9 @@ pub enum KeyAssignment {
     SelectorActions(SelectorActions),
     DisplayText(DisplayText),
     TypingTest(TypingTest),
-    ScrollbackSearchWithContext(ScrollbackSearchWithContextArgs),
     CommandRunner(CommandRunner),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic, Default)]
-pub struct ScrollbackSearchWithContextArgs {
-    /// If true, automatically refresh search results when buffer content changes.
-    /// Can be toggled with Ctrl+R while the overlay is open.
-    #[dynamic(default)]
-    pub auto_refresh: bool,
-}
-impl_lua_conversion_dynamic!(ScrollbackSearchWithContextArgs);
 impl_lua_conversion_dynamic!(KeyAssignment);
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

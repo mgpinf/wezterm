@@ -881,14 +881,6 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: Some("md_keyboard"),
         },
-        ScrollbackSearchWithContext(_) => CommandDef {
-            brief: "Search scrollback with context".into(),
-            doc: "Search the scrollback buffer and show results with surrounding context lines".into(),
-            keys: vec![],
-            args: &[ArgType::ActivePane],
-            menubar: &["View"],
-            icon: Some("oct_search"),
-        },
         CommandRunner(_) => CommandDef {
             brief: "Run multiple commands in overlay".into(),
             doc: "Opens an overlay to run and monitor multiple non-interactive commands".into(),
@@ -2175,7 +2167,6 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ScrollByPage(NotNan::new(1.0).unwrap()),
         ScrollToTop,
         ScrollToBottom,
-        ScrollbackSearchWithContext(ScrollbackSearchWithContextArgs::default()),
         // ----------------- Window
         ToggleFullScreen,
         ToggleAlwaysOnTop,
