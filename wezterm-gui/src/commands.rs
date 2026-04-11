@@ -833,14 +833,6 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: Some("md_image"),
         },
-        InputForm(_) => CommandDef {
-            brief: "Prompt the user to fill out a form".into(),
-            doc: "Activates the form overlay and wait for input".into(),
-            keys: vec![],
-            args: &[ArgType::ActiveWindow],
-            menubar: &[],
-            icon: None,
-        },
         InputText(_) => CommandDef {
             brief: "Prompt the user to input multiline text".into(),
             doc: "Activates the editor overlay and wait for input".into(),

@@ -30,9 +30,9 @@ use ::wezterm_term::input::{ClickPosition, MouseButton as TMB};
 use ::window::*;
 use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
-    Confirmation, DisplayText, InnerPattern, InputForm, InputText, KeyAssignment,
-    LauncherActionArgs, PaneDirection, Pattern, PromptInputLine, QuickSelectArguments,
-    RotationDirection, SelectorActions, SpawnCommand, SplitSize, TransientMenu, TypingTest,
+    Confirmation, DisplayText, InnerPattern, InputText, KeyAssignment, LauncherActionArgs,
+    PaneDirection, Pattern, PromptInputLine, QuickSelectArguments, RotationDirection,
+    SelectorActions, SpawnCommand, SplitSize, TransientMenu, TypingTest,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2370,30 +2370,6 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
-    fn show_input_form(&mut self, args: &InputForm) {
-        let mux = Mux::get();
-        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
-            Some(tab) => tab,
-            None => return,
-        };
-
-        let pane = match self.get_active_pane_or_overlay() {
-            Some(pane) => pane,
-            None => return,
-        };
-
-        let args = args.clone();
-
-        let gui_win = GuiWin::new(self);
-        let pane = MuxPane(pane.pane_id());
-
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::form::show_input_form_overlay(term, args, gui_win, pane)
-        });
-        self.assign_overlay(tab.tab_id(), overlay, OVERLAY_LAYER_BASE);
-        promise::spawn::spawn(future).detach();
-    }
-
     fn show_input_text(&mut self, args: &InputText) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
@@ -3412,7 +3388,6 @@ impl TermWindow {
             PromptInputLine(line) => self.show_prompt_input_line(line),
             InputSelector(selector) => self.show_input_selector(selector),
             ImageSelector(selector) => self.show_image_selector(selector),
-            InputForm(form) => self.show_input_form(form),
             InputText(text) => self.show_input_text(text),
             Confirmation(conf) => self.show_confirmation(conf),
             TransientMenu(menu) => self.show_transient_menu(menu),

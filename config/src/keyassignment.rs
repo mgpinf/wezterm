@@ -1123,16 +1123,6 @@ pub struct ImageSelector {
     pub fuzzy_description: Option<String>,
 }
 
-/// A choice option for selector fields in InputForm
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
-pub struct FormFieldChoice {
-    /// Display label for the choice
-    pub label: String,
-    /// Value to submit (defaults to label if not specified)
-    #[dynamic(default)]
-    pub id: Option<String>,
-}
-
 /// Value type for form fields - can be a string or boolean (for checkbox fields)
 #[derive(Debug, Clone, PartialEq)]
 pub enum FormFieldValue {
@@ -1204,32 +1194,6 @@ impl FormFieldValue {
             _ => None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
-pub struct FormField {
-    pub label: String,
-    pub id: String,
-    #[dynamic(default)]
-    pub placeholder: Option<String>,
-    #[dynamic(default)]
-    pub is_password: bool,
-    #[dynamic(default)]
-    pub initial_value: Option<FormFieldValue>,
-    #[dynamic(default)]
-    pub required: bool,
-    /// If non-empty, this field becomes a selector with fuzzy search
-    #[dynamic(default)]
-    pub choices: Vec<FormFieldChoice>,
-}
-
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
-pub struct InputForm {
-    pub title: String,
-    pub fields: Vec<FormField>,
-    pub action: Box<KeyAssignment>,
-    #[dynamic(default)]
-    pub submit_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -1359,7 +1323,6 @@ pub enum KeyAssignment {
     PromptInputLine(PromptInputLine),
     InputSelector(InputSelector),
     ImageSelector(ImageSelector),
-    InputForm(InputForm),
     InputText(InputText),
     Confirmation(Confirmation),
     TransientMenu(TransientMenu),
