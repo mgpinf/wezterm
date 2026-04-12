@@ -587,27 +587,19 @@ impl<'a> SelectorState<'a> {
                     key: KeyCode::Char('g'),
                     modifiers: Modifiers::NONE,
                 }) if !self.keymap.has_continuation(&self.typed, 'g') => {
-                    if let Some(first_entry) = self.filtered_entries.first() {
-                        self.active_idx = first_entry.idx;
-                        if self.active_idx < self.top_row {
-                            self.top_row = self.active_idx;
-                        }
-                    } else {
-                        continue;
-                    }
+                    self.active_idx = 0;
+                    self.top_row = 0;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('G'),
+                    modifiers: Modifiers::NONE,
+                })
+                | InputEvent::Key(KeyEvent {
+                    key: KeyCode::Char('G'),
                     modifiers: Modifiers::SHIFT,
                 }) if !self.keymap.has_continuation(&self.typed, 'G') => {
-                    if let Some(last_entry) = self.filtered_entries.last() {
-                        self.active_idx = last_entry.idx;
-                        if self.active_idx > self.top_row + self.max_items {
-                            self.top_row = self.active_idx.saturating_sub(self.max_items);
-                        }
-                    } else {
-                        continue;
-                    }
+                    self.active_idx = self.filtered_entries.len().saturating_sub(1);
+                    self.top_row = self.active_idx.saturating_sub(self.max_items);
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char(c),
