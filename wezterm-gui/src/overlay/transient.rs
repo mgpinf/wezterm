@@ -503,9 +503,16 @@ impl<'a> TransientState<'a> {
                         + prompt_state.line.len();
 
                     if let Some(default) = prompt_state.option.delegate.default.as_ref() {
-                        let default_text = concat_str3(" (default ", default, ")");
-                        cursor_x += default_text.len();
-                        self.buf.add_change(Change::Text(default_text));
+                        cursor_x += 10 + default.len() + 1;
+                        self.buf.add_changes(vec![
+                            Change::Text(" (default ".to_string()),
+                            Change::Attribute(AttributeChange::Foreground(
+                                self.colors.default_value_fg,
+                            )),
+                            Change::Text(default.to_string()),
+                            Change::AllAttributes(CellAttributes::default()),
+                            Change::Text(")".to_string()),
+                        ]);
                     }
 
                     self.buf.add_changes(vec![

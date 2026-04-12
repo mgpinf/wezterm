@@ -78,6 +78,7 @@ pub struct OverlayColors {
     pub context_label_fg: ColorAttribute,
     pub context_header_fg: ColorAttribute,
     pub section_header_fg: ColorAttribute,
+    pub default_value_fg: ColorAttribute,
     pub separator_fg: ColorAttribute,
     pub multiple_marker_bg: ColorAttribute,
 }
@@ -118,6 +119,10 @@ impl OverlayColors {
             section_header_fg: colors
                 .transient_section_header_fg
                 .unwrap_or(AnsiColor::Navy.into())
+                .into(),
+            default_value_fg: colors
+                .transient_default_value_fg
+                .unwrap_or(AnsiColor::Green.into())
                 .into(),
             separator_fg: colors
                 .transient_separator_fg
