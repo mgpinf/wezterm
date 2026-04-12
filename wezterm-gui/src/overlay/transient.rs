@@ -16,6 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
+use termwiz::lineedit::{LineEditBuffer, Movement};
 use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
@@ -106,7 +107,7 @@ impl SelectorState<'_> {
 }
 
 struct PromptState<'a> {
-    line: String,
+    line: LineEditBuffer,
     option: &'a TransientOption<'a>,
 }
 
@@ -491,7 +492,7 @@ impl<'a> TransientState<'a> {
 
                     let mut cursor_x = prompt_state.option.delegate.description.len()
                         + 2
-                        + prompt_state.line.len();
+                        + prompt_state.line.get_cursor();
 
                     if let Some(default) = prompt_state.option.delegate.default.as_deref() {
                         cursor_x += 10 + default.len() + 1;
@@ -507,7 +508,7 @@ impl<'a> TransientState<'a> {
                     }
 
                     self.buf.add_changes(vec![
-                        Change::Text(concat_str(": ", &prompt_state.line)),
+                        Change::Text(concat_str(": ", &prompt_state.line.get_line())),
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
                             x: Position::Absolute(cursor_x),
@@ -638,7 +639,7 @@ impl<'a> TransientState<'a> {
                                 }))
                             } else {
                                 Some(InputMode::Prompt(PromptState {
-                                    line: String::new(),
+                                    line: LineEditBuffer::default(),
                                     option,
                                 }))
                             }
@@ -746,16 +747,94 @@ impl<'a> TransientState<'a> {
                         self.mode = None;
                     }
                     InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('B'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        prompt_state.line.exec_movement(Movement::BackwardChar(1));
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('F'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        prompt_state.line.exec_movement(Movement::ForwardChar(1));
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('A'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        prompt_state.line.exec_movement(Movement::StartOfLine);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('E'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        prompt_state.line.exec_movement(Movement::EndOfLine);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('B'),
+                        modifiers: Modifiers::ALT,
+                    }) => {
+                        prompt_state.line.exec_movement(Movement::BackwardWord(1));
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('F'),
+                        modifiers: Modifiers::ALT,
+                    }) => {
+                        prompt_state.line.exec_movement(Movement::ForwardWord(1));
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('W'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        prompt_state
+                            .line
+                            .kill_text(Movement::BackwardWord(1), Movement::BackwardWord(1));
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('K'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        prompt_state
+                            .line
+                            .kill_text(Movement::EndOfLine, Movement::EndOfLine);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char('U'),
+                        modifiers: Modifiers::CTRL,
+                    }) => {
+                        prompt_state
+                            .line
+                            .kill_text(Movement::StartOfLine, Movement::StartOfLine);
+                    }
+                    InputEvent::Key(KeyEvent {
                         key: KeyCode::Char(c),
+                        modifiers: Modifiers::NONE,
+                    }) => {
+                        prompt_state.line.insert_char(c);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Char(c),
+                        modifiers: Modifiers::SHIFT,
+                    }) => {
+                        prompt_state.line.insert_char(c);
+                    }
+                    InputEvent::Key(KeyEvent {
+                        key: KeyCode::Backspace,
                         ..
                     }) => {
-                        prompt_state.line.push(c);
+                        prompt_state
+                            .line
+                            .kill_text(Movement::BackwardChar(1), Movement::BackwardChar(1));
+                    }
+                    InputEvent::Paste(text) => {
+                        prompt_state.line.insert_text(&text);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Enter,
                         ..
                     }) => {
-                        let new_val = if prompt_state.line.is_empty() {
+                        let line = prompt_state.line.get_line();
+                        let new_val = if line.is_empty() {
                             Some(
                                 prompt_state
                                     .option
@@ -765,18 +844,10 @@ impl<'a> TransientState<'a> {
                                     .unwrap_or_default(),
                             )
                         } else {
-                            Some(prompt_state.line.clone())
+                            Some(line.to_string())
                         };
                         prompt_state.option.value.replace(new_val);
                         self.mode = None;
-                    }
-                    InputEvent::Key(KeyEvent {
-                        key: KeyCode::Backspace,
-                        ..
-                    }) => {
-                        if prompt_state.line.pop().is_none() {
-                            continue;
-                        }
                     }
                     InputEvent::Resized { cols, rows } => {
                         self.cols_separator = "─".repeat(cols);
