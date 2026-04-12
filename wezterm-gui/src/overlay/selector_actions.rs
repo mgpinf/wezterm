@@ -197,7 +197,11 @@ impl<'a> SelectorState<'a> {
 
     fn copy_active_choice_to_clipboard(&self) {
         if let Some(entry) = self.filtered_entries.get(self.active_idx) {
-            let text = entry.delegate.id.as_ref().unwrap_or(&entry.delegate.label);
+            let text = entry
+                .delegate
+                .id
+                .as_deref()
+                .unwrap_or(&entry.delegate.label);
             let clipboard = [Clipboard::Clipboard, Clipboard::PrimarySelection];
             for &c in &clipboard {
                 self.window.window.set_clipboard(c, text.to_string());
@@ -350,7 +354,7 @@ impl<'a> SelectorState<'a> {
 
             let mut attr = CellAttributes::blank();
 
-            if let Some(multiple_idx) = self.multiple_idx.as_ref() {
+            if let Some(multiple_idx) = self.multiple_idx.as_deref() {
                 if multiple_idx[self.filtered_entries[entry_idx].idx] {
                     changes.push(Change::Attribute(AttributeChange::Background(
                         self.colors.multiple_marker_bg,
@@ -429,7 +433,7 @@ impl<'a> SelectorState<'a> {
 
                 let mut choices: Vec<SelectorActionsEntry> = vec![];
 
-                if let Some(multiple_idx) = self.multiple_idx.as_ref() {
+                if let Some(multiple_idx) = self.multiple_idx.as_deref() {
                     choices.extend(
                         multiple_idx
                             .iter()

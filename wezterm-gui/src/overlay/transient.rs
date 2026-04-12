@@ -50,7 +50,7 @@ struct SelectorState<'a> {
     top_row: usize,
     filter_term: String,
     filtered_entries: Vec<&'a str>,
-    choices: &'a Vec<String>,
+    choices: &'a [String],
     option: &'a TransientOption<'a>,
 }
 
@@ -187,7 +187,7 @@ impl<'a> TransientOption<'a> {
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
 
-        if let Some(val) = self.value.borrow().as_ref() {
+        if let Some(val) = self.value.borrow().as_deref() {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
@@ -493,7 +493,7 @@ impl<'a> TransientState<'a> {
                         + 2
                         + prompt_state.line.len();
 
-                    if let Some(default) = prompt_state.option.delegate.default.as_ref() {
+                    if let Some(default) = prompt_state.option.delegate.default.as_deref() {
                         cursor_x += 10 + default.len() + 1;
                         self.buf.add_changes(vec![
                             Change::Text(" (default ".to_string()),
@@ -621,7 +621,7 @@ impl<'a> TransientState<'a> {
                     }
                     RenderableEntity::Opt(option) => {
                         if option.value.borrow().is_none() || !option.delegate.allow_nil {
-                            self.mode = if let Some(choices) = option.delegate.choices.as_ref() {
+                            self.mode = if let Some(choices) = option.delegate.choices.as_deref() {
                                 let (_, rows) = self.buf.dimensions();
                                 let max_items = rows.saturating_sub(ROW_OVERHEAD);
                                 let filtered_entries =
@@ -936,7 +936,7 @@ fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSec
                     })
                 }
                 KTransientEntry::TransientCyclicSwitch(cyclic_switch) => {
-                    let active_idx = cyclic_switch.default.as_ref().and_then(|default| {
+                    let active_idx = cyclic_switch.default.as_deref().and_then(|default| {
                         cyclic_switch
                             .choices
                             .iter()
