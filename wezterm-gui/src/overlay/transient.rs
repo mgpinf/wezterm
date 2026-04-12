@@ -484,6 +484,7 @@ impl<'a> TransientState<'a> {
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text("\r\n".to_string()),
                         Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                        Change::Attribute(AttributeChange::Foreground(self.colors.prompt_label_fg)),
                         Change::Text(prompt_state.option.delegate.description.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
@@ -534,6 +535,9 @@ impl<'a> TransientState<'a> {
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text("\r\n".to_string()),
                         Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                        Change::Attribute(AttributeChange::Foreground(
+                            self.colors.selector_label_fg,
+                        )),
                         Change::Text(selector_state.option.delegate.description.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text(concat_str(": ", &selector_state.filter_term)),

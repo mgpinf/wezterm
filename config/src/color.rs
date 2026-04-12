@@ -228,6 +228,8 @@ pub struct Palette {
     pub transient_section_header_fg: Option<ColorSpec>,
     pub transient_separator_fg: Option<ColorSpec>,
     pub transient_default_value_fg: Option<ColorSpec>,
+    pub transient_prompt_label_fg: Option<ColorSpec>,
+    pub transient_selector_label_fg: Option<ColorSpec>,
 
     pub selector_multiple_marker_bg: Option<ColorSpec>,
 
@@ -373,6 +375,8 @@ impl Palette {
             transient_section_header_fg: overlay!(transient_section_header_fg),
             transient_separator_fg: overlay!(transient_separator_fg),
             transient_default_value_fg: overlay!(transient_default_value_fg),
+            transient_prompt_label_fg: overlay!(transient_prompt_label_fg),
+            transient_selector_label_fg: overlay!(transient_selector_label_fg),
             selector_multiple_marker_bg: overlay!(selector_multiple_marker_bg),
             image_selector_description_fg: overlay!(image_selector_description_fg),
             image_selector_error_fg: overlay!(image_selector_error_fg),
