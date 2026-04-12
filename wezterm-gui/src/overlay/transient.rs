@@ -19,7 +19,6 @@ use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
-use termwiz_funcs::truncate_right;
 use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
 use wezterm_term::{unicode_column_width, AttributeChange, CellAttributes, Intensity};
 use window::Modifiers;
@@ -40,17 +39,6 @@ fn concat_str3(prefix: &str, value: &str, suffix: &str) -> String {
     s.push_str(prefix);
     s.push_str(value);
     s.push_str(suffix);
-    s
-}
-
-/// Concatenate four parts without format! overhead
-#[inline]
-fn concat_str4(a: &str, b: &str, c: &str, d: &str) -> String {
-    let mut s = String::with_capacity(a.len() + b.len() + c.len() + d.len());
-    s.push_str(a);
-    s.push_str(b);
-    s.push_str(c);
-    s.push_str(d);
     s
 }
 
@@ -495,7 +483,9 @@ impl<'a> TransientState<'a> {
                         Change::Text(self.cols_separator.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text("\r\n".to_string()),
+                        Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                         Change::Text(prompt_state.option.delegate.description.clone()),
+                        Change::AllAttributes(CellAttributes::default()),
                     ]);
 
                     let mut cursor_x = prompt_state.option.delegate.description.len()
@@ -542,15 +532,11 @@ impl<'a> TransientState<'a> {
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
                         Change::Text(self.cols_separator.clone()),
                         Change::AllAttributes(CellAttributes::default()),
-                        Change::Text(truncate_right(
-                            &concat_str4(
-                                "\r\n",
-                                &selector_state.option.delegate.description,
-                                ": ",
-                                &selector_state.filter_term,
-                            ),
-                            max_width,
-                        )),
+                        Change::Text("\r\n".to_string()),
+                        Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                        Change::Text(selector_state.option.delegate.description.clone()),
+                        Change::AllAttributes(CellAttributes::default()),
+                        Change::Text(concat_str(": ", &selector_state.filter_term)),
                     ]);
 
                     for (row_num, (entry_idx, entry)) in selector_state
