@@ -37,7 +37,7 @@ struct SelectorEntry<'a> {
 
 struct ArgumentSection<'a> {
     header: String,
-    arguments: Vec<&'a TransientArgument>,
+    arguments: &'a [TransientArgument],
     max_key_width: usize,
 }
 
@@ -84,7 +84,7 @@ impl<'a> SelectorState<'a> {
         let multiple_idx = args.multiple.then(|| vec![false; choices.len()]);
         let filtered_entries = choices.iter().collect();
 
-        let arguments: Vec<&TransientArgument> = args.section.arguments.iter().collect();
+        let arguments = &args.section.arguments;
 
         let max_key_width = arguments
             .iter()
@@ -301,7 +301,7 @@ impl<'a> SelectorState<'a> {
         changes.push(Change::Text(self.section.header.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
 
-        for positional_arg in &self.section.arguments {
+        for positional_arg in self.section.arguments {
             changes.push(Change::Text("\r\n  ".to_string()));
             changes.push(Change::Attribute(AttributeChange::Foreground(
                 self.colors.key_fg,
