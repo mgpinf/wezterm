@@ -45,7 +45,7 @@ struct SelectorState<'a> {
     active_idx: usize,
     max_items: usize,
     top_row: usize,
-    choices: &'a Vec<SelectorEntry<'a>>,
+    choices: &'a [SelectorEntry<'a>],
     multiple_idx: Option<Vec<bool>>,
     filtered_entries: Vec<&'a SelectorEntry<'a>>,
     filtering: bool,
@@ -71,7 +71,7 @@ impl<'a> SelectorState<'a> {
         window: GuiWin,
         pane: MuxPane,
         keymap: &'a KeyMap<'a, TransientArgument>,
-        choices: &'a Vec<SelectorEntry<'_>>,
+        choices: &'a [SelectorEntry<'_>],
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context_size = args.context.as_ref().map_or(0, |v| v.entries.len() + 2);
