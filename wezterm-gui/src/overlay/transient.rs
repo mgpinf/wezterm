@@ -508,7 +508,7 @@ impl<'a> TransientState<'a> {
                     }
 
                     self.buf.add_changes(vec![
-                        Change::Text(concat_str(": ", &prompt_state.line.get_line())),
+                        Change::Text(concat_str(": ", prompt_state.line.get_line())),
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
                             x: Position::Absolute(cursor_x),
