@@ -369,7 +369,7 @@ struct TransientState<'a> {
     colors: OverlayColors,
     keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
     typed: String,
-    sections: &'a Vec<TransientSection<'a>>,
+    sections: &'a [TransientSection<'a>],
     cancel: Option<Box<KeyAssignment>>,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
     context: Option<&'a KTransientContext>,
@@ -383,7 +383,7 @@ impl<'a> TransientState<'a> {
         args: &'a KTransientMenu,
         window: GuiWin,
         pane: MuxPane,
-        sections: &'a Vec<TransientSection<'_>>,
+        sections: &'a [TransientSection<'_>],
         keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
@@ -926,8 +926,8 @@ struct TransientResult {
 }
 impl_lua_conversion_dynamic!(TransientResult);
 
-impl From<&Vec<TransientSection<'_>>> for TransientResult {
-    fn from(value: &Vec<TransientSection<'_>>) -> Self {
+impl From<&[TransientSection<'_>]> for TransientResult {
+    fn from(value: &[TransientSection<'_>]) -> Self {
         let mut entries = HashMap::new();
 
         for section in value {
@@ -965,7 +965,7 @@ impl From<&Vec<TransientSection<'_>>> for TransientResult {
 }
 
 fn create_keymap<'a>(
-    sections: &'a Vec<TransientSection<'a>>,
+    sections: &'a [TransientSection<'a>],
     keymap: &mut KeyMap<'a, RenderableEntity<'a>>,
 ) {
     for section in sections {
