@@ -227,7 +227,7 @@ pub struct CursorTrailState {
 }
 
 #[derive(Copy, Clone)]
-pub struct PendingJump {
+struct PendingJump {
     from: StableCursorPosition,
     started_at: Instant,
 }
@@ -459,10 +459,14 @@ impl CursorTrailState {
         //
         //   • cursor returned to the anchor → the bounce was an artefact,
         //     cancel without ever drawing motion;
-        //   • cursor stabilised somewhere new → arm the smear belatedly,
-        //     1 frame of wall-clock latency;
-        //   • cursor still wandering → keep holding (handles multi-frame
-        //     bursts where tmux splits one btop redraw across several pushes);
+        //   • cursor stopped or shrank to a single-cell move (`dx + dy <= 1`)
+        //     → arm the smear belatedly. Single-cell continuations are
+        //     user-driven (typing, hjkl) and never part of a btop burst, so
+        //     we treat them as confirming intent. Total latency in this path
+        //     is one wezterm frame;
+        //   • cursor still wandering multi-cell → keep holding (handles
+        //     multi-frame bursts where tmux splits one btop redraw across
+        //     several pushes);
         //   • we've held longer than `cursor_animation_length` already →
         //     give up and arm. Holding longer than the smear's own duration
         //     makes no sense because the smear would already have completed.
@@ -491,10 +495,27 @@ impl CursorTrailState {
                     Phase::Hold
                 }
             } else if dx + dy > 1 {
+                // Transitioning into Hold for the first time: snap the corners
+                // to the pre-jump cell. Without this, two edge cases would
+                // make the cursor disappear or look distorted while held:
+                //   • corners still uninitialized (e.g. just after enabling
+                //     cursor_smear) → has_smear_animation() returns false, no
+                //     quad drawn, and is_smear_deferred() suppresses the cap
+                //     too — the cursor is invisible for the entire hold;
+                //   • corners mid-animation from a previous smear → freezing
+                //     them in flight leaves a distorted quad instead of a
+                //     stable cursor block at the anchor.
+                let from = self.prev_pos;
                 self.pending_jump = Some(PendingJump {
-                    from: self.prev_pos,
+                    from,
                     started_at: now,
                 });
+                let from_x = from.x as f32 * cell_width;
+                let from_y = from.y as f32 * cell_height;
+                for (i, corner) in self.smear_corners.iter_mut().enumerate() {
+                    let (ox, oy) = offsets[i];
+                    corner.snap_to(from_x + ox * cell_width, from_y + oy * cell_height);
+                }
                 Phase::Hold
             } else if dx + dy > 0 {
                 Phase::Snap
