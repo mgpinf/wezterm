@@ -1176,11 +1176,17 @@ impl crate::TermWindow {
             self.update_next_frame_time(Some(now));
         }
 
-        // Always draw the cursor rect at the target position with the actual
-        // cursor shape.  When animating this caps the smear's deformed front
-        // face, making the cursor head appear straight and undistorted.
-        // When at rest (no smear) this is the sole cursor draw.
-        {
+        // Draw the cursor rect at the target position with the actual cursor
+        // shape. When animating this caps the smear's deformed front face,
+        // making the cursor head appear straight and undistorted. When at rest
+        // (no smear) this is the sole cursor draw.
+        //
+        // Suppressed while a multi-cell jump is being deferred for snap-back
+        // detection: drawing it would betray the deferred destination, since
+        // the smear quad is still frozen at the pre-jump cell. The smear quad
+        // alone is enough — at rest it forms a regular cursor block at the
+        // pre-jump cell, which is exactly what we want the user to see.
+        if !trail_state.is_smear_deferred() {
             let screen_x = screen_off_x + target_x + off_x;
             let screen_y = screen_off_y + target_y + off_y;
             self.filled_rectangle(

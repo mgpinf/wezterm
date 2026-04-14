@@ -205,10 +205,31 @@ pub struct CursorTrailState {
     /// False until the first update(); skips spawning on the first frame
     /// to avoid a bogus trail from (0,0) to the real cursor position.
     prev_initialized: bool,
-    /// True when the cursor did not move in the previous frame.
-    /// Used to suppress smear on rapid programmatic cursor movement (e.g. btop
-    /// redraws), which never lets the cursor settle between frames.
-    cursor_was_stable: bool,
+    /// A multi-cell jump that we've deferred for one or more update cycles
+    /// to see whether the cursor immediately bounces back to its anchor.
+    ///
+    /// Apps like btop in tmux keep the cursor parked at a fixed cell and
+    /// only briefly move it elsewhere during a redraw before snapping it
+    /// back. If we armed the smear the moment we observed the jump, every
+    /// such redraw would draw a flying cursor across the screen.
+    ///
+    /// Instead, on a multi-cell jump we record the source position here and
+    /// freeze the smear corners. On each subsequent frame:
+    ///   - if the cursor returns to `from`, we cancel the deferral (no smear);
+    ///   - if the cursor stabilises elsewhere, or we've held longer than the
+    ///     configured smear duration, we arm the smear belatedly;
+    ///   - otherwise (cursor still moving multi-cell) we keep holding.
+    ///
+    /// The hold timeout is `cursor_animation_length` itself: holding longer
+    /// than the smear's own duration is pointless because the smear we'd
+    /// eventually play would already have completed.
+    pending_jump: Option<PendingJump>,
+}
+
+#[derive(Copy, Clone)]
+pub struct PendingJump {
+    from: StableCursorPosition,
+    started_at: Instant,
 }
 
 impl CursorTrailState {
@@ -223,8 +244,18 @@ impl CursorTrailState {
             count_remainder: 0.0,
             rng: Rng::new(),
             prev_initialized: false,
-            cursor_was_stable: false,
+            pending_jump: None,
         }
+    }
+
+    /// True while a multi-cell jump is being deferred to detect bouncing.
+    /// During this state the smear corners are frozen at the pre-jump cell
+    /// so the cursor visually appears to *not* have moved yet — the render
+    /// path uses this to suppress the "cap" rectangle that would otherwise
+    /// betray the deferred destination.
+    #[inline]
+    pub fn is_smear_deferred(&self) -> bool {
+        self.pending_jump.is_some()
     }
 
     /// Returns true if there is anything to render this frame (particles / highlights).
@@ -412,27 +443,76 @@ impl CursorTrailState {
         }
 
         // ── Smear corners (Neovide-style 4-corner deforming smear) ───────────
+        //
+        // The interesting question is how to tell a real cursor jump (vim `G`,
+        // user click) from a btop-in-tmux redraw bounce. Both look the same in
+        // a single frame: the cursor moved several cells. The difference is
+        // what happens *next*: a real jump stays put for a while, while btop's
+        // redraw bounces the cursor back to its anchor within one or two
+        // frames.
+        //
+        // So instead of arming the smear immediately, we *defer* the first
+        // multi-cell jump for one update cycle. The corners are frozen at the
+        // pre-jump cell. The render path uses `is_smear_deferred()` to also
+        // suppress the cap rectangle, so the cursor visually appears to *not*
+        // have moved yet. On the next call we know how to resolve:
+        //
+        //   • cursor returned to the anchor → the bounce was an artefact,
+        //     cancel without ever drawing motion;
+        //   • cursor stabilised somewhere new → arm the smear belatedly,
+        //     1 frame of wall-clock latency;
+        //   • cursor still wandering → keep holding (handles multi-frame
+        //     bursts where tmux splits one btop redraw across several pushes);
+        //   • we've held longer than `cursor_animation_length` already →
+        //     give up and arm. Holding longer than the smear's own duration
+        //     makes no sense because the smear would already have completed.
         if cursor_smear {
             let offsets = self.cached_corner_offsets;
 
-            // On a cursor jump: assign per-corner speeds based on direction alignment.
-            // Leading corners (most aligned with movement) use a shorter duration so
-            // they race ahead, matching Neovide's `leading = animation_length * (1-trail_size)`.
-            //
-            // Only activate for multi-cell jumps (dx+dy > 1) to avoid distracting
-            // smear when typing or using single-cell hjkl navigation.
-            //
-            // Also require that the cursor was stable (not moving) in the previous
-            // frame. Apps like btop continuously move the cursor across the screen to
-            // redraw their TUI; those rapid programmatic moves never let the cursor
-            // settle, so `cursor_was_stable` stays false and no smear is triggered.
-            if dx + dy > 1 && self.cursor_was_stable {
-                let prev_cx = self.prev_pos.x as f32 * cell_width + cell_width * 0.5;
-                let prev_cy = self.prev_pos.y as f32 * cell_height + cell_height * 0.5;
+            #[derive(Copy, Clone)]
+            enum Phase {
+                Hold,
+                Snap,
+                Arm(StableCursorPosition),
+                Tick,
+            }
+
+            let phase = if let Some(pending) = self.pending_jump {
+                let returned = pending.from.x == current.x && pending.from.y == current.y;
+                let timed_out =
+                    now.duration_since(pending.started_at).as_secs_f32() >= anim_length;
+                if returned {
+                    self.pending_jump = None;
+                    Phase::Snap
+                } else if timed_out || dx + dy <= 1 {
+                    self.pending_jump = None;
+                    Phase::Arm(pending.from)
+                } else {
+                    Phase::Hold
+                }
+            } else if dx + dy > 1 {
+                self.pending_jump = Some(PendingJump {
+                    from: self.prev_pos,
+                    started_at: now,
+                });
+                Phase::Hold
+            } else if dx + dy > 0 {
+                Phase::Snap
+            } else {
+                Phase::Tick
+            };
+
+            // Compute per-corner speeds when arming from a deferred jump.
+            // The corners are still sitting at `from` (we never ticked them
+            // during the hold), so the smear naturally animates from there to
+            // the current cell as the corners tick toward it below.
+            if let Phase::Arm(from) = phase {
+                let from_cx = from.x as f32 * cell_width + cell_width * 0.5;
+                let from_cy = from.y as f32 * cell_height + cell_height * 0.5;
                 let cur_cx = target_x + cell_width * 0.5;
                 let cur_cy = target_y + cell_height * 0.5;
-                let move_dx = cur_cx - prev_cx;
-                let move_dy = cur_cy - prev_cy;
+                let move_dx = cur_cx - from_cx;
+                let move_dy = cur_cy - from_cy;
                 let move_dist = move_dx.hypot(move_dy);
 
                 if move_dist > 0.0 {
@@ -470,18 +550,23 @@ impl CursorTrailState {
                 }
             }
 
-            // Snap corners for single-cell moves (typing, hjkl) so no smear appears.
-            // Only let corners animate when we actually kicked off a multi-cell jump above.
-            if dx + dy > 0 && dx + dy <= 1 {
-                for (i, corner) in self.smear_corners.iter_mut().enumerate() {
-                    let (ox, oy) = offsets[i];
-                    corner.snap_to(target_x + ox * cell_width, target_y + oy * cell_height);
+            match phase {
+                Phase::Hold => {
+                    // Corners frozen at the pre-jump position. The render path
+                    // sees `is_smear_deferred() == true` and suppresses the cap
+                    // rect, so visually the cursor appears unmoved.
                 }
-            } else {
-                // Tick every corner toward its target (the 4 corners of the target cell).
-                for (i, corner) in self.smear_corners.iter_mut().enumerate() {
-                    let (ox, oy) = offsets[i];
-                    corner.tick(target_x + ox * cell_width, target_y + oy * cell_height, dt);
+                Phase::Snap => {
+                    for (i, corner) in self.smear_corners.iter_mut().enumerate() {
+                        let (ox, oy) = offsets[i];
+                        corner.snap_to(target_x + ox * cell_width, target_y + oy * cell_height);
+                    }
+                }
+                Phase::Arm(_) | Phase::Tick => {
+                    for (i, corner) in self.smear_corners.iter_mut().enumerate() {
+                        let (ox, oy) = offsets[i];
+                        corner.tick(target_x + ox * cell_width, target_y + oy * cell_height, dt);
+                    }
                 }
             }
         } else {
@@ -490,9 +575,9 @@ impl CursorTrailState {
             for corner in self.smear_corners.iter_mut() {
                 corner.initialized = false;
             }
+            self.pending_jump = None;
         }
 
-        self.cursor_was_stable = dx + dy == 0;
         self.prev_pos = *current;
     }
 
