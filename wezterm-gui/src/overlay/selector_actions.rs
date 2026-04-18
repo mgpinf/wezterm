@@ -334,6 +334,9 @@ impl<'a> SelectorState<'a> {
         )));
         changes.push(Change::Text(truncate_right(&self.description, max_width)));
         changes.push(Change::AllAttributes(CellAttributes::default()));
+        if !self.filter_term.is_empty() {
+            changes.push(Change::Text(concat_str(": ", &self.filter_term)));
+        }
         changes.push(Change::Text("\r\n".to_string()));
 
         // Selector entries
