@@ -569,6 +569,16 @@ impl CopyRenderable {
 
                     (range.start, range.end)
                 }
+                SelectionMode::CommandBlock => {
+                    let cursor_block =
+                        SelectionRange::command_block_around(cursor, &*self.delegate);
+                    let start_block =
+                        SelectionRange::command_block_around(sel_start, &*self.delegate);
+
+                    let range = cursor_block.extend_with(start_block);
+
+                    (range.start, range.end)
+                }
                 _ => {
                     let start = SelectionCoordinate {
                         x: sel_start.x,
@@ -1102,6 +1112,62 @@ impl CopyRenderable {
         self.select_to_cursor_pos();
     }
 
+    /// Walk the cursor by `delta` "command blocks" (Prompt-anchored runs).
+    /// A positive delta moves to the start of the next Prompt; a negative
+    /// delta moves to the start of the previous Prompt. The cursor lands on
+    /// column 0 of the target Prompt row, which is also the natural anchor
+    /// for `SelectionMode::CommandBlock` extension.
+    fn move_by_command_block(&mut self, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        let zones = self
+            .delegate
+            .get_semantic_zones()
+            .unwrap_or_else(|_| vec![]);
+
+        let prompt_rows: Vec<StableRowIndex> = {
+            let mut rows: Vec<StableRowIndex> = zones
+                .iter()
+                .filter(|z| z.semantic_type == SemanticType::Prompt)
+                .map(|z| z.start_y)
+                .collect();
+            rows.dedup();
+            rows
+        };
+
+        if prompt_rows.is_empty() {
+            return;
+        }
+
+        let cursor_y = self.cursor.y;
+        let pos = match prompt_rows.binary_search(&cursor_y) {
+            Ok(idx) => idx as isize,
+            Err(idx) => {
+                if delta > 0 {
+                    // First prompt strictly after cursor is at idx;
+                    // pretend we're "before" it.
+                    (idx as isize) - 1
+                } else {
+                    // Last prompt at-or-before cursor is at idx-1;
+                    // pretend we're "after" it.
+                    idx as isize
+                }
+            }
+        };
+
+        let target = (pos + delta).max(0).min(prompt_rows.len() as isize - 1) as usize;
+        let target_y = prompt_rows[target];
+
+        if target_y == cursor_y {
+            return;
+        }
+
+        self.cursor.x = 0;
+        self.cursor.y = target_y;
+        self.select_to_cursor_pos();
+    }
+
     fn perform_jump(&mut self, jump: Jump, repeat: bool) {
         let y = self.cursor.y;
         let (_top, lines) = self.delegate.get_lines(y..y + 1);
@@ -1454,6 +1520,8 @@ impl Pane for CopyOverlay {
                     MoveForwardSemanticZone => render.move_by_zone(1, None),
                     MoveBackwardZoneOfType(zone_type) => render.move_by_zone(-1, Some(*zone_type)),
                     MoveForwardZoneOfType(zone_type) => render.move_by_zone(1, Some(*zone_type)),
+                    MoveBackwardCommandBlock => render.move_by_command_block(-1),
+                    MoveForwardCommandBlock => render.move_by_command_block(1),
                     JumpForward { prev_char } => render.jump(true, *prev_char),
                     JumpBackward { prev_char } => render.jump(false, *prev_char),
                     JumpAgain => render.jump_again(false),

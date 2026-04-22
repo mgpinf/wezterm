@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use std::ops::Range;
 use termwiz::surface::line::DoubleClickRange;
 use termwiz::surface::SequenceNo;
-use wezterm_term::{SemanticZone, StableRowIndex};
+use wezterm_term::{SemanticType, SemanticZone, StableRowIndex};
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub struct Selection {
@@ -233,6 +233,69 @@ impl SelectionRange {
             }
         } else {
             Self { start, end: start }
+        }
+    }
+
+    /// Computes the selection range for the "command block" around the
+    /// specified coords: the contiguous run of semantic zones starting
+    /// from a Prompt and continuing through Input/Output until the next
+    /// Prompt (exclusive) or the end of the scrollback.
+    ///
+    /// If the click is on a row that has no enclosing or preceding Prompt
+    /// (e.g. output produced before any OSC 133 sequence) we fall back to
+    /// the single zone under the cursor, mirroring `zone_around`'s
+    /// fallback behaviour.
+    pub fn command_block_around(start: SelectionCoordinate, pane: &dyn mux::pane::Pane) -> Self {
+        let zones = match pane.get_semantic_zones() {
+            Ok(z) if !z.is_empty() => z,
+            _ => return Self { start, end: start },
+        };
+
+        // Locate the index of the zone that "contains" the click. If
+        // the cursor is in dead space between zones we settle on the
+        // most recent zone whose start is at or before the cursor.
+        let click_idx = match zones.binary_search_by(|zone| match zone.start_y.cmp(&start.y) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Equal => SelectionX::Cell(zone.start_x).cmp(&start.x),
+        }) {
+            Ok(idx) => idx,
+            Err(0) => 0,
+            Err(idx) => idx - 1,
+        };
+
+        // Walk back to the Prompt that begins the block.
+        let mut block_start = click_idx;
+        loop {
+            if zones[block_start].semantic_type == SemanticType::Prompt {
+                break;
+            }
+            if block_start == 0 {
+                // No Prompt precedes the click: degrade to a single-zone
+                // selection so we don't grab arbitrary output above.
+                let zone = &zones[click_idx];
+                return Self {
+                    start: SelectionCoordinate::x_y(zone.start_x, zone.start_y),
+                    end: SelectionCoordinate::x_y(zone.end_x, zone.end_y),
+                };
+            }
+            block_start -= 1;
+        }
+
+        // Walk forward through Input/Output until the next Prompt.
+        let mut block_end = block_start;
+        for idx in (block_start + 1)..zones.len() {
+            if zones[idx].semantic_type == SemanticType::Prompt {
+                break;
+            }
+            block_end = idx;
+        }
+
+        let start_zone = &zones[block_start];
+        let end_zone = &zones[block_end];
+        Self {
+            start: SelectionCoordinate::x_y(0, start_zone.start_y),
+            end: SelectionCoordinate::x_y(usize::max_value(), end_zone.end_y),
         }
     }
 
