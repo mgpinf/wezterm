@@ -73,6 +73,63 @@ The default key assignments in copy mode are as follows:
 | Move to other end of the selection| <kbd>o</kbd> |
 | Move to other end of the selection horizontally| <kbd>Shift</kbd> + <kbd>O</kbd> (useful in Rectangular mode) |
 
+### Selecting an entire shell command block
+
+{{since('nightly')}}
+
+If your shell is configured to emit [OSC 133 semantic prompt
+sequences](shell-integration.md), wezterm understands the structure of each
+shell command as a *command block*: the contiguous run of `Prompt`, `Input`
+and `Output` zones produced by a single command.
+
+The
+[`{ SetSelectionMode = "CommandBlock" }`](config/lua/keyassignment/CopyMode/SetSelectionMode.md)
+selection mode snaps the selection to whole command blocks. Both endpoints of
+the selection independently expand to cover their enclosing block, so as you
+move the cursor across prompts the selection grows or shrinks one whole
+command at a time. This is convenient for quickly copying a command together
+with its complete output, even when the output spans many lines.
+
+Two companion movement actions navigate prompt-by-prompt:
+
+* [MoveBackwardCommandBlock](config/lua/keyassignment/CopyMode/MoveBackwardCommandBlock.md) -
+  jump the cursor to the start of the previous command's prompt
+* [MoveForwardCommandBlock](config/lua/keyassignment/CopyMode/MoveForwardCommandBlock.md) -
+  jump the cursor to the start of the next command's prompt
+
+A typical configuration that activates the mode and binds prompt-jumping to
+`PageUp`/`PageDown` while in copy mode looks like:
+
+```lua
+local wezterm = require 'wezterm'
+local act = wezterm.action
+
+return {
+  key_tables = {
+    copy_mode = {
+      {
+        key = 'B',
+        mods = 'SHIFT',
+        action = act.CopyMode { SetSelectionMode = 'CommandBlock' },
+      },
+      {
+        key = 'PageUp',
+        mods = 'NONE',
+        action = act.CopyMode 'MoveBackwardCommandBlock',
+      },
+      {
+        key = 'PageDown',
+        mods = 'NONE',
+        action = act.CopyMode 'MoveForwardCommandBlock',
+      },
+    },
+  },
+}
+```
+
+`CommandBlock` is a copy-mode-only selection mode; mouse-driven selection
+bindings that pass `CommandBlock` are treated as a no-op.
+
 ### Configurable Key Assignments
 
 {{since('20220624-141144-bd1b7c5d')}}
