@@ -223,6 +223,11 @@ impl super::TermWindow {
                 self.selection(pane.pane_id()).range = Some(selection_range);
                 self.selection(pane.pane_id()).rectangular = false;
             }
+            // CommandBlock is intentionally not selectable via mouse drag;
+            // it is only meaningful inside copy mode where the cursor is
+            // an explicit anchor. Treat it as a no-op here so that user
+            // bindings that pass it through don't crash.
+            SelectionMode::CommandBlock => {}
         }
 
         let dims = pane.get_dimensions();
@@ -270,6 +275,8 @@ impl super::TermWindow {
                 self.selection(pane.pane_id()).range = Some(selection_range);
                 self.selection(pane.pane_id()).rectangular = false;
             }
+            // See note above: CommandBlock is copy-mode only.
+            SelectionMode::CommandBlock => {}
             SelectionMode::Cell | SelectionMode::Block => {
                 self.selection(pane.pane_id())
                     .begin(SelectionCoordinate::x_y(x, y));
