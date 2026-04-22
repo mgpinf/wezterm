@@ -110,6 +110,10 @@ pub enum SelectionMode {
     Line,
     SemanticZone,
     Block,
+    /// A "command block": the contiguous run of Prompt + Input + Output
+    /// semantic zones produced by a single shell command (as reported via
+    /// OSC 133). Snaps to the bounds of the enclosing block.
+    CommandBlock,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
@@ -874,6 +878,8 @@ pub enum CopyModeAssignment {
     MoveForwardSemanticZone,
     MoveBackwardZoneOfType(SemanticType),
     MoveForwardZoneOfType(SemanticType),
+    MoveBackwardCommandBlock,
+    MoveForwardCommandBlock,
     JumpForward { prev_char: bool },
     JumpBackward { prev_char: bool },
     JumpAgain,
