@@ -8,9 +8,17 @@ tags:
 
 {{since('nightly')}}
 
-Moves the CopyMode cursor position to the start of the previous shell *command
-block*: the row that begins with the previous OSC 133 `Prompt` zone. If a
-selection is active, it is extended in command-block-sized increments.
+Moves the CopyMode cursor position to the start of a shell *command block*:
+the row that begins with an OSC 133 `Prompt` zone. If the cursor is anywhere
+past column 0 of the current block's prompt row (i.e. anywhere inside the
+block except its very first cell), this snaps the cursor to that anchor;
+otherwise it steps to the start of the previous block. If a selection is
+active, it is extended in command-block-sized increments.
+
+This mirrors the "snap to current, then step to previous" behavior of
+[`MoveBackwardSemanticZone`](MoveBackwardSemanticZone.md), so repeated presses
+walk back one block at a time regardless of where in the current block the
+cursor started.
 
 A "command block" is the contiguous run of `Prompt`, `Input` and `Output`
 semantic zones produced by a single shell command. See
