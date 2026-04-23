@@ -1094,10 +1094,14 @@ impl CopyRenderable {
     }
 
     /// Walk the cursor by `delta` "command blocks" (Prompt-anchored runs).
-    /// A positive delta moves to the start of the next Prompt; a negative
-    /// delta moves to the start of the previous Prompt. The cursor lands on
-    /// column 0 of the target Prompt row, which is also the natural anchor
-    /// for `SelectionMode::CommandBlock` extension.
+    /// The cursor lands on column 0 of the target Prompt row, which is also
+    /// the natural anchor for `SelectionMode::CommandBlock` extension.
+    ///
+    /// A positive delta moves to the start of the next Prompt. A negative
+    /// delta moves to the start of the *current* block's Prompt if the cursor
+    /// is past that anchor (anywhere except `(prompt_row, 0)`); otherwise it
+    /// moves to the start of the previous block. This mirrors the "snap then
+    /// step" behavior of `move_by_zone`/`MoveBackwardSemanticZone`.
     fn move_by_command_block(&mut self, delta: isize) {
         if delta == 0 {
             return;
@@ -1122,27 +1126,35 @@ impl CopyRenderable {
         }
 
         let cursor_y = self.cursor.y;
-        let pos = match prompt_rows.binary_search(&cursor_y) {
-            Ok(idx) => idx as isize,
-            Err(idx) => {
-                if delta > 0 {
-                    // First prompt strictly after cursor is at idx;
-                    // pretend we're "before" it.
-                    (idx as isize) - 1
-                } else {
-                    // Last prompt at-or-before cursor is at idx-1;
-                    // pretend we're "after" it.
-                    idx as isize
+        let cursor_x = self.cursor.x;
+
+        // Locate the cursor among the `(prompt_row, 0)` anchors using a 2D
+        // key so that "cursor on the prompt row but past column 0" is treated
+        // as strictly after the anchor. Without this, backward navigation
+        // from `(prompt_row, x > 0)` would silently skip the current block.
+        let pos: isize =
+            match prompt_rows.binary_search_by(|&row| (row, 0usize).cmp(&(cursor_y, cursor_x))) {
+                Ok(idx) => idx as isize,
+                Err(idx) => {
+                    if delta > 0 {
+                        // First anchor strictly after cursor is at idx; pretend
+                        // we're just before it.
+                        (idx as isize) - 1
+                    } else {
+                        // Last anchor strictly before cursor is at idx-1; pretend
+                        // we're just after it so that delta=-1 snaps onto idx-1
+                        // (the start of the current block).
+                        idx as isize
+                    }
                 }
-            }
-        };
+            };
 
-        let target = (pos + delta).max(0).min(prompt_rows.len() as isize - 1) as usize;
-        let target_y = prompt_rows[target];
-
-        if target_y == cursor_y {
+        let target_signed = pos + delta;
+        let max_idx = (prompt_rows.len() as isize) - 1;
+        if target_signed < 0 || target_signed > max_idx {
             return;
         }
+        let target_y = prompt_rows[target_signed as usize];
 
         self.cursor.x = 0;
         self.cursor.y = target_y;
