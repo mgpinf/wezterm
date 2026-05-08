@@ -3,6 +3,7 @@ use config::keyassignment::{SpawnCommand, SpawnTabDomain};
 use config::TermConfig;
 use mux::activity::Activity;
 use mux::domain::SplitSource;
+use mux::pane::PaneId;
 use mux::tab::SplitRequest;
 use mux::window::WindowId as MuxWindowId;
 use mux::Mux;
@@ -43,7 +44,7 @@ pub async fn spawn_command_internal(
     size: TerminalSize,
     src_window_id: Option<MuxWindowId>,
     term_config: Arc<TermConfig>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<PaneId>> {
     let mux = Mux::get();
     let activity = Activity::new();
 
@@ -93,7 +94,7 @@ pub async fn spawn_command_internal(
 
     let workspace = mux.active_workspace().clone();
 
-    match spawn_where {
+    let pane_id = match spawn_where {
         SpawnWhere::SplitPane(direction) => {
             let src_window_id = match src_window_id {
                 Some(id) => id,
@@ -121,6 +122,7 @@ pub async fn spawn_command_internal(
                     .await
                     .context("split_pane")?;
                 pane.set_config(term_config);
+                Some(pane.pane_id())
             } else {
                 bail!("there is no active tab while splitting pane!?");
             }
@@ -154,7 +156,7 @@ pub async fn spawn_command_internal(
                             "tab {} already has a floating pane, not spawning another",
                             tab.tab_id()
                         );
-                        return Ok(());
+                        return Ok(None);
                     }
                 }
 
@@ -182,7 +184,11 @@ pub async fn spawn_command_internal(
                     )
                     .await?;
                 pane.set_config(term_config);
+                let pane_id = pane.pane_id();
                 tab.assign_floating_pane(&pane);
+                Some(pane_id)
+            } else {
+                None
             }
         }
         _ => {
@@ -211,10 +217,11 @@ pub async fn spawn_command_internal(
             if Some(window_id) == src_window_id {
                 pane.set_config(term_config);
             }
+            Some(pane.pane_id())
         }
     };
 
     drop(activity);
 
-    Ok(())
+    Ok(pane_id)
 }
