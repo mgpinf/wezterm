@@ -2650,12 +2650,7 @@ impl TermWindow {
                 self.spawn_command(spawn, SpawnWhere::NewWindow);
             }
             SpawnCommandInFloatingPane(spawn) => {
-                self.spawn_command(
-                    &spawn.command,
-                    SpawnWhere::FloatingPane {
-                        replace_current: spawn.replace_current,
-                    },
-                );
+                self.spawn_floating_pane(spawn, pane.pane_id());
             }
             ToggleFloatingPane => {
                 let mux = Mux::get();
