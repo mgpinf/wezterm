@@ -818,6 +818,9 @@ pub struct FloatingPaneSpawn {
     /// If false (default), do nothing if a floating pane already exists.
     #[dynamic(default)]
     pub replace_current: bool,
+    /// Optional callback invoked after the spawned floating pane closes.
+    #[dynamic(default)]
+    pub action: Option<Box<KeyAssignment>>,
 }
 impl_lua_conversion_dynamic!(FloatingPaneSpawn);
 
