@@ -391,18 +391,6 @@ TOC = [
                 "config/lua/wezterm.crypto",
             ),
             Gen(
-                "module: wezterm.docker",
-                "config/lua/wezterm.docker",
-            ),
-            Gen(
-                "module: wezterm.git",
-                "config/lua/wezterm.git",
-            ),
-            Gen(
-                "module: wezterm.github",
-                "config/lua/wezterm.github",
-            ),
-            Gen(
                 "module: wezterm.gui",
                 "config/lua/wezterm.gui",
             ),

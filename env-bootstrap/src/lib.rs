@@ -196,7 +196,6 @@ fn register_lua_modules() {
         password_funcs::register,
         procinfo_funcs::register,
         filesystem::register,
-        git_funcs::register,
         http_funcs::register,
         serde_funcs::register,
         plugin::register,
