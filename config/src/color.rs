@@ -195,6 +195,21 @@ pub struct Palette {
     pub command_runner_match_bg: Option<ColorSpec>,
     pub command_runner_current_match_fg: Option<ColorSpec>,
     pub command_runner_current_match_bg: Option<ColorSpec>,
+
+    pub transient_entry_key_fg: Option<ColorSpec>,
+    pub transient_entry_active_flag_fg: Option<ColorSpec>,
+    pub transient_entry_inactive_flag_fg: Option<ColorSpec>,
+    pub transient_entry_active_value_fg: Option<ColorSpec>,
+    pub transient_description_fg: Option<ColorSpec>,
+    pub transient_context_header_fg: Option<ColorSpec>,
+    pub transient_context_label_fg: Option<ColorSpec>,
+    pub transient_section_header_fg: Option<ColorSpec>,
+    pub transient_separator_fg: Option<ColorSpec>,
+    pub transient_default_value_fg: Option<ColorSpec>,
+    pub transient_prompt_label_fg: Option<ColorSpec>,
+    pub transient_selector_label_fg: Option<ColorSpec>,
+
+    pub selector_multiple_marker_bg: Option<ColorSpec>,
 }
 impl_lua_conversion_dynamic!(Palette);
 
@@ -271,6 +286,19 @@ impl Palette {
             command_runner_match_bg: overlay!(command_runner_match_bg),
             command_runner_current_match_fg: overlay!(command_runner_current_match_fg),
             command_runner_current_match_bg: overlay!(command_runner_current_match_bg),
+            transient_entry_key_fg: overlay!(transient_entry_key_fg),
+            transient_entry_active_flag_fg: overlay!(transient_entry_active_flag_fg),
+            transient_entry_inactive_flag_fg: overlay!(transient_entry_inactive_flag_fg),
+            transient_entry_active_value_fg: overlay!(transient_entry_active_value_fg),
+            transient_description_fg: overlay!(transient_description_fg),
+            transient_context_header_fg: overlay!(transient_context_header_fg),
+            transient_context_label_fg: overlay!(transient_context_label_fg),
+            transient_section_header_fg: overlay!(transient_section_header_fg),
+            transient_separator_fg: overlay!(transient_separator_fg),
+            transient_default_value_fg: overlay!(transient_default_value_fg),
+            transient_prompt_label_fg: overlay!(transient_prompt_label_fg),
+            transient_selector_label_fg: overlay!(transient_selector_label_fg),
+            selector_multiple_marker_bg: overlay!(selector_multiple_marker_bg),
         }
     }
 }
