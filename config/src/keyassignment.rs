@@ -767,6 +767,269 @@ pub struct CommandRunner {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TransientSwitch {
+    pub key: String,
+    #[dynamic(default)]
+    pub label: Option<String>,
+    #[dynamic(default)]
+    pub default: bool,
+    pub description: String,
+    pub flag: String,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TransientCyclicSwitch {
+    pub key: String,
+    #[dynamic(default)]
+    pub label: Option<String>,
+    #[dynamic(default)]
+    pub default: Option<String>,
+    pub description: String,
+    pub flag: String,
+    pub choices: Vec<String>,
+    #[dynamic(default = "crate::default_true")]
+    pub allow_nil: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TransientOption {
+    pub key: String,
+    #[dynamic(default)]
+    pub label: Option<String>,
+    #[dynamic(default)]
+    pub default: Option<String>,
+    pub description: String,
+    pub flag: String,
+    #[dynamic(default = "crate::default_true")]
+    pub allow_nil: bool,
+    #[dynamic(default)]
+    pub choices: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TransientArgument {
+    pub key: String,
+    #[dynamic(default)]
+    pub label: Option<String>,
+    pub description: String,
+    pub action: Box<KeyAssignment>,
+    #[dynamic(default)]
+    pub keep_overlay: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, ToDynamic)]
+pub enum TransientEntry {
+    TransientSwitch(TransientSwitch),
+    TransientOption(TransientOption),
+    TransientCyclicSwitch(TransientCyclicSwitch),
+    TransientArgument(TransientArgument),
+}
+
+impl FromDynamic for TransientEntry {
+    fn from_dynamic(
+        value: &Value,
+        options: FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        match value {
+            Value::Object(obj) => {
+                let type_value = obj.get_by_str("type").ok_or_else(|| {
+                    wezterm_dynamic::Error::Message(
+                        "TransientEntry requires a 'type' field".to_string(),
+                    )
+                })?;
+
+                let type_name = match type_value {
+                    Value::String(s) => s.as_str(),
+                    _ => {
+                        return Err(wezterm_dynamic::Error::Message(
+                            "'type' field must be a string".to_string(),
+                        ))
+                    }
+                };
+
+                // Use flatten() to ignore the 'type' field when parsing inner structs
+                let inner_options = options.flatten();
+
+                match type_name {
+                    "switch" => Ok(Self::TransientSwitch(TransientSwitch::from_dynamic(
+                        value,
+                        inner_options,
+                    )?)),
+                    "option" => Ok(Self::TransientOption(TransientOption::from_dynamic(
+                        value,
+                        inner_options,
+                    )?)),
+                    "cyclic" => Ok(Self::TransientCyclicSwitch(
+                        TransientCyclicSwitch::from_dynamic(value, inner_options)?,
+                    )),
+                    "argument" => Ok(Self::TransientArgument(TransientArgument::from_dynamic(
+                        value,
+                        inner_options,
+                    )?)),
+                    _ => Err(wezterm_dynamic::Error::InvalidVariantForType {
+                        variant_name: type_name.to_string(),
+                        type_name: "TransientEntry",
+                        possible: &["switch", "option", "cyclic", "argument"],
+                    }),
+                }
+            }
+            _ => Err(wezterm_dynamic::Error::Message(
+                "TransientEntry must be an object".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TransientSection {
+    pub header: String,
+    pub entries: Vec<TransientEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TransientContextEntry {
+    pub label: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct TransientContext {
+    pub header: String,
+    pub entries: Vec<TransientContextEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, ToDynamic)]
+pub struct TransientMenu {
+    pub description: String,
+    #[dynamic(default)]
+    pub title: String,
+    #[dynamic(default)]
+    pub context: Option<TransientContext>,
+    pub sections: Vec<TransientSection>,
+    #[dynamic(default)]
+    pub cancel: Option<Box<KeyAssignment>>,
+}
+
+impl FromDynamic for TransientMenu {
+    fn from_dynamic(
+        value: &Value,
+        options: FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        let obj = match value {
+            Value::Object(obj) => obj,
+            _ => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu must be an object".to_string(),
+                ))
+            }
+        };
+
+        let get_required = |field: &str| {
+            obj.get_by_str(field).ok_or_else(|| {
+                wezterm_dynamic::Error::Message(format!(
+                    "TransientMenu requires a '{}' field",
+                    field
+                ))
+            })
+        };
+
+        let description = String::from_dynamic(get_required("description")?, options)?;
+
+        let title = obj
+            .get_by_str("title")
+            .map(|v| String::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or_default();
+
+        let context = obj
+            .get_by_str("context")
+            .map(|v| TransientContext::from_dynamic(v, options))
+            .transpose()?;
+
+        let cancel = obj
+            .get_by_str("cancel")
+            .map(|v| Box::<KeyAssignment>::from_dynamic(v, options))
+            .transpose()?;
+
+        let entries_val = obj.get_by_str("entries");
+        let sections_val = obj.get_by_str("sections");
+        let header_val = obj.get_by_str("header");
+
+        let sections = match (entries_val, sections_val, header_val) {
+            (Some(_), Some(_), _) => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu cannot have both 'sections' and 'entries'".to_string(),
+                ));
+            }
+            (None, Some(_), Some(_)) => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu cannot have 'header' with 'sections'".to_string(),
+                ));
+            }
+            (Some(entries_val), None, header_val) => {
+                let entries = Vec::<TransientEntry>::from_dynamic(entries_val, options)?;
+                let header = header_val
+                    .map(|v| String::from_dynamic(v, options))
+                    .transpose()?
+                    .unwrap_or_default();
+                vec![TransientSection { header, entries }]
+            }
+            (None, Some(sections_val), None) => {
+                Vec::<TransientSection>::from_dynamic(sections_val, options)?
+            }
+            (None, None, _) => {
+                return Err(wezterm_dynamic::Error::Message(
+                    "TransientMenu requires 'sections' or 'entries'".to_string(),
+                ));
+            }
+        };
+
+        Ok(Self {
+            description,
+            title,
+            context,
+            sections,
+            cancel,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct ArgumentSection {
+    #[dynamic(default)]
+    pub header: Option<String>,
+    pub arguments: Vec<TransientArgument>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct SelectorActionsEntry {
+    pub label: String,
+    #[dynamic(default)]
+    pub id: Option<String>,
+    #[dynamic(default)]
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct SelectorActions {
+    pub description: String,
+    #[dynamic(default)]
+    pub title: String,
+    #[dynamic(default)]
+    pub context: Option<TransientContext>,
+    pub choices: Vec<SelectorActionsEntry>,
+    pub section: ArgumentSection,
+    #[dynamic(default)]
+    pub multiple: bool,
+    #[dynamic(default)]
+    pub fuzzy_description: Option<String>,
+    #[dynamic(default)]
+    pub fuzzy: bool,
+    #[dynamic(default)]
+    pub cancel: Option<Box<KeyAssignment>>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub enum KeyAssignment {
     SpawnTab(SpawnTabDomain),
     SpawnWindow,
@@ -884,6 +1147,8 @@ pub enum KeyAssignment {
     InputSelector(InputSelector),
     Confirmation(Confirmation),
     CommandRunner(CommandRunner),
+    TransientMenu(TransientMenu),
+    SelectorActions(SelectorActions),
 }
 impl_lua_conversion_dynamic!(KeyAssignment);
 
