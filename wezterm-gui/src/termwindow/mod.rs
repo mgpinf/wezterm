@@ -31,7 +31,8 @@ use ::window::*;
 use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
     Confirmation, InnerPattern, KeyAssignment, LauncherActionArgs, PaneDirection, Pattern,
-    PromptInputLine, QuickSelectArguments, RotationDirection, SpawnCommand, SplitSize,
+    PromptInputLine, QuickSelectArguments, RotationDirection, SelectorActions, SpawnCommand,
+    SplitSize, TransientMenu,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2365,6 +2366,56 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
+    fn show_transient_menu(&mut self, args: &TransientMenu) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let pane = match self.get_active_pane_or_overlay() {
+            Some(pane) => pane,
+            None => return,
+        };
+
+        let args = args.clone();
+
+        let gui_win = GuiWin::new(self);
+        let pane = MuxPane(pane.pane_id());
+
+        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::transient::show_transient_menu_overlay(term, args, gui_win, pane)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
+    fn show_selector_actions(&mut self, args: &SelectorActions) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let pane = match self.get_active_pane_or_overlay() {
+            Some(pane) => pane,
+            None => return,
+        };
+
+        let args = args.clone();
+
+        let gui_win = GuiWin::new(self);
+        let pane = MuxPane(pane.pane_id());
+
+        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::selector_actions::show_selector_actions_overlay(
+                term, args, gui_win, pane,
+            )
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
     fn show_debug_overlay(&mut self) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
@@ -3207,6 +3258,8 @@ impl TermWindow {
             InputSelector(args) => self.show_input_selector(args),
             Confirmation(args) => self.show_confirmation(args),
             CommandRunner(args) => self.show_command_runner(args),
+            TransientMenu(args) => self.show_transient_menu(args),
+            SelectorActions(args) => self.show_selector_actions(args),
         };
         Ok(PerformAssignmentResult::Handled)
     }
