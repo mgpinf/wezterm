@@ -83,7 +83,7 @@ zvariant.workspace = true
 
 smithay-client-toolkit = {workspace=true, default-features=false, optional=true}
 wayland-backend = {workspace=true, features=["client_system", "rwh_06"], optional=true}
-wayland-protocols = {workspace=true, optional=true}
+wayland-protocols = {workspace=true, optional=true, features=["client", "staging"]}
 wayland-protocols-plasma = {workspace=true, optional=true}
 wayland-client = {workspace=true, optional=true}
 wayland-egl = {workspace=true, optional=true}
