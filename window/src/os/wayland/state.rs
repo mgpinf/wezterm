@@ -32,6 +32,8 @@ use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::{delegate_dispatch, Connection, QueueHandle};
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3;
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::ZwpTextInputV3;
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
+use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur_manager::OrgKdeKwinBlurManager;
 
 use crate::x11::KeyboardWithFallback;
@@ -49,6 +51,8 @@ pub(super) struct WaylandState {
     pub(super) compositor: CompositorState,
     pub(super) subcompositor: Arc<SubcompositorState>,
     pub(super) text_input: Option<TextInputState>,
+    pub(super) fractional_scale_manager: Option<WpFractionalScaleManagerV1>,
+    pub(super) viewporter: Option<WpViewporter>,
     pub(super) output_manager: Option<OutputManagerState>,
     pub(super) seat: SeatState,
     pub(super) xdg: XdgShell,
@@ -101,12 +105,24 @@ impl WaylandState {
             SubcompositorState::bind(compositor.wl_compositor().clone(), globals, qh)?;
 
         let blur_manager: Option<OrgKdeKwinBlurManager> = globals.bind(qh, 1..=1, GlobalData).ok();
+        let fractional_scale_manager = globals.bind(qh, 1..=1, GlobalData).ok();
+        let viewporter = globals.bind(qh, 1..=1, GlobalData).ok();
+
+        if fractional_scale_manager.is_some() != viewporter.is_some() {
+            log::debug!(
+                "Wayland fractional scaling is unavailable because the compositor must expose \
+                 both wp_fractional_scale_manager_v1 and wp_viewporter"
+            );
+        }
+
         let wayland_state = WaylandState {
             registry: RegistryState::new(globals),
             output: OutputState::new(globals, qh),
             compositor,
             subcompositor: Arc::new(subcompositor),
             text_input: TextInputState::bind(globals, qh).ok(),
+            fractional_scale_manager,
+            viewporter,
             output_manager: if config::configuration().enable_zwlr_output_manager {
                 Some(OutputManagerState::bind(globals, qh)?)
             } else {
