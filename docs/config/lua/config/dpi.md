@@ -27,9 +27,11 @@ can be queried; instead standard density has a fixed value and the system will
 inform WezTerm when the display is high density by communicating a scaling
 factor for the display.
 
-The Wayland protocol only allows for integer scaling factors, but some
-compositors support fractional scaling.  That fractional scaling can result in
-blurry text and you may wish to specify a DPI value to compensate.
+When the Wayland compositor supports `wp-fractional-scale-v1` and
+`wp_viewporter`, WezTerm renders at the compositor's preferred fractional scale
+so that text remains sharp.  Compositors without those protocols use Wayland's
+integer buffer scaling; a fractional desktop scale may then result in blurry
+text, and you may wish to specify a DPI value to compensate.
 
 On macOS the scaling factor changes based on the monitor on which the window is
 displayed; dragging the window from a retina laptop display to an external
