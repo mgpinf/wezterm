@@ -48,6 +48,15 @@ pub fn alloc_font_id() -> LoadedFontId {
     FONT_ID.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed)
 }
 
+/// FreeType accepts integer DPI, but point sizes use 26.6 fixed-point values.
+/// Preserve an exact effective DPI by compensating the point size before the
+/// integer DPI reaches FreeType and HarfBuzz.
+fn freetype_size_and_dpi(point_size: f64, effective_dpi: f64) -> (f64, u32) {
+    let dpi = effective_dpi.round().clamp(1., u32::MAX as f64) as u32;
+    let point_size = point_size * effective_dpi / f64::from(dpi);
+    (point_size, dpi)
+}
+
 lazy_static::lazy_static! {
     static ref LAST_WARNING: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
 }
@@ -463,7 +472,7 @@ enum Entity {
 struct FontConfigInner {
     fonts: RefCell<HashMap<TextStyle, Rc<LoadedFont>>>,
     metrics: RefCell<Option<FontMetrics>>,
-    dpi: RefCell<usize>,
+    dpi: RefCell<f64>,
     font_scale: RefCell<f64>,
     config: RefCell<ConfigHandle>,
     locator: Arc<dyn FontLocator + Send + Sync>,
@@ -483,7 +492,8 @@ pub struct FontConfiguration {
 
 impl FontConfigInner {
     /// Create a new empty configuration
-    pub fn new(config: Option<ConfigHandle>, dpi: usize) -> anyhow::Result<Self> {
+    pub fn new(config: Option<ConfigHandle>, dpi: f64) -> anyhow::Result<Self> {
+        anyhow::ensure!(dpi.is_finite() && dpi > 0., "invalid font DPI {dpi}");
         let config = config.unwrap_or_else(configuration);
         let locator = new_locator(config.font_locator);
         Ok(Self {
@@ -620,7 +630,8 @@ impl FontConfigInner {
         let text_style =
             text_style.unwrap_or(config.window_frame.font.as_ref().unwrap_or(&sys_font));
 
-        let dpi = *self.dpi.borrow() as u32;
+        let effective_dpi = *self.dpi.borrow();
+        let (font_size, dpi) = freetype_size_and_dpi(font_size, effective_dpi);
         let pixel_size = (font_size * dpi as f64 / 72.0) as u16;
 
         let attributes = text_style.font_with_fallback();
@@ -875,8 +886,9 @@ impl FontConfigInner {
             return Ok(Rc::clone(entry));
         }
 
-        let mut font_size = config.font_size * *self.font_scale.borrow();
-        let dpi = *self.dpi.borrow() as u32;
+        let font_size = config.font_size * *self.font_scale.borrow();
+        let effective_dpi = *self.dpi.borrow();
+        let (mut font_size, dpi) = freetype_size_and_dpi(font_size, effective_dpi);
         let pixel_size = (font_size * dpi as f64 / 72.0) as u16;
 
         let (mut shaper, mut handles) = self.resolve_font_helper(style, &config, pixel_size)?;
@@ -946,7 +958,7 @@ impl FontConfigInner {
         Ok(loaded)
     }
 
-    pub fn change_scaling(&self, font_scale: f64, dpi: usize) -> (f64, usize) {
+    pub fn change_scaling(&self, font_scale: f64, dpi: f64) -> (f64, f64) {
         let prior_font = *self.font_scale.borrow();
         let prior_dpi = *self.dpi.borrow();
 
@@ -968,7 +980,7 @@ impl FontConfigInner {
         *self.font_scale.borrow()
     }
 
-    pub fn get_dpi(&self) -> usize {
+    pub fn get_dpi(&self) -> f64 {
         *self.dpi.borrow()
     }
 
@@ -1050,7 +1062,7 @@ impl FontConfigInner {
 
 impl FontConfiguration {
     /// Create a new empty configuration
-    pub fn new(config: Option<ConfigHandle>, dpi: usize) -> anyhow::Result<Self> {
+    pub fn new(config: Option<ConfigHandle>, dpi: f64) -> anyhow::Result<Self> {
         let inner = Rc::new(FontConfigInner::new(config, dpi)?);
         Ok(Self { inner })
     }
@@ -1085,7 +1097,7 @@ impl FontConfiguration {
         self.inner.resolve_font(&self.inner, style)
     }
 
-    pub fn change_scaling(&self, font_scale: f64, dpi: usize) -> (f64, usize) {
+    pub fn change_scaling(&self, font_scale: f64, dpi: f64) -> (f64, f64) {
         self.inner.change_scaling(font_scale, dpi)
     }
 
@@ -1098,7 +1110,7 @@ impl FontConfiguration {
         self.inner.get_font_scale()
     }
 
-    pub fn get_dpi(&self) -> usize {
+    pub fn get_dpi(&self) -> f64 {
         self.inner.get_dpi()
     }
 
@@ -1128,5 +1140,27 @@ impl FontConfiguration {
         attrs: &CellAttributes,
     ) -> &'a TextStyle {
         self.inner.match_style(config, attrs)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::freetype_size_and_dpi;
+
+    #[test]
+    fn fractional_dpi_preserves_physical_font_size() {
+        let point_size = 13.;
+        let effective_dpi = 163.2;
+        let (adjusted_size, freetype_dpi) = freetype_size_and_dpi(point_size, effective_dpi);
+
+        assert_eq!(freetype_dpi, 163);
+        let expected_pixels = point_size * effective_dpi / 72.;
+        let actual_pixels = adjusted_size * f64::from(freetype_dpi) / 72.;
+        assert!((actual_pixels - expected_pixels).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn integer_dpi_does_not_adjust_point_size() {
+        assert_eq!(freetype_size_and_dpi(13., 164.), (13., 164));
     }
 }

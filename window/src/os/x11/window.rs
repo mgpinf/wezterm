@@ -255,7 +255,7 @@ impl XWindowInner {
                 dimensions: Dimensions {
                     pixel_width: self.width as usize,
                     pixel_height: self.height as usize,
-                    dpi: self.dpi as usize,
+                    dpi: self.dpi,
                 },
                 window_state: self.last_wm_state,
                 live_resizing: false,
@@ -383,7 +383,7 @@ impl XWindowInner {
                             dimensions: Dimensions {
                                 pixel_width: self.width as usize,
                                 pixel_height: self.height as usize,
-                                dpi: self.dpi as usize,
+                                dpi: self.dpi,
                             },
                             window_state,
                             live_resizing: false,
@@ -551,7 +551,7 @@ impl XWindowInner {
         let dimensions = Dimensions {
             pixel_width: self.width as usize,
             pixel_height: self.height as usize,
-            dpi: self.dpi as usize,
+            dpi: self.dpi,
         };
 
         self.queue_pending(WindowEvent::Resized {
