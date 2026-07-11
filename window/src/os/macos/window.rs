@@ -639,8 +639,7 @@ impl Window {
             let height = backing_frame.size.height;
 
             let dpi = dpi_for_window_screen(*window, &config)
-                .unwrap_or(crate::DEFAULT_DPI * (backing_frame.size.width / frame.size.width))
-                as usize;
+                .unwrap_or(crate::DEFAULT_DPI * (backing_frame.size.width / frame.size.width));
 
             let weak_window = window.weak();
             let window_handle = Window {
@@ -3047,8 +3046,7 @@ impl WindowView {
                     let window = window.load();
                     dpi_for_window_screen(*window, &inner.config)
                 })
-                .unwrap_or(crate::DEFAULT_DPI * (backing_frame.size.width / frame.size.width))
-                as usize;
+                .unwrap_or(crate::DEFAULT_DPI * (backing_frame.size.width / frame.size.width));
 
             inner.events.dispatch(WindowEvent::Resized {
                 dimensions: Dimensions {

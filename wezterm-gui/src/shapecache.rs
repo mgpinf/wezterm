@@ -206,11 +206,8 @@ mod test {
         config::use_this_configuration(config.clone());
 
         let fonts = Rc::new(
-            FontConfiguration::new(
-                None,
-                config.dpi.unwrap_or_else(|| ::window::default_dpi()) as usize,
-            )
-            .unwrap(),
+            FontConfiguration::new(None, config.dpi.unwrap_or_else(|| ::window::default_dpi()))
+                .unwrap(),
         );
         let render_metrics = RenderMetrics::new(&fonts).unwrap();
         let mut glyph_cache = GlyphCache::new_in_memory(&fonts, 128).unwrap();
@@ -273,8 +270,7 @@ mod test {
                         None,
                         config::configuration()
                             .dpi
-                            .unwrap_or_else(|| ::window::default_dpi())
-                            as usize,
+                            .unwrap_or_else(|| ::window::default_dpi()),
                     )
                     .unwrap(),
                 );
@@ -315,11 +311,8 @@ mod test {
         let config = config::configuration();
 
         let fonts = Rc::new(
-            FontConfiguration::new(
-                None,
-                config.dpi.unwrap_or_else(|| ::window::default_dpi()) as usize,
-            )
-            .unwrap(),
+            FontConfiguration::new(None, config.dpi.unwrap_or_else(|| ::window::default_dpi()))
+                .unwrap(),
         );
         let render_metrics = RenderMetrics::new(&fonts).unwrap();
         let mut glyph_cache = GlyphCache::new_in_memory(&fonts, 128).unwrap();

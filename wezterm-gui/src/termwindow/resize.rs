@@ -91,7 +91,7 @@ impl super::TermWindow {
     pub fn apply_scale_change(&mut self, dimensions: &Dimensions, font_scale: f64) {
         let config = &self.config;
         let font_size = config.font_size * font_scale;
-        let theoretical_height = font_size * dimensions.dpi as f64 / 72.0;
+        let theoretical_height = font_size * dimensions.dpi / 72.0;
 
         if theoretical_height < 2.0 {
             log::warn!(
@@ -351,13 +351,13 @@ impl super::TermWindow {
 
     #[allow(clippy::float_cmp)]
     pub fn scaling_changed(&mut self, dimensions: Dimensions, font_scale: f64, window: &Window) {
-        fn dpi_adjusted(n: usize, dpi: usize) -> f32 {
-            n as f32 / dpi as f32
+        fn dpi_adjusted(n: usize, dpi: f64) -> f64 {
+            n as f64 / dpi
         }
 
         /// On Windows, scaling changes may adjust the pixel geometry by a few pixels,
         /// so this function checks if we're in a close-enough ballpark.
-        fn close_enough(a: f32, b: f32) -> bool {
+        fn close_enough(a: f64, b: f64) -> bool {
             let diff = (a - b).abs();
             diff < 10.
         }
@@ -374,11 +374,11 @@ impl super::TermWindow {
                 dpi_adjusted(dimensions.pixel_width, dimensions.dpi),
                 dpi_adjusted(self.dimensions.pixel_width, self.dimensions.dpi),
             )) || (close_enough(
-                dimensions.pixel_width as f32,
-                self.dimensions.pixel_width as f32,
+                dimensions.pixel_width as f64,
+                self.dimensions.pixel_width as f64,
             ) && close_enough(
-                dimensions.pixel_height as f32,
-                self.dimensions.pixel_height as f32,
+                dimensions.pixel_height as f64,
+                self.dimensions.pixel_height as f64,
             )));
 
         if simple_dpi_change && cfg!(target_os = "macos") {

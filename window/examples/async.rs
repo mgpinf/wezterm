@@ -95,10 +95,7 @@ impl MyWindow {
 }
 
 async fn spawn_window() -> Result<(), Box<dyn std::error::Error>> {
-    let fontconfig = Rc::new(FontConfiguration::new(
-        None,
-        ::window::default_dpi() as usize,
-    )?);
+    let fontconfig = Rc::new(FontConfiguration::new(None, ::window::default_dpi())?);
 
     let state = Rc::new(RefCell::new(MyWindow {
         allow_close: false,
@@ -106,7 +103,7 @@ async fn spawn_window() -> Result<(), Box<dyn std::error::Error>> {
         dims: Dimensions {
             pixel_width: 800,
             pixel_height: 600,
-            dpi: 0,
+            dpi: 0.,
         },
         gl: None,
     }));
