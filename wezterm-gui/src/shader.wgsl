@@ -38,6 +38,7 @@ const IS_GRAY_SCALE: f32 = 4.0;
 struct ShaderUniform {
   foreground_text_hsb: vec3<f32>,
   milliseconds: u32,
+  glyph_coverage_gamma: f32,
   projection: mat4x4<f32>,
 };
 @group(0) @binding(0) var<uniform> uniforms: ShaderUniform;
@@ -114,7 +115,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the texture is the alpha channel/color mask
     // and we need to tint with the fg_color
     color = in.fg_color;
-    color.a = nearest_tex.a;
+    color.a = pow(clamp(nearest_tex.a, 0.0, 1.0), uniforms.glyph_coverage_gamma);
     hsv *= uniforms.foreground_text_hsb;
   }
 
