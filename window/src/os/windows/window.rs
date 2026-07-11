@@ -317,7 +317,7 @@ impl WindowInner {
         let current_dims = Dimensions {
             pixel_width,
             pixel_height,
-            dpi: self.get_effective_dpi(),
+            dpi: self.get_effective_dpi() as f64,
         };
 
         let same = self
