@@ -224,7 +224,7 @@ impl WaylandWindow {
         let dimensions = Dimensions {
             pixel_width: width,
             pixel_height: height,
-            dpi: config.dpi.unwrap_or(crate::DEFAULT_DPI) as usize,
+            dpi: config.dpi.unwrap_or(crate::DEFAULT_DPI),
         };
         let initial_scale = WaylandScale::from_factor(dimensions.dpi as f64 / crate::DEFAULT_DPI)
             .unwrap_or(WaylandScale::ONE);
@@ -909,11 +909,7 @@ impl WaylandWindowInner {
                 let old_dimensions = self.dimensions;
 
                 // FIXME: teach this how to resolve dpi_by_screen
-                let dpi = self
-                    .config
-                    .dpi
-                    .unwrap_or(factor * crate::DEFAULT_DPI)
-                    .round() as usize;
+                let dpi = self.config.dpi.unwrap_or(factor * crate::DEFAULT_DPI);
 
                 // Do this early because this affects surface_to_pixels/pixels_to_surface
                 self.dimensions.dpi = dpi;

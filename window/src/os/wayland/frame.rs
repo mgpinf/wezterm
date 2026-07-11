@@ -420,7 +420,7 @@ struct ShapedTitle {
     glyphs: Vec<ShapedGlyph>,
     metrics: FontMetrics,
     state: WindowState,
-    dpi: usize,
+    dpi: f64,
 }
 
 struct ShapedGlyph {

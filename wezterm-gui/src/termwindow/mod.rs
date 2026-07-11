@@ -589,7 +589,7 @@ impl TermWindow {
 impl TermWindow {
     pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
         let config = configuration();
-        let dpi = config.dpi.unwrap_or_else(|| ::window::default_dpi()) as usize;
+        let dpi = config.dpi.unwrap_or_else(|| ::window::default_dpi());
         let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
 
         let mux = Mux::get();
