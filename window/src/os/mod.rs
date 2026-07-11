@@ -5,6 +5,9 @@ pub use self::windows::*;
 
 #[cfg(feature = "wayland")]
 pub mod wayland;
+#[cfg(feature = "wayland")]
+#[path = "wayland/scale.rs"]
+pub(crate) mod wayland_scale;
 pub mod x11;
 pub mod x_and_wayland;
 pub mod xdg_desktop_portal;

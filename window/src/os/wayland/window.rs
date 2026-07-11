@@ -60,6 +60,9 @@ use wezterm_input_types::{
     ScreenPoint, WindowDecorations,
 };
 
+use crate::os::wayland_scale::{
+    buffer_to_surface_coordinate, buffer_to_surface_size, surface_to_buffer_size, WaylandScale,
+};
 use crate::wayland::WaylandConnection;
 use crate::x11::KeyboardWithFallback;
 use crate::{
@@ -68,45 +71,8 @@ use crate::{
     WindowEventSender, WindowKeyEvent, WindowOps, WindowState,
 };
 
-/// Wayland-specific coordinate conversion methods for Dimensions
-trait WaylandDimensions {
-    fn dpi_factor(&self) -> f64;
-    fn pixels_to_surface(&self, pixels: i32) -> i32;
-}
-
-impl WaylandDimensions for Dimensions {
-    fn dpi_factor(&self) -> f64 {
-        self.dpi as f64 / crate::DEFAULT_DPI as f64
-    }
-
-    fn pixels_to_surface(&self, pixels: i32) -> i32 {
-        // Take care to round up, otherwise we can lose a pixel
-        // and that can effectively lose the final row of the terminal
-        (pixels as f64 / self.dpi_factor()).ceil() as i32
-    }
-}
-
 use super::pointer::{PendingMouse, PointerUserData};
 use super::state::WaylandState;
-
-const FRACTIONAL_SCALE_DENOMINATOR: f64 = 120.0;
-
-/// Convert a surface-local size to the corresponding buffer size. The
-/// fractional-scale protocol requires toplevel sizes to be rounded halfway
-/// away from zero.
-fn surface_to_buffer_size(surface: i32, scale: f64) -> i32 {
-    (surface as f64 * scale).round() as i32
-}
-
-/// Convert a requested buffer size to a surface-local size. Round up so that
-/// the resulting buffer cannot lose the last row or column of the terminal.
-fn buffer_to_surface_size(buffer: i32, scale: f64) -> i32 {
-    (buffer as f64 / scale).ceil() as i32
-}
-
-fn fractional_scale_from_numerator(scale: u32) -> Option<f64> {
-    (scale > 0).then_some(scale as f64 / FRACTIONAL_SCALE_DENOMINATOR)
-}
 
 #[derive(Debug)]
 pub(super) struct KeyRepeatState {
@@ -260,6 +226,8 @@ impl WaylandWindow {
             pixel_height: height,
             dpi: config.dpi.unwrap_or(crate::DEFAULT_DPI) as usize,
         };
+        let initial_scale = WaylandScale::from_factor(dimensions.dpi as f64 / crate::DEFAULT_DPI)
+            .unwrap_or(WaylandScale::ONE);
 
         let window = {
             let xdg_shell = &conn.wayland_state.borrow().xdg;
@@ -286,9 +254,9 @@ impl WaylandWindow {
             FallbackFrame::new(&window, shm, subcompositor, qh.clone())
                 .expect("failed to create csd frame")
         };
-        window_frame.set_scaling_factor(dimensions.dpi_factor());
-        let surface_width = dimensions.pixels_to_surface(dimensions.pixel_width as i32);
-        let surface_height = dimensions.pixels_to_surface(dimensions.pixel_height as i32);
+        window_frame.set_scaling_factor(initial_scale.factor());
+        let surface_width = buffer_to_surface_size(dimensions.pixel_width as i32, initial_scale);
+        let surface_height = buffer_to_surface_size(dimensions.pixel_height as i32, initial_scale);
         let hidden = match decor_mode {
             Some(DecorationMode::Client) => false,
             _ => true,
@@ -341,7 +309,7 @@ impl WaylandWindow {
 
         let inner = Rc::new(RefCell::new(WaylandWindowInner {
             events: WindowEventSender::new(event_handler),
-            scale_factor: dimensions.dpi_factor(),
+            scale: initial_scale,
             surface_factor: 1.0,
             fractional_scale,
             viewport,
@@ -579,7 +547,7 @@ pub(crate) struct PendingEvent {
     // queues a new size, so it can be out of sync. Example would be maximizing and minimizing winodw
     pub(crate) configure: Option<(u32, u32)>,
     pub(crate) window_configure: Option<WindowConfigure>,
-    pub(crate) scale_factor: Option<f64>,
+    scale: Option<WaylandScale>,
     pub(crate) window_state: Option<WindowState>,
 }
 
@@ -624,7 +592,7 @@ pub(crate) fn read_pipe_with_timeout(mut file: ReadPipe) -> anyhow::Result<Strin
 
 pub struct WaylandWindowInner {
     pub(crate) events: WindowEventSender,
-    scale_factor: f64,
+    scale: WaylandScale,
     surface_factor: f64,
     fractional_scale: Option<WpFractionalScaleV1>,
     viewport: Option<WpViewport>,
@@ -676,9 +644,9 @@ impl WaylandWindowInner {
         }
     }
 
-    fn advise_scale_factor(&mut self, scale_factor: f64) {
+    fn advise_scale(&mut self, scale: WaylandScale) {
         let mut pending = self.pending_event.lock().unwrap();
-        pending.scale_factor = Some(scale_factor);
+        pending.scale = Some(scale);
         drop(pending);
         self.dispatch_pending_event();
     }
@@ -774,11 +742,11 @@ impl WaylandWindowInner {
     }
 
     fn surface_to_pixels(&self, surface: i32) -> i32 {
-        surface_to_buffer_size(surface, self.scale_factor)
+        surface_to_buffer_size(surface, self.scale)
     }
 
     fn pixels_to_surface(&self, pixels: i32) -> i32 {
-        buffer_to_surface_size(pixels, self.scale_factor)
+        buffer_to_surface_size(pixels, self.scale)
     }
 
     pub(super) fn dispatch_dropped_files(&mut self, paths: Vec<PathBuf>) {
@@ -839,7 +807,7 @@ impl WaylandWindowInner {
         }
 
         if let Some((value_x, value_y)) = PendingMouse::scroll(&pending_mouse) {
-            let factor = self.scale_factor;
+            let factor = self.scale.factor();
 
             if value_x.signum() != self.hscroll_remainder.signum() {
                 // reset accumulator when changing scroll direction
@@ -910,11 +878,8 @@ impl WaylandWindowInner {
             self.window_state = window_state;
         }
 
-        if let Some(new_factor) = pending.scale_factor.take() {
-            if new_factor.is_finite()
-                && new_factor > 0.0
-                && (new_factor - self.scale_factor).abs() > f64::EPSILON
-            {
+        if let Some(new_scale) = pending.scale.take() {
+            if new_scale != self.scale {
                 if pending.configure.is_none() {
                     // Preserve the surface-local size while replacing the
                     // buffer with one rendered at the new preferred scale.
@@ -925,8 +890,8 @@ impl WaylandWindowInner {
                     log::debug!("synthesize configure with {:?}", pending.configure);
                 }
 
-                self.scale_factor = new_factor;
-                self.window_frame.set_scaling_factor(new_factor);
+                self.scale = new_scale;
+                self.window_frame.set_scaling_factor(new_scale.factor());
                 pending.refresh_decorations = true;
             }
         }
@@ -940,7 +905,7 @@ impl WaylandWindowInner {
         if let Some((mut w, mut h)) = pending.configure.take() {
             log::trace!("Pending configure: w:{w}, h{h} -- {:?}", self.window);
             if self.window.is_some() {
-                let factor = self.scale_factor;
+                let factor = self.scale.factor();
                 let old_dimensions = self.dimensions;
 
                 // FIXME: teach this how to resolve dpi_by_screen
@@ -1122,15 +1087,13 @@ impl WaylandWindowInner {
                 if self.text_cursor.map(|prior| prior != rect).unwrap_or(true) {
                     self.text_cursor.replace(rect);
 
-                    let factor = self.scale_factor;
-
                     if let Some(text_input) = &state.text_input {
                         if let Some(input) = text_input.get_text_input_for_surface(&surface) {
                             input.set_cursor_rectangle(
-                                (rect.min_x() as f64 / factor).round() as i32,
-                                (rect.min_y() as f64 / factor).round() as i32,
-                                buffer_to_surface_size(rect.width() as i32, factor),
-                                buffer_to_surface_size(rect.height() as i32, factor),
+                                buffer_to_surface_coordinate(rect.min_x() as i32, self.scale),
+                                buffer_to_surface_coordinate(rect.min_y() as i32, self.scale),
+                                buffer_to_surface_size(rect.width() as i32, self.scale),
+                                buffer_to_surface_size(rect.height() as i32, self.scale),
                             );
                             input.commit();
                         }
@@ -1547,7 +1510,11 @@ impl CompositorHandler for WaylandState {
         WaylandConnection::with_window_inner(window_id, move |inner| {
             // wp-fractional-scale-v1 supersedes the integer surface scale.
             if inner.fractional_scale.is_none() {
-                inner.advise_scale_factor(new_factor as f64);
+                if let Some(scale) = WaylandScale::from_integer(new_factor) {
+                    inner.advise_scale(scale);
+                } else {
+                    log::warn!("Ignoring invalid Wayland integer scale factor {new_factor}");
+                }
             }
             Ok(())
         });
@@ -1645,16 +1612,18 @@ impl Dispatch<WpFractionalScaleV1, usize> for WaylandState {
     ) {
         match event {
             wp_fractional_scale_v1::Event::PreferredScale { scale } => {
-                let Some(factor) = fractional_scale_from_numerator(scale) else {
+                let Some(scale) = WaylandScale::from_numerator(scale) else {
                     log::warn!("Ignoring invalid Wayland fractional scale numerator {scale}");
                     return;
                 };
                 let window_id = *window_id;
                 log::debug!(
-                    "Wayland compositor suggested fractional scale {factor} for window {window_id}"
+                    "Wayland compositor suggested fractional scale {} ({}/120) for window {window_id}",
+                    scale.factor(),
+                    scale.numerator(),
                 );
                 WaylandConnection::with_window_inner(window_id, move |inner| {
-                    inner.advise_scale_factor(factor);
+                    inner.advise_scale(scale);
                     Ok(())
                 });
             }
@@ -1831,31 +1800,5 @@ impl HasWindowHandle for WaylandWindow {
         let inner = handle.borrow();
         let handle = inner.window_handle()?;
         unsafe { Ok(WindowHandle::borrow_raw(handle.as_raw())) }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::{buffer_to_surface_size, fractional_scale_from_numerator, surface_to_buffer_size};
-
-    #[test]
-    fn fractional_scale_uses_protocol_rounding() {
-        let scale = fractional_scale_from_numerator(150).unwrap();
-        assert_eq!(scale, 1.25);
-        assert_eq!(surface_to_buffer_size(800, scale), 1000);
-        assert_eq!(surface_to_buffer_size(801, scale), 1001);
-        assert_eq!(surface_to_buffer_size(802, scale), 1003);
-    }
-
-    #[test]
-    fn requested_buffer_size_is_not_truncated() {
-        let scale = fractional_scale_from_numerator(150).unwrap();
-        assert_eq!(buffer_to_surface_size(1000, scale), 800);
-        assert_eq!(buffer_to_surface_size(1001, scale), 801);
-    }
-
-    #[test]
-    fn zero_fractional_scale_is_rejected() {
-        assert_eq!(fractional_scale_from_numerator(0), None);
     }
 }
