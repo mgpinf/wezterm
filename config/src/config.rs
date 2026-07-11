@@ -569,6 +569,14 @@ pub struct Config {
     #[dynamic(default)]
     pub foreground_text_hsb: HsbTransform,
 
+    /// Adjusts linear text coverage before blending. Values below 1 make
+    /// antialiased edges appear heavier; values above 1 make them lighter.
+    #[dynamic(
+        default = "default_glyph_coverage_gamma",
+        validate = "validate_glyph_coverage_gamma"
+    )]
+    pub glyph_coverage_gamma: f32,
+
     #[dynamic(default)]
     pub background: Vec<BackgroundLayer>,
 
@@ -2190,6 +2198,20 @@ fn validate_line_height(value: &f64) -> Result<(), String> {
     }
 }
 
+const fn default_glyph_coverage_gamma() -> f32 {
+    1.0
+}
+
+fn validate_glyph_coverage_gamma(value: &f32) -> Result<(), String> {
+    if value.is_finite() && (0.1..=10.0).contains(value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Illegal value {value} for glyph_coverage_gamma; it must be finite and between 0.1 and 10.0"
+        ))
+    }
+}
+
 pub(crate) fn validate_domain_name(name: &str) -> Result<(), String> {
     if name == "local" {
         Err(format!(
@@ -2211,4 +2233,19 @@ fn default_macos_forward_mods() -> Modifiers {
 
 fn default_colr_rasterizer() -> FontRasterizerSelection {
     FontRasterizerSelection::Harfbuzz
+}
+
+#[cfg(test)]
+mod test {
+    use super::validate_glyph_coverage_gamma;
+
+    #[test]
+    fn glyph_coverage_gamma_validation() {
+        assert!(validate_glyph_coverage_gamma(&0.1).is_ok());
+        assert!(validate_glyph_coverage_gamma(&1.0).is_ok());
+        assert!(validate_glyph_coverage_gamma(&10.0).is_ok());
+        assert!(validate_glyph_coverage_gamma(&0.0).is_err());
+        assert!(validate_glyph_coverage_gamma(&f32::NAN).is_err());
+        assert!(validate_glyph_coverage_gamma(&f32::INFINITY).is_err());
+    }
 }
