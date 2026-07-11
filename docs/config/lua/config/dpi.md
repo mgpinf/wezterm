@@ -29,9 +29,11 @@ factor for the display.
 
 When the Wayland compositor supports `wp-fractional-scale-v1` and
 `wp_viewporter`, WezTerm renders at the compositor's preferred fractional scale
-so that text remains sharp.  Compositors without those protocols use Wayland's
-integer buffer scaling; a fractional desktop scale may then result in blurry
-text, and you may wish to specify a DPI value to compensate.
+so that text remains sharp. The effective DPI is preserved as a fractional
+value when sizing and rasterizing fonts; for example, a 170% scale uses 163.2
+DPI rather than rounding it to 163. Compositors without those protocols use
+Wayland's integer buffer scaling; a fractional desktop scale may then result in
+blurry text, and you may wish to specify a DPI value to compensate.
 
 On macOS the scaling factor changes based on the monitor on which the window is
 displayed; dragging the window from a retina laptop display to an external
@@ -47,4 +49,3 @@ It is common for X11 environments to publish an `Xft.dpi` value as a property
 of the root window as a hint for the DPI of the display.  While that is a
 reasonable workaround for a single-monitor system, it isn't ideal for a
 multi-monitor setup where the monitors have varying DPIs.
-

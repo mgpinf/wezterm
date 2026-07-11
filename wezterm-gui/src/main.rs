@@ -399,7 +399,7 @@ async fn trigger_and_log_gui_attached(domain: MuxDomain) {
 }
 
 fn cell_pixel_dims(config: &ConfigHandle, dpi: f64) -> anyhow::Result<(usize, usize)> {
-    let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi as usize)?);
+    let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
     let render_metrics = RenderMetrics::new(&fontconfig)?;
     Ok((
         render_metrics.cell_size.width as usize,
@@ -876,7 +876,7 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
 
     let font_config = Rc::new(wezterm_font::FontConfiguration::new(
         Some(config.clone()),
-        config.dpi.unwrap_or_else(|| ::window::default_dpi()) as usize,
+        config.dpi.unwrap_or_else(|| ::window::default_dpi()),
     )?);
 
     let render_metrics = crate::utilsprites::RenderMetrics::new(&font_config)?;
