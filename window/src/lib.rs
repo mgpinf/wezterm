@@ -50,11 +50,11 @@ impl Default for Clipboard {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Dimensions {
     pub pixel_width: usize,
     pub pixel_height: usize,
-    pub dpi: usize,
+    pub dpi: f64,
 }
 
 pub type ULength = euclid::Length<usize, PixelUnit>;

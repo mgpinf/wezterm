@@ -117,7 +117,7 @@ impl UserData for GuiWin {
             struct Dims {
                 pixel_width: usize,
                 pixel_height: usize,
-                dpi: usize,
+                dpi: f64,
                 is_full_screen: bool,
             }
             impl_lua_conversion_dynamic!(Dims);
