@@ -16,9 +16,21 @@ use window::{BitmapImage, Dimensions, Rect, Window};
 pub struct ShaderUniform {
     pub foreground_text_hsb: [f32; 3],
     pub milliseconds: u32,
+    pub glyph_coverage_gamma: f32,
+    pub _padding: [f32; 3],
     pub projection: [[f32; 4]; 4],
     // sampler2D atlas_nearest_sampler;
     // sampler2D atlas_linear_sampler;
+}
+
+#[cfg(test)]
+mod test {
+    use super::ShaderUniform;
+
+    #[test]
+    fn shader_uniform_has_wgsl_compatible_size() {
+        assert_eq!(std::mem::size_of::<ShaderUniform>(), 96);
+    }
 }
 
 pub struct WebGpuState {

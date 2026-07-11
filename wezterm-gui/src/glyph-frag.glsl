@@ -17,6 +17,7 @@ layout(location=0, index=0) out vec4 color;
 layout(location=0, index=1) out vec4 colorMask;
 
 uniform vec3 foreground_text_hsb;
+uniform float glyph_coverage_gamma;
 uniform sampler2D atlas_nearest_sampler;
 uniform sampler2D atlas_linear_sampler;
 uniform bool subpixel_aa;
@@ -145,6 +146,17 @@ void main() {
   } else if (o_has_color == 0.0) {
     // the texture is the alpha channel/color mask
     colorMask = texture(atlas_nearest_sampler, o_tex);
+    if (subpixel_aa) {
+      colorMask = pow(
+        clamp(colorMask, vec4(0.0), vec4(1.0)),
+        vec4(glyph_coverage_gamma)
+      );
+    } else {
+      colorMask.a = pow(
+        clamp(colorMask.a, 0.0, 1.0),
+        glyph_coverage_gamma
+      );
+    }
     // and we need to tint with the fg_color
     color = fg_color;
     if (!subpixel_aa) {

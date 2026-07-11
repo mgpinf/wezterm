@@ -75,6 +75,7 @@ impl crate::TermWindow {
             foreground_text_hsb.saturation,
             foreground_text_hsb.brightness,
         ];
+        let glyph_coverage_gamma = self.config.glyph_coverage_gamma;
 
         let milliseconds = self.created.elapsed().as_millis() as u32;
         let projection = euclid::Transform3D::<f32, f32, f32>::ortho(
@@ -123,6 +124,8 @@ impl crate::TermWindow {
                     uniforms = webgpu.create_uniform(ShaderUniform {
                         foreground_text_hsb,
                         milliseconds,
+                        glyph_coverage_gamma,
+                        _padding: [0.; 3],
                         projection,
                     });
 
@@ -227,6 +230,7 @@ impl crate::TermWindow {
             foreground_text_hsb.saturation,
             foreground_text_hsb.brightness,
         );
+        let glyph_coverage_gamma = self.config.glyph_coverage_gamma;
 
         let milliseconds = self.created.elapsed().as_millis() as u32;
 
@@ -248,6 +252,7 @@ impl crate::TermWindow {
                     uniforms.add("atlas_nearest_sampler", &atlas_nearest_sampler);
                     uniforms.add("atlas_linear_sampler", &atlas_linear_sampler);
                     uniforms.add("foreground_text_hsb", &foreground_text_hsb);
+                    uniforms.add("glyph_coverage_gamma", &glyph_coverage_gamma);
                     uniforms.add("subpixel_aa", &subpixel_aa);
                     uniforms.add("milliseconds", &milliseconds);
                     uniforms.add_struct("cursor_blink", &cursor_blink);
