@@ -28,6 +28,8 @@ It is a lua object with the following fields:
   when setting an option. Else, a line prompt is displayed
   If omitted, when setting an option, a line prompt is displayed
   when setting an option
+* `metadata` - a table with key value pairs where keys are strings
+  and values can be of any data type
 
 
 Example of `TransientOption` object:
@@ -48,5 +50,16 @@ local option_with_label = {
   label = 'SPC',
   description = 'Set value',
   flag = '--value=',
+}
+
+-- With metadata
+local option_with_metadata = {
+  key = '-m',
+  default = '10',
+  description = 'Max count',
+  flag = '--max-count=',
+  metadata = {
+    additional_description = 'Limit the number of matching lines per file searched',
+  },
 }
 ```

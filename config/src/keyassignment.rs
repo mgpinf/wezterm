@@ -775,6 +775,8 @@ pub struct TransientSwitch {
     pub default: bool,
     pub description: String,
     pub flag: String,
+    #[dynamic(default)]
+    pub metadata: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -789,6 +791,8 @@ pub struct TransientCyclicSwitch {
     pub choices: Vec<String>,
     #[dynamic(default = "crate::default_true")]
     pub allow_nil: bool,
+    #[dynamic(default)]
+    pub metadata: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -804,6 +808,8 @@ pub struct TransientOption {
     pub allow_nil: bool,
     #[dynamic(default)]
     pub choices: Option<Vec<String>>,
+    #[dynamic(default)]
+    pub metadata: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
