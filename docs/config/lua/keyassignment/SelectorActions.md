@@ -24,8 +24,8 @@ objects
   The label will be shown in the list, while the id can be a different
   string that is meaningful to your action. The label can be used together
   with [wezterm.format](../wezterm/format.md) to produce styled text.
-  The metadata is a table of key-value pairs where both keys and values are
-  strings, e.g. `metadata = { container_id = "abc123", status = "running" }`.
+  The metadata is a table of key-value pairs where keys are strings and values
+  can be of any type. e.g. `metadata = { container_id = "abc123", status = "running" }`.
 * `section` - an [SelectorActionsArgumentSection](../SelectorActionsArgumentSection.md)
   object
 * `multiple` - this is an optional argument. Defaults to `false`.
