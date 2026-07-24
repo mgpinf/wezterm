@@ -26,6 +26,8 @@ It is a lua object with the following fields:
   at the last choice. Else cyclic switch is set to first choice.
   Defaults to `true`
 * `choices` - the list of choices to toggle between
+* `metadata` - a table with key value pairs where keys are strings
+  and values can be of any data type
 
 
 Example of `TransientCyclicSwitch` object:
@@ -47,5 +49,27 @@ local cyclic_with_label = {
   description = 'Cycle format',
   flag = '--format',
   choices = { 'json', 'yaml', 'toml' },
+}
+
+-- With metadata
+local cyclic_with_metadata = {
+  key = '-t',
+  default = '10',
+  description = 'Type',
+  flag = '--type=',
+  choices = {
+    'file',
+    'directory',
+    'symlink',
+    'socket',
+    'pipe',
+    'block-device',
+    'char-device',
+    'executable',
+    'empty',
+  },
+  metadata = {
+    additional_description = 'Find files by filetype',
+  },
 }
 ```

@@ -921,8 +921,14 @@ impl<'a> TransientState<'a> {
 }
 
 #[derive(FromDynamic, ToDynamic)]
+struct TransientResultEntry {
+    value: Value,
+    metadata: Option<HashMap<String, Value>>,
+}
+
+#[derive(FromDynamic, ToDynamic)]
 struct TransientResult {
-    entries: HashMap<String, Value>,
+    entries: HashMap<String, TransientResultEntry>,
 }
 impl_lua_conversion_dynamic!(TransientResult);
 
@@ -936,23 +942,32 @@ impl From<&[TransientSection<'_>]> for TransientResult {
                     RenderableEntity::Opt(option) => {
                         entries.insert(
                             option.delegate.flag.clone(),
-                            option.value.borrow().to_dynamic(),
+                            TransientResultEntry {
+                                value: option.value.borrow().to_dynamic(),
+                                metadata: option.delegate.metadata.clone(),
+                            },
                         );
                     }
                     RenderableEntity::Switch(switch) => {
                         entries.insert(
                             switch.delegate.flag.clone(),
-                            switch.value.get().to_dynamic(),
+                            TransientResultEntry {
+                                value: switch.value.get().to_dynamic(),
+                                metadata: switch.delegate.metadata.clone(),
+                            },
                         );
                     }
                     RenderableEntity::CyclicSwitch(cyclic_switch) => {
                         entries.insert(
                             cyclic_switch.delegate.flag.clone(),
-                            cyclic_switch
-                                .active_idx
-                                .get()
-                                .map(|idx| cyclic_switch.delegate.choices.get(idx).cloned())
-                                .to_dynamic(),
+                            TransientResultEntry {
+                                value: cyclic_switch
+                                    .active_idx
+                                    .get()
+                                    .map(|idx| cyclic_switch.delegate.choices.get(idx).cloned())
+                                    .to_dynamic(),
+                                metadata: cyclic_switch.delegate.metadata.clone(),
+                            },
                         );
                     }
                     _ => {}
