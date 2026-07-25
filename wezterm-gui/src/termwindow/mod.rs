@@ -1421,24 +1421,10 @@ impl TermWindow {
         }
     }
 
-    fn is_pane_visible(&mut self, pane_id: PaneId) -> bool {
-        let mux = Mux::get();
-        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
-            Some(tab) => tab,
-            None => return false,
-        };
-
-        let tab_id = tab.tab_id();
-        if let Some(tab_overlay) = self
-            .tab_state(tab_id)
-            .overlay
-            .as_ref()
-            .map(|overlay| overlay.pane.clone())
-        {
-            return tab_overlay.pane_id() == pane_id;
-        }
-
-        tab.contains_pane(pane_id)
+    fn is_pane_visible(&self, pane_id: PaneId) -> bool {
+        self.get_panes_to_render()
+            .iter()
+            .any(|pos| pos.pane.pane_id() == pane_id)
     }
 
     fn mux_pane_output_event(&mut self, pane_id: PaneId) {
