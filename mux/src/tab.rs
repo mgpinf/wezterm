@@ -2701,8 +2701,17 @@ mod test {
         let floating_pane = FakePane::new(3, size);
         tab.assign_floating_pane(&floating_pane);
         assert!(tab.iter_splits().is_empty());
+        let panes = tab.iter_panes();
+        assert_eq!(1, panes.len());
+        assert_eq!(3, panes[0].pane.pane_id());
+        assert!(panes[0].is_floating);
 
         tab.toggle_floating_pane();
         assert_eq!(1, tab.iter_splits().len());
+        let panes = tab.iter_panes();
+        assert_eq!(2, panes.len());
+        assert_eq!(1, panes[0].pane.pane_id());
+        assert_eq!(2, panes[1].pane.pane_id());
+        assert!(panes.iter().all(|pane| !pane.is_floating));
     }
 }
