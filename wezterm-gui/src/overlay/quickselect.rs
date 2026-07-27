@@ -613,6 +613,8 @@ impl Pane for QuickSelectOverlay {
                 let config = &self.renderer.config;
                 let colors = config.resolved_palette.clone();
                 let disable_attr = config.quick_select_remove_styling;
+                let render_bold_label = config.quick_select_render_label_in_bold;
+                let render_bold_match = config.quick_select_render_match_in_bold;
                 let inactive_fg = colors.quick_select_inactive_fg;
 
                 // Process the lines; for the search row we want to render instead
@@ -667,19 +669,21 @@ impl Pane for QuickSelectOverlay {
                                 if let Some(cell) =
                                     line.cells_mut_for_attr_changes_only().get_mut(cell_idx)
                                 {
-                                    cell.attrs_mut()
-                                        .set_background(
-                                            colors
-                                                .quick_select_match_bg
-                                                .unwrap_or(AnsiColor::Black.into()),
-                                        )
-                                        .set_foreground(
-                                            colors
-                                                .quick_select_match_fg
-                                                .unwrap_or(AnsiColor::Green.into()),
-                                        )
-                                        .set_reverse(false)
-                                        .set_intensity(Intensity::Bold);
+                                    let attr = cell.attrs_mut();
+                                    attr.set_background(
+                                        colors
+                                            .quick_select_match_bg
+                                            .unwrap_or(AnsiColor::Black.into()),
+                                    )
+                                    .set_foreground(
+                                        colors
+                                            .quick_select_match_fg
+                                            .unwrap_or(AnsiColor::Green.into()),
+                                    )
+                                    .set_reverse(false);
+                                    if render_bold_match {
+                                        attr.set_intensity(Intensity::Bold);
+                                    }
                                 }
                             }
                             for (idx, c) in m.label.chars().enumerate() {
@@ -697,8 +701,10 @@ impl Pane for QuickSelectOverlay {
                                         .quick_select_label_fg
                                         .unwrap_or(AnsiColor::Olive.into()),
                                 )
-                                .set_reverse(false)
-                                .set_intensity(Intensity::Bold);
+                                .set_reverse(false);
+                                if render_bold_label {
+                                    attr.set_intensity(Intensity::Bold);
+                                }
                                 line.set_cell(m.range.start + idx, Cell::new(c, attr), SEQ_ZERO);
                             }
                         }
@@ -721,6 +727,8 @@ impl Pane for QuickSelectOverlay {
         let (top, mut lines) = self.delegate.get_lines(lines);
         let colors = renderer.config.resolved_palette.clone();
         let disable_attr = renderer.config.quick_select_remove_styling;
+        let render_bold_label = renderer.config.quick_select_render_label_in_bold;
+        let render_bold_match = renderer.config.quick_select_render_match_in_bold;
         let inactive_fg = colors.quick_select_inactive_fg;
 
         // Process the lines; for the search row we want to render instead
@@ -766,19 +774,21 @@ impl Pane for QuickSelectOverlay {
                     for cell_idx in m.range.clone() {
                         if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(cell_idx)
                         {
-                            cell.attrs_mut()
-                                .set_background(
-                                    colors
-                                        .quick_select_match_bg
-                                        .unwrap_or(AnsiColor::Black.into()),
-                                )
-                                .set_foreground(
-                                    colors
-                                        .quick_select_match_fg
-                                        .unwrap_or(AnsiColor::Green.into()),
-                                )
-                                .set_reverse(false)
-                                .set_intensity(Intensity::Bold);
+                            let attr = cell.attrs_mut();
+                            attr.set_background(
+                                colors
+                                    .quick_select_match_bg
+                                    .unwrap_or(AnsiColor::Black.into()),
+                            )
+                            .set_foreground(
+                                colors
+                                    .quick_select_match_fg
+                                    .unwrap_or(AnsiColor::Green.into()),
+                            )
+                            .set_reverse(false);
+                            if render_bold_match {
+                                attr.set_intensity(Intensity::Bold);
+                            }
                         }
                     }
                     for (idx, c) in m.label.chars().enumerate() {
@@ -796,8 +806,10 @@ impl Pane for QuickSelectOverlay {
                                 .quick_select_label_fg
                                 .unwrap_or(AnsiColor::Olive.into()),
                         )
-                        .set_reverse(false)
-                        .set_intensity(Intensity::Bold);
+                        .set_reverse(false);
+                        if render_bold_label {
+                            attr.set_intensity(Intensity::Bold);
+                        }
                         line.set_cell(m.range.start + idx, Cell::new(c, attr), SEQ_ZERO);
                     }
                 }

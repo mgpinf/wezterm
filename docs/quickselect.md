@@ -38,3 +38,8 @@ any matching text in quick select mode.
 
 This can make it easier to focus on the matches, particularly when the pane
 already had a lot of styling and colors.
+
+Configuration options [quick_select_render_label_in_bold](config/lua/config/quick_select_render_label_in_bold.md), 
+[quick_select_render_match_in_bold](config/lua/config/quick_select_render_match_in_bold.md)
+has been added which when set to `true`, results in rendering the quickselect
+label and match in bold respectively.
