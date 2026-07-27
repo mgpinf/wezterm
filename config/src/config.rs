@@ -443,6 +443,10 @@ pub struct Config {
     pub quick_select_alphabet: String,
     #[dynamic(default)]
     pub quick_select_remove_styling: bool,
+    #[dynamic(default)]
+    pub quick_select_render_label_in_bold: bool,
+    #[dynamic(default)]
+    pub quick_select_render_match_in_bold: bool,
 
     #[dynamic(default)]
     pub mouse_bindings: Vec<Mouse>,
