@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use termwiz::cell::{AttributeChange, CellAttributes};
 use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseEvent};
-use termwiz::surface::{Change, Position};
+use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
 use window::WindowOps;
@@ -382,6 +382,7 @@ impl LauncherState {
                 x: Position::Absolute(0),
                 y: Position::Absolute(0),
             },
+            Change::CursorVisibility(CursorVisibility::Hidden),
             Change::Text(format!(
                 "{}\r\n",
                 truncate_right(&self.help_text, max_width)
@@ -463,6 +464,7 @@ impl LauncherState {
                     x: Position::Absolute(0),
                     y: Position::Absolute(0),
                 },
+                Change::CursorVisibility(CursorVisibility::Visible),
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Text(truncate_right(
                     &format!("{}{}", &self.fuzzy_help_text, self.filter_term),
