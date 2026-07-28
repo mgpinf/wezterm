@@ -1694,7 +1694,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Shell"],
             icon: None,
         },
-        ShowTabNavigator => CommandDef {
+        ShowTabNavigator(_) => CommandDef {
             brief: "Navigate tabs".into(),
             doc: "Shows the tab navigator".into(),
             keys: vec![],
@@ -2203,7 +2203,9 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ToggleFloatingPane,
         ActivateLastTab,
         ShowLauncher,
-        ShowTabNavigator,
+        ShowTabNavigator(ShowTabNavigatorArgs {
+            ..Default::default()
+        }),
         // ----------------- Help
         OpenUri("https://wezterm.org/".to_string()),
         OpenUri("https://github.com/wezterm/wezterm/discussions/".to_string()),
