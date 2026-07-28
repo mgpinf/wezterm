@@ -23,6 +23,18 @@ pub struct LauncherActionArgs {
     pub alphabet: Option<String>,
 }
 
+#[derive(Default, Debug, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
+pub struct ShowTabNavigatorArgs {
+    #[dynamic(default)]
+    pub title: Option<String>,
+    #[dynamic(default)]
+    pub help_text: Option<String>,
+    #[dynamic(default)]
+    pub fuzzy_help_text: Option<String>,
+    #[dynamic(default)]
+    pub fuzzy: bool,
+}
+
 bitflags::bitflags! {
     #[derive(Default,  FromDynamic, ToDynamic)]
     #[dynamic(try_from="String", into="String")]
@@ -1082,7 +1094,7 @@ pub enum KeyAssignment {
     ScrollToPrompt(isize),
     ScrollToTop,
     ScrollToBottom,
-    ShowTabNavigator,
+    ShowTabNavigator(ShowTabNavigatorArgs),
     ShowDebugOverlay,
     HideApplication,
     QuitApplication,
