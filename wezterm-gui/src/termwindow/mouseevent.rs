@@ -6,7 +6,9 @@ use ::window::{
     MouseButtons as WMB, MouseCursor, MouseEvent, MouseEventKind as WMEK, MousePress,
     WindowDecorations, WindowOps, WindowState,
 };
-use config::keyassignment::{KeyAssignment, MouseEventTrigger, SpawnTabDomain};
+use config::keyassignment::{
+    KeyAssignment, MouseEventTrigger, ShowTabNavigatorArgs, SpawnTabDomain,
+};
 use config::MouseEventAltScreen;
 use mux::pane::{Pane, WithPaneLines};
 use mux::tab::SplitDirection;
@@ -524,7 +526,9 @@ impl super::TermWindow {
             },
             WMEK::Press(MousePress::Right) => match item {
                 TabBarItem::Tab { .. } => {
-                    self.show_tab_navigator();
+                    self.show_tab_navigator(&ShowTabNavigatorArgs {
+                        ..Default::default()
+                    });
                 }
                 TabBarItem::NewTabButton { .. } => {
                     self.do_new_tab_button_click(MousePress::Right);
