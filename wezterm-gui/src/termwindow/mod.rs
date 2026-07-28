@@ -32,7 +32,7 @@ use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
     Confirmation, DisplayText, InnerPattern, KeyAssignment, LauncherActionArgs, PaneDirection,
     Pattern, PromptInputLine, QuickSelectArguments, RotationDirection, SelectorActions,
-    SpawnCommand, SplitSize, TransientMenu,
+    ShowTabNavigatorArgs, SpawnCommand, SplitSize, TransientMenu,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2439,18 +2439,23 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
-    fn show_tab_navigator(&mut self) {
+    fn show_tab_navigator(&mut self, args: &ShowTabNavigatorArgs) {
         let mux = Mux::get();
         let active_tab_idx = match mux.get_window(self.mux_window_id) {
             Some(mux_window) => mux_window.get_active_tab_idx(),
             None => return,
         };
-        let title = "Tab Navigator".to_string();
+        let title = args.title.clone().unwrap_or("Tab Navigator".to_string());
+        let flags = if args.fuzzy {
+            LauncherFlags::TABS | LauncherFlags::FUZZY
+        } else {
+            LauncherFlags::TABS
+        };
         let args = LauncherActionArgs {
             title: Some(title),
-            flags: LauncherFlags::TABS,
-            help_text: None,
-            fuzzy_help_text: None,
+            flags,
+            help_text: args.help_text.clone(),
+            fuzzy_help_text: args.fuzzy_help_text.clone(),
             alphabet: None,
         };
         self.show_launcher_impl(args, active_tab_idx);
@@ -2858,7 +2863,7 @@ impl TermWindow {
             ScrollToPrompt(n) => self.scroll_to_prompt(*n, pane)?,
             ScrollToTop => self.scroll_to_top(pane),
             ScrollToBottom => self.scroll_to_bottom(pane),
-            ShowTabNavigator => self.show_tab_navigator(),
+            ShowTabNavigator(args) => self.show_tab_navigator(args),
             ShowDebugOverlay => self.show_debug_overlay(),
             ShowLauncher => self.show_launcher(),
             ShowLauncherArgs(args) => {
