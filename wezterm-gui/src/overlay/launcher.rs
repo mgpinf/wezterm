@@ -406,6 +406,8 @@ impl LauncherState {
         let colors = &config.resolved_palette;
         let launcher_label_fg = colors.launcher_label_fg;
         let launcher_label_bg = colors.launcher_label_bg;
+        let launcher_value_label_fg = colors.launcher_value_label_fg;
+        let launcher_value_suffix_fg = colors.launcher_value_suffix_fg;
 
         for (row_num, (entry_idx, entry)) in self
             .filtered_entries
@@ -456,11 +458,24 @@ impl LauncherState {
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
+            if let Some(launcher_value_label_fg) = launcher_value_label_fg {
+                changes.push(AttributeChange::Foreground(launcher_value_label_fg.into()).into());
+            }
             changes.push(Change::Text(" ".to_string()));
             changes.append(&mut line.changes(&attr));
             changes.push(Change::Text(" ".to_string()));
+            if launcher_value_label_fg.is_some() {
+                changes.push(AttributeChange::Foreground(ColorAttribute::Default).into());
+            }
             if let Some(suffix) = entry.suffix.clone() {
+                if let Some(launcher_value_suffix_fg) = launcher_value_suffix_fg {
+                    changes
+                        .push(AttributeChange::Foreground(launcher_value_suffix_fg.into()).into());
+                }
                 changes.push(Change::Text(format!(" {suffix} ")));
+                if launcher_value_label_fg.is_some() {
+                    changes.push(AttributeChange::Foreground(ColorAttribute::Default).into());
+                }
             }
 
             if entry_idx == self.active_idx {
