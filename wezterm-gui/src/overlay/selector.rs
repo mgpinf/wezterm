@@ -12,7 +12,7 @@ use std::rc::Rc;
 use termwiz::cell::{AttributeChange, CellAttributes};
 use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseEvent};
-use termwiz::surface::{Change, Position};
+use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
 
@@ -109,6 +109,7 @@ impl SelectorState {
                 x: Position::Absolute(0),
                 y: Position::Absolute(0),
             },
+            Change::CursorVisibility(CursorVisibility::Hidden),
             Change::Text(format!(
                 "{}\r\n",
                 truncate_right(&self.args.description, max_width)
@@ -194,6 +195,7 @@ impl SelectorState {
                     x: Position::Absolute(0),
                     y: Position::Absolute(0),
                 },
+                Change::CursorVisibility(CursorVisibility::Visible),
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Text(truncate_right(
                     &format!("{}{}", self.args.fuzzy_description, self.filter_term),
