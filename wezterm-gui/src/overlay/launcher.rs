@@ -448,6 +448,7 @@ impl LauncherState {
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
+            changes.push(Change::Text(" ".to_string()));
             changes.append(&mut line.changes(&attr));
             changes.push(Change::Text(" ".to_string()));
 
