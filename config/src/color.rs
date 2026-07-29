@@ -180,6 +180,8 @@ pub struct Palette {
 
     pub launcher_label_fg: Option<ColorSpec>,
     pub launcher_label_bg: Option<ColorSpec>,
+    pub launcher_value_label_fg: Option<ColorSpec>,
+    pub launcher_value_suffix_fg: Option<ColorSpec>,
 
     pub command_runner_list_header_fg: Option<ColorSpec>,
     pub command_runner_list_marker_fg: Option<ColorSpec>,
@@ -267,6 +269,8 @@ impl Palette {
             input_selector_label_bg: overlay!(input_selector_label_bg),
             launcher_label_fg: overlay!(launcher_label_fg),
             launcher_label_bg: overlay!(launcher_label_bg),
+            launcher_value_label_fg: overlay!(launcher_value_label_fg),
+            launcher_value_suffix_fg: overlay!(launcher_value_suffix_fg),
             command_runner_list_header_fg: overlay!(command_runner_list_header_fg),
             command_runner_list_marker_fg: overlay!(command_runner_list_marker_fg),
             command_runner_output_label_fg: overlay!(command_runner_output_label_fg),

@@ -143,6 +143,8 @@ config.colors = {
 
   launcher_label_bg = { AnsiColor = 'Black' }, -- {{since('nightly', inline=True)}}
   launcher_label_fg = { Color = '#ffffff' }, -- {{since('nightly', inline=True)}}
+  launcher_value_label_fg = { AnsiColor = 'Green' }, -- {{since('nightly', inline=True)}}
+  launcher_value_suffix_fg = { Color = 'Purple' }, -- {{since('nightly', inline=True)}}
 
   command_runner_list_header_fg = { AnsiColor = 'Grey' }, -- {{since('nightly', inline=True)}}
   command_runner_list_marker_fg = { AnsiColor = 'Yellow' }, -- {{since('nightly', inline=True)}}
