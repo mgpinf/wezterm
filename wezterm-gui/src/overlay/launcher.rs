@@ -32,6 +32,7 @@ pub use config::keyassignment::LauncherFlags;
 #[derive(Clone)]
 struct Entry {
     pub label: String,
+    pub suffix: Option<String>,
     pub action: KeyAssignment,
 }
 
@@ -240,6 +241,7 @@ impl LauncherState {
                             None => "(default shell)".to_string(),
                         },
                     },
+                    suffix: None,
                     action: KeyAssignment::SpawnCommandInNewTab(item.clone()),
                 });
             }
@@ -249,6 +251,7 @@ impl LauncherState {
             let entry = if domain.state == DomainState::Attached {
                 Entry {
                     label: format!("New Tab ({})", domain.label),
+                    suffix: None,
                     action: KeyAssignment::SpawnCommandInNewTab(SpawnCommand {
                         domain: SpawnTabDomain::DomainName(domain.name.to_string()),
                         ..SpawnCommand::default()
@@ -257,6 +260,7 @@ impl LauncherState {
             } else {
                 Entry {
                     label: format!("Attach {}", domain.label),
+                    suffix: None,
                     action: KeyAssignment::AttachDomain(domain.name.to_string()),
                 }
             };
@@ -275,6 +279,7 @@ impl LauncherState {
                 if *ws != args.active_workspace {
                     self.entries.push(Entry {
                         label: format!("Switch to workspace: `{}`", ws),
+                        suffix: None,
                         action: KeyAssignment::SwitchToWorkspace {
                             name: Some(ws.clone()),
                             spawn: None,
@@ -287,6 +292,7 @@ impl LauncherState {
                     "Create new Workspace (current is `{}`)",
                     args.active_workspace
                 ),
+                suffix: None,
                 action: KeyAssignment::SwitchToWorkspace {
                     name: None,
                     spawn: None,
@@ -296,10 +302,10 @@ impl LauncherState {
 
         for tab in &args.tabs {
             self.entries.push(Entry {
-                label: match tab.pane_count {
-                    Some(pane_count) => format!("{}. {pane_count} panes", tab.title),
-                    None => format!("{}.", tab.title),
-                },
+                label: tab.title.clone(),
+                suffix: tab
+                    .pane_count
+                    .map(|pane_count| format!("{pane_count} panes")),
                 action: KeyAssignment::ActivateTab(tab.tab_idx as isize),
             });
         }
@@ -316,6 +322,7 @@ impl LauncherState {
                 }
                 self.entries.push(Entry {
                     label: format!("{}. {}", cmd.brief, cmd.doc),
+                    suffix: None,
                     action: cmd.action,
                 });
             }
@@ -356,6 +363,7 @@ impl LauncherState {
 
                 key_entries.push(Entry {
                     label,
+                    suffix: None,
                     action: entry.action,
                 });
             }
@@ -451,6 +459,9 @@ impl LauncherState {
             changes.push(Change::Text(" ".to_string()));
             changes.append(&mut line.changes(&attr));
             changes.push(Change::Text(" ".to_string()));
+            if let Some(suffix) = entry.suffix.clone() {
+                changes.push(Change::Text(format!(" {suffix} ")));
+            }
 
             if entry_idx == self.active_idx {
                 changes.push(AttributeChange::Reverse(false).into());
