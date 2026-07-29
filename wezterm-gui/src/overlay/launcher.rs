@@ -438,7 +438,7 @@ impl LauncherState {
                     if let Some(launcher_label_fg) = launcher_label_fg {
                         changes.push(AttributeChange::Foreground(launcher_label_fg.into()).into());
                     }
-                    changes.push(Change::Text(format!(" {label:>max_label_len$}. ")));
+                    changes.push(Change::Text(format!(" {label:>max_label_len$} ")));
                     if launcher_label_bg.is_some() {
                         changes.push(AttributeChange::Background(ColorAttribute::Default).into());
                     }
@@ -446,12 +446,12 @@ impl LauncherState {
                         changes.push(AttributeChange::Foreground(ColorAttribute::Default).into());
                     }
                 } else {
-                    changes.push(Change::Text(" ".repeat(max_label_len + 3)));
+                    changes.push(Change::Text(" ".repeat(max_label_len + 2)));
                 }
             } else if !self.always_fuzzy {
-                changes.push(Change::Text(" ".repeat(max_label_len + 3)));
+                changes.push(Change::Text(" ".repeat(max_label_len + 2)));
             } else {
-                changes.push(Change::Text("    ".to_string()));
+                changes.push(Change::Text("   ".to_string()));
             }
 
             let mut line = crate::tabbar::parse_status_text(&entry.label, attr.clone());
