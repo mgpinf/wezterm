@@ -153,10 +153,7 @@ mod prefix_tests {
     fn tracks_the_consumed_prefix_for_active_matches() {
         let style = EntryRenderStyle::new("-f", "-");
 
-        assert_eq!(
-            style.displayed_prefix_len("-f", display_key("-f")),
-            Some(1)
-        );
+        assert_eq!(style.displayed_prefix_len("-f", display_key("-f")), Some(1));
 
         let special_key_style = EntryRenderStyle::new(" ", " ");
         assert_eq!(
