@@ -1,5 +1,5 @@
 use crate::overlay::common::{
-    display_key, display_prefix, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
+    display_key, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
 };
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
@@ -442,7 +442,7 @@ impl<'a> TransientState<'a> {
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        let mut heading_changes = vec![
+        self.buf.add_changes(vec![
             Change::ClearScreen(ColorAttribute::Default),
             Change::CursorPosition {
                 x: Position::Absolute(0),
@@ -452,26 +452,12 @@ impl<'a> TransientState<'a> {
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
             Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
             Change::Text(self.description.clone()),
-        ];
-
-        if !self.typed.is_empty() {
-            heading_changes.extend([
-                Change::AllAttributes(CellAttributes::default()),
-                Change::Text("  Prefix: ".to_string()),
-                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(self.colors.key_fg)),
-                Change::Text(display_prefix(&self.typed)),
-            ]);
-        }
-
-        heading_changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text(self.description_separator.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
-        self.buf.add_changes(heading_changes);
 
         if let Some(context) = self.context {
             // 5 base elements + 5 per entry
