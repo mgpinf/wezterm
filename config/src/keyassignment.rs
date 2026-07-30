@@ -14,16 +14,38 @@ use wezterm_input_types::{KeyCode, Modifiers};
 use wezterm_term::input::MouseButton;
 use wezterm_term::SemanticType;
 
-#[derive(Default, Debug, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
+fn default_delimiter() -> String {
+    ".".to_string()
+}
+
+#[derive(Debug, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
 pub struct LauncherActionArgs {
     pub flags: LauncherFlags,
     pub title: Option<String>,
     pub help_text: Option<String>,
     pub fuzzy_help_text: Option<String>,
     pub alphabet: Option<String>,
+    #[dynamic(default = "default_delimiter")]
+    pub delimiter: String,
+    #[dynamic(default)]
+    pub pane_count_in_suffix: bool,
 }
 
-#[derive(Default, Debug, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
+impl Default for LauncherActionArgs {
+    fn default() -> Self {
+        Self {
+            flags: LauncherFlags::default(),
+            title: None,
+            help_text: None,
+            fuzzy_help_text: None,
+            alphabet: None,
+            delimiter: default_delimiter(),
+            pane_count_in_suffix: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
 pub struct ShowTabNavigatorArgs {
     #[dynamic(default)]
     pub title: Option<String>,
@@ -33,6 +55,23 @@ pub struct ShowTabNavigatorArgs {
     pub fuzzy_help_text: Option<String>,
     #[dynamic(default)]
     pub fuzzy: bool,
+    #[dynamic(default = "default_delimiter")]
+    pub delimiter: String,
+    #[dynamic(default)]
+    pub pane_count_in_suffix: bool,
+}
+
+impl Default for ShowTabNavigatorArgs {
+    fn default() -> Self {
+        Self {
+            title: None,
+            help_text: None,
+            fuzzy_help_text: None,
+            fuzzy: false,
+            delimiter: default_delimiter(),
+            pane_count_in_suffix: false,
+        }
+    }
 }
 
 bitflags::bitflags! {
