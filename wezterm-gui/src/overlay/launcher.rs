@@ -19,7 +19,7 @@ use mux::window::WindowId;
 use mux::Mux;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
-use termwiz::cell::{AttributeChange, CellAttributes};
+use termwiz::cell::{unicode_column_width, AttributeChange, CellAttributes};
 use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseEvent};
 use termwiz::surface::{Change, CursorVisibility, Position};
@@ -62,6 +62,8 @@ pub struct LauncherArgs {
     help_text: String,
     fuzzy_help_text: String,
     alphabet: String,
+    delimiter: String,
+    pane_count_in_suffix: bool,
 }
 
 impl LauncherArgs {
@@ -75,6 +77,8 @@ impl LauncherArgs {
         help_text: &str,
         fuzzy_help_text: &str,
         alphabet: &str,
+        delimiter: &str,
+        pane_count_in_suffix: bool,
     ) -> Self {
         let mux = Mux::get();
 
@@ -166,6 +170,8 @@ impl LauncherArgs {
             help_text: help_text.to_string(),
             fuzzy_help_text: fuzzy_help_text.to_string(),
             alphabet: alphabet.to_string(),
+            delimiter: delimiter.to_string(),
+            pane_count_in_suffix,
         }
     }
 }
@@ -188,6 +194,7 @@ struct LauncherState {
     alphabet: String,
     selection: String,
     always_fuzzy: bool,
+    delimiter: String,
 }
 
 impl LauncherState {
@@ -301,11 +308,20 @@ impl LauncherState {
         }
 
         for tab in &args.tabs {
+            let label = format!("{}{}", tab.title, args.delimiter);
+            let pane_count = tab
+                .pane_count
+                .map(|pane_count| format!("{pane_count} panes"));
+            let (label, suffix) = if args.pane_count_in_suffix {
+                (label, pane_count)
+            } else if let Some(pane_count) = pane_count {
+                (format!("{label} {pane_count}"), None)
+            } else {
+                (label, None)
+            };
             self.entries.push(Entry {
-                label: tab.title.clone(),
-                suffix: tab
-                    .pane_count
-                    .map(|pane_count| format!("{pane_count} panes")),
+                label,
+                suffix,
                 action: KeyAssignment::ActivateTab(tab.tab_idx as isize),
             });
         }
@@ -400,6 +416,7 @@ impl LauncherState {
 
         let labels = &self.labels;
         let max_label_len = labels.iter().map(|s| s.len()).max().unwrap_or(0);
+        let delimiter_width = unicode_column_width(&self.delimiter, None);
         let mut labels_iter = labels.into_iter();
 
         let config = configuration();
@@ -438,7 +455,10 @@ impl LauncherState {
                     if let Some(launcher_label_fg) = launcher_label_fg {
                         changes.push(AttributeChange::Foreground(launcher_label_fg.into()).into());
                     }
-                    changes.push(Change::Text(format!(" {label:>max_label_len$} ")));
+                    changes.push(Change::Text(format!(
+                        " {label:>max_label_len$}{} ",
+                        self.delimiter
+                    )));
                     if launcher_label_bg.is_some() {
                         changes.push(AttributeChange::Background(ColorAttribute::Default).into());
                     }
@@ -446,12 +466,16 @@ impl LauncherState {
                         changes.push(AttributeChange::Foreground(ColorAttribute::Default).into());
                     }
                 } else {
-                    changes.push(Change::Text(" ".repeat(max_label_len + 2)));
+                    changes.push(Change::Text(
+                        " ".repeat(max_label_len + delimiter_width + 2),
+                    ));
                 }
             } else if !self.always_fuzzy {
-                changes.push(Change::Text(" ".repeat(max_label_len + 2)));
+                changes.push(Change::Text(
+                    " ".repeat(max_label_len + delimiter_width + 2),
+                ));
             } else {
-                changes.push(Change::Text("   ".to_string()));
+                changes.push(Change::Text(" ".repeat(delimiter_width + 3)));
             }
 
             let mut line = crate::tabbar::parse_status_text(&entry.label, attr.clone());
@@ -696,6 +720,7 @@ pub fn launcher(
         selection: String::new(),
         alphabet: args.alphabet.clone(),
         always_fuzzy: filtering,
+        delimiter: args.delimiter.clone(),
     };
 
     term.set_raw_mode()?;
