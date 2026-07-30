@@ -59,10 +59,7 @@ impl<'a, T> Default for KeyMap<'a, T> {
     }
 }
 
-pub fn display_key<'a>(key: &'a str, label: Option<&'a str>) -> &'a str {
-    if let Some(label) = label {
-        return label;
-    }
+pub fn display_key(key: &str) -> &str {
     match key {
         " " => "<space>",
         "\n" => "<enter>",
@@ -91,11 +88,10 @@ impl EntryRenderStyle {
         self,
         colors: &OverlayColors,
         key: &str,
-        label: Option<&str>,
         max_key_width: usize,
         changes: &mut Vec<Change>,
     ) {
-        let displayed_key = display_key(key, label);
+        let displayed_key = display_key(key);
         let mut padded_key = format!("{:<width$}", displayed_key, width = max_key_width);
 
         if let Some(prefix_len) = self.displayed_prefix_len(key, displayed_key) {
@@ -144,7 +140,7 @@ impl EntryRenderStyle {
 
 #[cfg(test)]
 mod prefix_tests {
-    use super::EntryRenderStyle;
+    use super::{display_key, EntryRenderStyle};
 
     #[test]
     fn only_mutes_entries_excluded_by_an_active_prefix() {
@@ -157,8 +153,16 @@ mod prefix_tests {
     fn tracks_the_consumed_prefix_for_active_matches() {
         let style = EntryRenderStyle::new("-f", "-");
 
-        assert_eq!(style.displayed_prefix_len("-f", "-f"), Some(1));
-        assert_eq!(style.displayed_prefix_len("-f", "flag"), None);
+        assert_eq!(
+            style.displayed_prefix_len("-f", display_key("-f")),
+            Some(1)
+        );
+
+        let special_key_style = EntryRenderStyle::new(" ", " ");
+        assert_eq!(
+            special_key_style.displayed_prefix_len(" ", display_key(" ")),
+            None
+        );
     }
 }
 

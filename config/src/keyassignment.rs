@@ -827,8 +827,6 @@ pub struct CommandRunner {
 pub struct TransientSwitch {
     pub key: String,
     #[dynamic(default)]
-    pub label: Option<String>,
-    #[dynamic(default)]
     pub default: bool,
     pub description: String,
     pub flag: String,
@@ -839,8 +837,6 @@ pub struct TransientSwitch {
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct TransientCyclicSwitch {
     pub key: String,
-    #[dynamic(default)]
-    pub label: Option<String>,
     #[dynamic(default)]
     pub default: Option<String>,
     pub description: String,
@@ -856,8 +852,6 @@ pub struct TransientCyclicSwitch {
 pub struct TransientOption {
     pub key: String,
     #[dynamic(default)]
-    pub label: Option<String>,
-    #[dynamic(default)]
     pub default: Option<String>,
     pub description: String,
     pub flag: String,
@@ -872,8 +866,6 @@ pub struct TransientOption {
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct TransientArgument {
     pub key: String,
-    #[dynamic(default)]
-    pub label: Option<String>,
     pub description: String,
     pub action: Box<KeyAssignment>,
     #[dynamic(default)]

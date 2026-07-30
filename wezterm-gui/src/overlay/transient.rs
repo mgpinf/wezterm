@@ -1,4 +1,6 @@
-use crate::overlay::common::{EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors};
+use crate::overlay::common::{
+    display_key, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
+};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -131,7 +133,6 @@ impl<'a> TransientSwitch<'a> {
         style.append_key(
             colors,
             &delegate.key,
-            delegate.label.as_deref(),
             max_key_width,
             &mut changes,
         );
@@ -184,7 +185,6 @@ impl<'a> TransientOption<'a> {
         style.append_key(
             colors,
             &delegate.key,
-            delegate.label.as_deref(),
             max_key_width,
             &mut changes,
         );
@@ -240,7 +240,6 @@ impl<'a> TransientCyclicSwitch<'a> {
         style.append_key(
             colors,
             &delegate.key,
-            delegate.label.as_deref(),
             max_key_width,
             &mut changes,
         );
@@ -327,7 +326,6 @@ impl<'a> TransientArgument<'a> {
         style.append_key(
             colors,
             &self.delegate.key,
-            self.delegate.label.as_deref(),
             max_key_width,
             &mut changes,
         );
@@ -1075,36 +1073,7 @@ fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSec
 
         let max_key_width = entries
             .iter()
-            .map(|e| match e {
-                RenderableEntity::Switch(s) => s
-                    .delegate
-                    .label
-                    .as_deref()
-                    .map_or(s.delegate.key.len(), |label| {
-                        unicode_column_width(label, None)
-                    }),
-                RenderableEntity::Opt(o) => o
-                    .delegate
-                    .label
-                    .as_deref()
-                    .map_or(o.delegate.key.len(), |label| {
-                        unicode_column_width(label, None)
-                    }),
-                RenderableEntity::CyclicSwitch(c) => c
-                    .delegate
-                    .label
-                    .as_deref()
-                    .map_or(c.delegate.key.len(), |label| {
-                        unicode_column_width(label, None)
-                    }),
-                RenderableEntity::Argument(a) => a
-                    .delegate
-                    .label
-                    .as_deref()
-                    .map_or(a.delegate.key.len(), |label| {
-                        unicode_column_width(label, None)
-                    }),
-            })
+            .map(|entry| unicode_column_width(display_key(entry.key()), None))
             .max()
             .unwrap_or(0);
 
