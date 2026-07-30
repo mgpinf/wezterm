@@ -73,6 +73,7 @@ pub fn display_key<'a>(key: &'a str, label: Option<&'a str>) -> &'a str {
 #[derive(Clone, Copy)]
 pub struct EntryRenderStyle {
     muted: bool,
+    matching_prefix_len: Option<usize>,
 }
 
 impl EntryRenderStyle {
@@ -82,7 +83,41 @@ impl EntryRenderStyle {
 
         Self {
             muted: has_prefix && !matches_prefix,
+            matching_prefix_len: (has_prefix && matches_prefix).then_some(prefix.len()),
         }
+    }
+
+    pub fn append_key(
+        self,
+        colors: &OverlayColors,
+        key: &str,
+        label: Option<&str>,
+        max_key_width: usize,
+        changes: &mut Vec<Change>,
+    ) {
+        let displayed_key = display_key(key, label);
+        let mut padded_key = format!("{:<width$}", displayed_key, width = max_key_width);
+
+        if let Some(prefix_len) = self.displayed_prefix_len(key, displayed_key) {
+            let remaining = padded_key.split_off(prefix_len);
+            changes.extend([
+                Change::Attribute(AttributeChange::Foreground(colors.non_matching_fg)),
+                Change::Text(padded_key),
+                Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
+                Change::Text(remaining),
+            ]);
+            return;
+        }
+
+        changes.extend([
+            Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
+            Change::Text(padded_key),
+        ]);
+    }
+
+    fn displayed_prefix_len(self, key: &str, displayed_key: &str) -> Option<usize> {
+        self.matching_prefix_len
+            .filter(|prefix_len| displayed_key.starts_with(&key[..*prefix_len]))
     }
 
     pub fn apply(self, colors: &OverlayColors, changes: &mut [Change]) {
@@ -116,6 +151,14 @@ mod prefix_tests {
         assert!(!EntryRenderStyle::new("-f", "").muted);
         assert!(!EntryRenderStyle::new("-f", "-").muted);
         assert!(EntryRenderStyle::new("g", "-").muted);
+    }
+
+    #[test]
+    fn tracks_the_consumed_prefix_for_active_matches() {
+        let style = EntryRenderStyle::new("-f", "-");
+
+        assert_eq!(style.displayed_prefix_len("-f", "-f"), Some(1));
+        assert_eq!(style.displayed_prefix_len("-f", "flag"), None);
     }
 }
 

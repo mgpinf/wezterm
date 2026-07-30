@@ -1,6 +1,4 @@
-use crate::overlay::common::{
-    display_key, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
-};
+use crate::overlay::common::{EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -128,15 +126,16 @@ impl<'a> TransientSwitch<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        let mut changes = Vec::with_capacity(10);
+        let mut changes = Vec::with_capacity(12);
+        changes.push(Change::Text("  ".to_string()));
+        style.append_key(
+            colors,
+            &delegate.key,
+            delegate.label.as_deref(),
+            max_key_width,
+            &mut changes,
+        );
         changes.extend([
-            Change::Text("  ".to_string()),
-            Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(format!(
-                "{:<width$}",
-                display_key(&delegate.key, delegate.label.as_deref()),
-                width = max_key_width
-            )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -180,15 +179,16 @@ impl<'a> TransientOption<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        let mut changes = Vec::with_capacity(13);
+        let mut changes = Vec::with_capacity(15);
+        changes.push(Change::Text("  ".to_string()));
+        style.append_key(
+            colors,
+            &delegate.key,
+            delegate.label.as_deref(),
+            max_key_width,
+            &mut changes,
+        );
         changes.extend([
-            Change::Text("  ".to_string()),
-            Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(format!(
-                "{:<width$}",
-                display_key(&delegate.key, delegate.label.as_deref()),
-                width = max_key_width
-            )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -235,15 +235,16 @@ impl<'a> TransientCyclicSwitch<'a> {
         let delegate = self.delegate;
 
         // Base: 12 elements + up to 5 per choice (when active choice is highlighted)
-        let mut changes = Vec::with_capacity(12 + delegate.choices.len() * 5);
+        let mut changes = Vec::with_capacity(14 + delegate.choices.len() * 5);
+        changes.push(Change::Text("  ".to_string()));
+        style.append_key(
+            colors,
+            &delegate.key,
+            delegate.label.as_deref(),
+            max_key_width,
+            &mut changes,
+        );
         changes.extend([
-            Change::Text("  ".to_string()),
-            Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(format!(
-                "{:<width$}",
-                display_key(&delegate.key, delegate.label.as_deref()),
-                width = max_key_width
-            )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
         ]);
@@ -321,17 +322,19 @@ impl<'a> TransientArgument<'a> {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        let mut changes = vec![
-            Change::Text("  ".to_string()),
-            Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
-            Change::Text(format!(
-                "{:<width$}",
-                display_key(&self.delegate.key, self.delegate.label.as_deref()),
-                width = max_key_width
-            )),
+        let mut changes = Vec::with_capacity(7);
+        changes.push(Change::Text("  ".to_string()));
+        style.append_key(
+            colors,
+            &self.delegate.key,
+            self.delegate.label.as_deref(),
+            max_key_width,
+            &mut changes,
+        );
+        changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str(" ", &self.delegate.description)),
-        ];
+        ]);
 
         style.apply(colors, &mut changes);
         buf.add_changes(changes);

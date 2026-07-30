@@ -1,6 +1,4 @@
-use crate::overlay::common::{
-    display_key, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
-};
+use crate::overlay::common::{EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -257,7 +255,7 @@ impl<'a> SelectorState<'a> {
         let context_entries = self.context.as_ref().map_or(0, |c| c.entries.len());
         let visible_entries = self.filtered_entries.len().min(max_items + 1);
         let capacity =
-            20 + context_entries * 6 + self.section.arguments.len() * 5 + visible_entries * 10;
+            20 + context_entries * 6 + self.section.arguments.len() * 7 + visible_entries * 10;
         let mut changes = Vec::with_capacity(capacity);
 
         // Initial setup
@@ -306,19 +304,18 @@ impl<'a> SelectorState<'a> {
         for positional_arg in self.section.arguments {
             let entry_start = changes.len();
             changes.push(Change::Text("\r\n  ".to_string()));
-            changes.push(Change::Attribute(AttributeChange::Foreground(
-                self.colors.key_fg,
-            )));
-            changes.push(Change::Text(format!(
-                "{:<width$}",
-                display_key(&positional_arg.key, positional_arg.label.as_deref()),
-                width = self.section.max_key_width
-            )));
+            let style = EntryRenderStyle::new(&positional_arg.key, &self.typed);
+            style.append_key(
+                &self.colors,
+                &positional_arg.key,
+                positional_arg.label.as_deref(),
+                self.section.max_key_width,
+                &mut changes,
+            );
             changes.push(Change::AllAttributes(CellAttributes::default()));
             changes.push(Change::Text(concat_str(" ", &positional_arg.description)));
 
-            EntryRenderStyle::new(&positional_arg.key, &self.typed)
-                .apply(&self.colors, &mut changes[entry_start..]);
+            style.apply(&self.colors, &mut changes[entry_start..]);
         }
 
         // Selector area: separator + description
