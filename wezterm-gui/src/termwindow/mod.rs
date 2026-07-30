@@ -2457,6 +2457,8 @@ impl TermWindow {
             help_text: args.help_text.clone(),
             fuzzy_help_text: args.fuzzy_help_text.clone(),
             alphabet: None,
+            delimiter: args.delimiter.clone(),
+            pane_count_in_suffix: args.pane_count_in_suffix,
         };
         self.show_launcher_impl(args, active_tab_idx);
     }
@@ -2473,6 +2475,7 @@ impl TermWindow {
             help_text: None,
             fuzzy_help_text: None,
             alphabet: None,
+            ..Default::default()
         };
         self.show_launcher_impl(args, 0);
     }
@@ -2511,6 +2514,8 @@ impl TermWindow {
 
         let config = &self.config;
         let alphabet = args.alphabet.unwrap_or(config.launcher_alphabet.clone());
+        let delimiter = args.delimiter;
+        let pane_count_in_suffix = args.pane_count_in_suffix;
 
         promise::spawn::spawn(async move {
             let args = LauncherArgs::new(
@@ -2522,6 +2527,8 @@ impl TermWindow {
                 &help_text,
                 &fuzzy_help_text,
                 &alphabet,
+                &delimiter,
+                pane_count_in_suffix,
             )
             .await;
 
@@ -2874,6 +2881,8 @@ impl TermWindow {
                     help_text: args.help_text.clone(),
                     fuzzy_help_text: args.fuzzy_help_text.clone(),
                     alphabet: args.alphabet.clone(),
+                    delimiter: args.delimiter.clone(),
+                    pane_count_in_suffix: args.pane_count_in_suffix,
                 };
                 self.show_launcher_impl(args, 0);
             }
