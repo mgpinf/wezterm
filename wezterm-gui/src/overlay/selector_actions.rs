@@ -1,4 +1,6 @@
-use crate::overlay::common::{EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors};
+use crate::overlay::common::{
+    display_key, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
+};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -88,11 +90,7 @@ impl<'a> SelectorState<'a> {
 
         let max_key_width = arguments
             .iter()
-            .map(|a| {
-                a.label
-                    .as_deref()
-                    .map_or(a.key.len(), |label| unicode_column_width(label, None))
-            })
+            .map(|a| unicode_column_width(display_key(&a.key), None))
             .max()
             .unwrap_or(0);
         let section = ArgumentSection {
@@ -308,7 +306,6 @@ impl<'a> SelectorState<'a> {
             style.append_key(
                 &self.colors,
                 &positional_arg.key,
-                positional_arg.label.as_deref(),
                 self.section.max_key_width,
                 &mut changes,
             );
