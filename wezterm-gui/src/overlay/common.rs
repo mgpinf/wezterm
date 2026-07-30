@@ -70,22 +70,6 @@ pub fn display_key<'a>(key: &'a str, label: Option<&'a str>) -> &'a str {
     }
 }
 
-pub fn display_prefix(prefix: &str) -> String {
-    let mut display = String::with_capacity(prefix.len());
-
-    for c in prefix.chars() {
-        match c {
-            ' ' => display.push_str("<space>"),
-            '\n' => display.push_str("<enter>"),
-            '\t' => display.push_str("<tab>"),
-            c if c.is_control() => display.extend(c.escape_default()),
-            c => display.push(c),
-        }
-    }
-
-    display
-}
-
 #[derive(Clone, Copy)]
 pub struct EntryRenderStyle {
     muted: bool,
@@ -125,12 +109,7 @@ impl EntryRenderStyle {
 
 #[cfg(test)]
 mod prefix_tests {
-    use super::{display_prefix, EntryRenderStyle};
-
-    #[test]
-    fn displays_control_keys_in_prefix() {
-        assert_eq!(display_prefix("g \n\t"), "g<space><enter><tab>");
-    }
+    use super::EntryRenderStyle;
 
     #[test]
     fn only_mutes_entries_excluded_by_an_active_prefix() {
