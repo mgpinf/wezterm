@@ -12,6 +12,12 @@ Activates an overlay to display a list of choices for the
 user to select from along with list of [TransientArgument](../TransientArgument.md)
 objects 
 
+The arguments can use multi-character keys. While an incomplete key prefix is
+active, arguments that cannot be reached from that prefix are dimmed and the
+consumed portion of matching keys is shown using
+`transient_entry_non_matching_fg`, as described for
+[TransientMenu](TransientMenu.md).
+
 `SelectorActions` accepts the following fields:
 
 * `description` - text to display at the top of the menu
