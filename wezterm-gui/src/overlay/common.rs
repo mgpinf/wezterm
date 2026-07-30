@@ -1,5 +1,7 @@
 use config::{configuration, AnsiColor, ColorAttribute};
 use std::collections::HashMap;
+use termwiz::surface::Change;
+use wezterm_term::{AttributeChange, Intensity};
 
 pub struct KeyMap<'a, T> {
     entries: HashMap<&'a str, &'a T>,
@@ -68,12 +70,83 @@ pub fn display_key<'a>(key: &'a str, label: Option<&'a str>) -> &'a str {
     }
 }
 
+pub fn display_prefix(prefix: &str) -> String {
+    let mut display = String::with_capacity(prefix.len());
+
+    for c in prefix.chars() {
+        match c {
+            ' ' => display.push_str("<space>"),
+            '\n' => display.push_str("<enter>"),
+            '\t' => display.push_str("<tab>"),
+            c if c.is_control() => display.extend(c.escape_default()),
+            c => display.push(c),
+        }
+    }
+
+    display
+}
+
+#[derive(Clone, Copy)]
+pub struct EntryRenderStyle {
+    muted: bool,
+}
+
+impl EntryRenderStyle {
+    pub fn new(key: &str, prefix: &str) -> Self {
+        let has_prefix = !prefix.is_empty();
+        let matches_prefix = key.starts_with(prefix);
+
+        Self {
+            muted: has_prefix && !matches_prefix,
+        }
+    }
+
+    pub fn apply(self, colors: &OverlayColors, changes: &mut [Change]) {
+        if !self.muted {
+            return;
+        }
+
+        for change in changes {
+            match change {
+                Change::Attribute(AttributeChange::Foreground(color)) => {
+                    *color = colors.non_matching_fg;
+                }
+                Change::Attribute(AttributeChange::Intensity(intensity)) => {
+                    *intensity = Intensity::Normal;
+                }
+                Change::AllAttributes(attrs) => {
+                    attrs.set_foreground(colors.non_matching_fg);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::{display_prefix, EntryRenderStyle};
+
+    #[test]
+    fn displays_control_keys_in_prefix() {
+        assert_eq!(display_prefix("g \n\t"), "g<space><enter><tab>");
+    }
+
+    #[test]
+    fn only_mutes_entries_excluded_by_an_active_prefix() {
+        assert!(!EntryRenderStyle::new("-f", "").muted);
+        assert!(!EntryRenderStyle::new("-f", "-").muted);
+        assert!(EntryRenderStyle::new("g", "-").muted);
+    }
+}
+
 /// Common colors used by transient-style overlays
 pub struct OverlayColors {
     pub key_fg: ColorAttribute,
     pub active_flag_fg: ColorAttribute,
     pub inactive_flag_fg: ColorAttribute,
     pub active_value_fg: ColorAttribute,
+    pub non_matching_fg: ColorAttribute,
     pub description_fg: ColorAttribute,
     pub context_label_fg: ColorAttribute,
     pub context_header_fg: ColorAttribute,
@@ -105,6 +178,10 @@ impl OverlayColors {
             active_value_fg: colors
                 .transient_entry_active_value_fg
                 .unwrap_or(AnsiColor::Green.into())
+                .into(),
+            non_matching_fg: colors
+                .transient_entry_non_matching_fg
+                .unwrap_or(AnsiColor::Grey.into())
                 .into(),
             description_fg: colors
                 .transient_description_fg

@@ -1,4 +1,6 @@
-use crate::overlay::common::{display_key, KeyLookup, KeyMap, LoopAction, OverlayColors};
+use crate::overlay::common::{
+    display_key, display_prefix, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
+};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -120,6 +122,7 @@ impl<'a> TransientSwitch<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        style: EntryRenderStyle,
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
@@ -155,6 +158,7 @@ impl<'a> TransientSwitch<'a> {
         changes.push(Change::AllAttributes(CellAttributes::default()));
         changes.push(Change::Text(")".to_string()));
 
+        style.apply(colors, &mut changes);
         buf.add_changes(changes);
 
         Ok(())
@@ -170,6 +174,7 @@ impl<'a> TransientOption<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        style: EntryRenderStyle,
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
@@ -207,6 +212,7 @@ impl<'a> TransientOption<'a> {
         changes.push(Change::AllAttributes(CellAttributes::default()));
         changes.push(Change::Text(")".to_string()));
 
+        style.apply(colors, &mut changes);
         buf.add_changes(changes);
 
         Ok(())
@@ -222,6 +228,7 @@ impl<'a> TransientCyclicSwitch<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        style: EntryRenderStyle,
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
@@ -295,6 +302,7 @@ impl<'a> TransientCyclicSwitch<'a> {
         }
         changes.push(Change::Text(")".to_string()));
 
+        style.apply(colors, &mut changes);
         buf.add_changes(changes);
 
         Ok(())
@@ -309,10 +317,11 @@ impl<'a> TransientArgument<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
+        style: EntryRenderStyle,
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        buf.add_changes(vec![
+        let mut changes = vec![
             Change::Text("  ".to_string()),
             Change::Attribute(AttributeChange::Foreground(colors.key_fg)),
             Change::Text(format!(
@@ -322,7 +331,10 @@ impl<'a> TransientArgument<'a> {
             )),
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str(" ", &self.delegate.description)),
-        ]);
+        ];
+
+        style.apply(colors, &mut changes);
+        buf.add_changes(changes);
 
         Ok(())
     }
@@ -342,17 +354,33 @@ enum RenderableEntity<'a> {
 }
 
 impl RenderableEntity<'_> {
+    fn key(&self) -> &str {
+        match self {
+            Self::Opt(option) => &option.delegate.key,
+            Self::Switch(switch) => &switch.delegate.key,
+            Self::CyclicSwitch(cyclic_switch) => &cyclic_switch.delegate.key,
+            Self::Argument(positional_arg) => &positional_arg.delegate.key,
+        }
+    }
+
     fn render(
         &self,
         colors: &OverlayColors,
+        prefix: &str,
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
+        let style = EntryRenderStyle::new(self.key(), prefix);
+
         match self {
-            Self::Opt(option) => option.render(colors, max_key_width, buf),
-            Self::Switch(switch) => switch.render(colors, max_key_width, buf),
-            Self::CyclicSwitch(cyclic_switch) => cyclic_switch.render(colors, max_key_width, buf),
-            Self::Argument(positional_arg) => positional_arg.render(colors, max_key_width, buf),
+            Self::Opt(option) => option.render(colors, style, max_key_width, buf),
+            Self::Switch(switch) => switch.render(colors, style, max_key_width, buf),
+            Self::CyclicSwitch(cyclic_switch) => {
+                cyclic_switch.render(colors, style, max_key_width, buf)
+            }
+            Self::Argument(positional_arg) => {
+                positional_arg.render(colors, style, max_key_width, buf)
+            }
         }
     }
 }
@@ -414,7 +442,7 @@ impl<'a> TransientState<'a> {
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        self.buf.add_changes(vec![
+        let mut heading_changes = vec![
             Change::ClearScreen(ColorAttribute::Default),
             Change::CursorPosition {
                 x: Position::Absolute(0),
@@ -424,12 +452,26 @@ impl<'a> TransientState<'a> {
             Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
             Change::Attribute(AttributeChange::Foreground(self.colors.description_fg)),
             Change::Text(self.description.clone()),
+        ];
+
+        if !self.typed.is_empty() {
+            heading_changes.extend([
+                Change::AllAttributes(CellAttributes::default()),
+                Change::Text("  Prefix: ".to_string()),
+                Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
+                Change::Attribute(AttributeChange::Foreground(self.colors.key_fg)),
+                Change::Text(display_prefix(&self.typed)),
+            ]);
+        }
+
+        heading_changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text("\r\n".to_string()),
             Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
             Change::Text(self.description_separator.clone()),
             Change::AllAttributes(CellAttributes::default()),
         ]);
+        self.buf.add_changes(heading_changes);
 
         if let Some(context) = self.context {
             // 5 base elements + 5 per entry
@@ -465,7 +507,7 @@ impl<'a> TransientState<'a> {
             ]);
             for entity in &section.entries {
                 self.buf.add_change(Change::Text("\r\n".to_string()));
-                entity.render(&self.colors, section.max_key_width, self.buf)?;
+                entity.render(&self.colors, &self.typed, section.max_key_width, self.buf)?;
             }
         }
 
