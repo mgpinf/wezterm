@@ -14,6 +14,16 @@ We can view and set switches, options, cyclic switches and
 select an argument to trigger action with the current state
 of above-mentioned entities passed as an argument.
 
+Entry keys can contain multiple characters. While an incomplete key prefix is
+active, entries that cannot be reached from that prefix are dimmed. For matching
+entries, the consumed portion of the displayed key is dimmed while the remaining
+portion retains the normal key color. The
+`transient_entry_non_matching_fg` [color setting](../../appearance.md#defining-your-own-colors)
+controls the dimmed foreground.
+
+If an entry defines a custom `label`, its consumed prefix is dimmed only when
+the label visibly begins with the corresponding portion of the raw `key`.
+
 
 `TransientMenu` accepts the following fields:
 
