@@ -130,12 +130,7 @@ impl<'a> TransientSwitch<'a> {
 
         let mut changes = Vec::with_capacity(12);
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(
-            colors,
-            &delegate.key,
-            max_key_width,
-            &mut changes,
-        );
+        style.append_key(colors, &delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
@@ -182,12 +177,7 @@ impl<'a> TransientOption<'a> {
 
         let mut changes = Vec::with_capacity(15);
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(
-            colors,
-            &delegate.key,
-            max_key_width,
-            &mut changes,
-        );
+        style.append_key(colors, &delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
@@ -237,12 +227,7 @@ impl<'a> TransientCyclicSwitch<'a> {
         // Base: 12 elements + up to 5 per choice (when active choice is highlighted)
         let mut changes = Vec::with_capacity(14 + delegate.choices.len() * 5);
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(
-            colors,
-            &delegate.key,
-            max_key_width,
-            &mut changes,
-        );
+        style.append_key(colors, &delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str3(" ", &delegate.description, " (")),
@@ -323,12 +308,7 @@ impl<'a> TransientArgument<'a> {
     ) -> anyhow::Result<()> {
         let mut changes = Vec::with_capacity(7);
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(
-            colors,
-            &self.delegate.key,
-            max_key_width,
-            &mut changes,
-        );
+        style.append_key(colors, &self.delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
             Change::Text(concat_str(" ", &self.delegate.description)),
