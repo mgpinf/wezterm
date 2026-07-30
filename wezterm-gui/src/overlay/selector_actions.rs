@@ -1,4 +1,6 @@
-use crate::overlay::common::{display_key, KeyLookup, KeyMap, LoopAction, OverlayColors};
+use crate::overlay::common::{
+    display_key, display_prefix, EntryRenderStyle, KeyLookup, KeyMap, LoopAction, OverlayColors,
+};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
@@ -254,8 +256,12 @@ impl<'a> SelectorState<'a> {
         // Estimate capacity: base changes + context + section + selector entries
         let context_entries = self.context.as_ref().map_or(0, |c| c.entries.len());
         let visible_entries = self.filtered_entries.len().min(max_items + 1);
-        let capacity =
-            20 + context_entries * 6 + self.section.arguments.len() * 5 + visible_entries * 10;
+        let prefix_changes = if self.typed.is_empty() { 0 } else { 5 };
+        let capacity = 20
+            + prefix_changes
+            + context_entries * 6
+            + self.section.arguments.len() * 5
+            + visible_entries * 10;
         let mut changes = Vec::with_capacity(capacity);
 
         // Initial setup
@@ -299,9 +305,23 @@ impl<'a> SelectorState<'a> {
             self.colors.section_header_fg,
         )));
         changes.push(Change::Text(self.section.header.clone()));
+
+        if !self.typed.is_empty() {
+            changes.push(Change::AllAttributes(CellAttributes::default()));
+            changes.push(Change::Text("  Prefix: ".to_string()));
+            changes.push(Change::Attribute(AttributeChange::Intensity(
+                Intensity::Bold,
+            )));
+            changes.push(Change::Attribute(AttributeChange::Foreground(
+                self.colors.key_fg,
+            )));
+            changes.push(Change::Text(display_prefix(&self.typed)));
+        }
+
         changes.push(Change::AllAttributes(CellAttributes::default()));
 
         for positional_arg in self.section.arguments {
+            let entry_start = changes.len();
             changes.push(Change::Text("\r\n  ".to_string()));
             changes.push(Change::Attribute(AttributeChange::Foreground(
                 self.colors.key_fg,
@@ -313,6 +333,9 @@ impl<'a> SelectorState<'a> {
             )));
             changes.push(Change::AllAttributes(CellAttributes::default()));
             changes.push(Change::Text(concat_str(" ", &positional_arg.description)));
+
+            EntryRenderStyle::new(&positional_arg.key, &self.typed)
+                .apply(&self.colors, &mut changes[entry_start..]);
         }
 
         // Selector area: separator + description
@@ -519,7 +542,6 @@ impl<'a> SelectorState<'a> {
                     modifiers: _,
                 }) => {
                     self.typed.pop();
-                    continue;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('G' | 'C'),
