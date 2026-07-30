@@ -12,8 +12,6 @@ action we are going to perform.
 
 It is a lua object with the following fields:
 * `key` - text to enter in order to trigger the argument
-* `label` - optional display text shown in the menu instead of `key`.
-  Useful for showing a friendlier name (e.g. `"SPC"` instead of `" "`)
 * `description` - text to describe the argument
 * `action` - an event callback registered via `wezterm.action_callback`.  The
   callback's function signature is `(window, pane, result)` where `window` and

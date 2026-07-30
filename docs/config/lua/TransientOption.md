@@ -12,8 +12,6 @@ flag that can be toggled and requires a value when activated.
 
 It is a lua object with the following fields:
 * `key` - text to enter in order to set option
-* `label` - optional display text shown in the menu instead of `key`.
-  Useful for showing a friendlier name (e.g. `"SPC"` instead of `" "`)
 * `default` - optional argument indicating default value.
   If omitted, option is not set
 * `description` - text to describe the option
@@ -42,14 +40,6 @@ local option = {
   flag = '--tail=',
   allow_nil = true,
   choices = { 'choice1', 'choice2' },
-}
-
--- With a custom label
-local option_with_label = {
-  key = ' ',
-  label = 'SPC',
-  description = 'Set value',
-  flag = '--value=',
 }
 
 -- With metadata
