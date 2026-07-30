@@ -21,10 +21,6 @@ portion retains the normal key color. The
 `transient_entry_non_matching_fg` [color setting](../../appearance.md#defining-your-own-colors)
 controls the dimmed foreground.
 
-If an entry defines a custom `label`, its consumed prefix is dimmed only when
-the label visibly begins with the corresponding portion of the raw `key`.
-
-
 `TransientMenu` accepts the following fields:
 
 * `description` - text to display at the top of the menu
