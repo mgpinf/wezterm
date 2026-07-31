@@ -22,15 +22,6 @@ use wezterm_term::unicode_column_width;
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::{Clipboard, Modifiers, WindowOps};
 
-/// Concatenate a prefix and value without format! overhead
-#[inline]
-fn concat_str(prefix: &str, value: &str) -> String {
-    let mut s = String::with_capacity(prefix.len() + value.len());
-    s.push_str(prefix);
-    s.push_str(value);
-    s
-}
-
 #[derive(Clone)]
 struct SelectorEntry<'a> {
     delegate: &'a SelectorActionsEntry,
@@ -249,12 +240,7 @@ impl<'a> SelectorState<'a> {
         let selector_start_row = rows - selector_size - 3;
         let max_items = self.max_items;
 
-        // Estimate capacity: base changes + context + section + selector entries
-        let context_entries = self.context.as_ref().map_or(0, |c| c.entries.len());
-        let visible_entries = self.filtered_entries.len().min(max_items + 1);
-        let capacity =
-            20 + context_entries * 6 + self.section.arguments.len() * 7 + visible_entries * 10;
-        let mut changes = Vec::with_capacity(capacity);
+        let mut changes = vec![];
 
         // Initial setup
         changes.push(Change::ClearScreen(ColorAttribute::Default));
@@ -282,7 +268,7 @@ impl<'a> SelectorState<'a> {
                 )));
                 changes.push(Change::Text(entry.label.clone()));
                 changes.push(Change::AllAttributes(CellAttributes::default()));
-                changes.push(Change::Text(concat_str(": ", &entry.id)));
+                changes.push(Change::Text(format!(": {}", entry.id)));
                 changes.push(Change::AllAttributes(CellAttributes::default()));
             }
 
@@ -310,7 +296,7 @@ impl<'a> SelectorState<'a> {
                 &mut changes,
             );
             changes.push(Change::AllAttributes(CellAttributes::default()));
-            changes.push(Change::Text(concat_str(" ", &positional_arg.description)));
+            changes.push(Change::Text(format!(" {}", positional_arg.description)));
 
             style.apply(&self.colors, &mut changes[entry_start..]);
         }
@@ -335,7 +321,7 @@ impl<'a> SelectorState<'a> {
         changes.push(Change::Text(truncate_right(&self.description, max_width)));
         changes.push(Change::AllAttributes(CellAttributes::default()));
         if !self.filter_term.is_empty() {
-            changes.push(Change::Text(concat_str(": ", &self.filter_term)));
+            changes.push(Change::Text(format!(": {}", self.filter_term)));
         }
         changes.push(Change::Text("\r\n".to_string()));
 
@@ -407,7 +393,7 @@ impl<'a> SelectorState<'a> {
             )));
             changes.push(Change::Text(filter_prefix));
             changes.push(Change::AllAttributes(CellAttributes::default()));
-            changes.push(Change::Text(concat_str(": ", &self.filter_term)));
+            changes.push(Change::Text(format!(": {}", self.filter_term)));
             changes.push(Change::CursorPosition {
                 x: Position::Absolute(cursor_x),
                 y: Position::Absolute(selector_start_row + 1),

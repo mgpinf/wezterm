@@ -26,25 +26,6 @@ use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
 use wezterm_term::{unicode_column_width, AttributeChange, CellAttributes, Intensity};
 use window::Modifiers;
 
-/// Concatenate a prefix and value without format! overhead
-#[inline]
-fn concat_str(prefix: &str, value: &str) -> String {
-    let mut s = String::with_capacity(prefix.len() + value.len());
-    s.push_str(prefix);
-    s.push_str(value);
-    s
-}
-
-/// Concatenate prefix, value, and suffix without format! overhead
-#[inline]
-fn concat_str3(prefix: &str, value: &str, suffix: &str) -> String {
-    let mut s = String::with_capacity(prefix.len() + value.len() + suffix.len());
-    s.push_str(prefix);
-    s.push_str(value);
-    s.push_str(suffix);
-    s
-}
-
 const ROW_OVERHEAD: usize = 6;
 
 struct SelectorState<'a> {
@@ -128,12 +109,12 @@ impl<'a> TransientSwitch<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        let mut changes = Vec::with_capacity(12);
+        let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
         style.append_key(colors, &delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(concat_str3(" ", &delegate.description, " (")),
+            Change::Text(format!(" {} (", delegate.description)),
         ]);
 
         if self.value.get() {
@@ -175,12 +156,12 @@ impl<'a> TransientOption<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        let mut changes = Vec::with_capacity(15);
+        let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
         style.append_key(colors, &delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(concat_str3(" ", &delegate.description, " (")),
+            Change::Text(format!(" {} (", delegate.description)),
         ]);
 
         if let Some(val) = self.value.borrow().as_deref() {
@@ -224,13 +205,12 @@ impl<'a> TransientCyclicSwitch<'a> {
     ) -> anyhow::Result<()> {
         let delegate = self.delegate;
 
-        // Base: 12 elements + up to 5 per choice (when active choice is highlighted)
-        let mut changes = Vec::with_capacity(14 + delegate.choices.len() * 5);
+        let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
         style.append_key(colors, &delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(concat_str3(" ", &delegate.description, " (")),
+            Change::Text(format!(" {} (", delegate.description)),
         ]);
 
         if let Some(idx) = self.active_idx.get() {
@@ -255,7 +235,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                             Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
                         ]);
                     } else {
-                        changes.push(Change::Text(concat_str(prefix, choice)));
+                        changes.push(Change::Text(format!("{prefix}{choice}")));
                     }
                     if cur_idx == 0 {
                         prefix = "|";
@@ -276,7 +256,7 @@ impl<'a> TransientCyclicSwitch<'a> {
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in delegate.choices.iter().enumerate() {
-                    changes.push(Change::Text(concat_str(prefix, choice)));
+                    changes.push(Change::Text(format!("{prefix}{choice}")));
                     if cur_idx == 0 {
                         prefix = "|";
                     }
@@ -306,12 +286,12 @@ impl<'a> TransientArgument<'a> {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        let mut changes = Vec::with_capacity(7);
+        let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
         style.append_key(colors, &self.delegate.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(concat_str(" ", &self.delegate.description)),
+            Change::Text(format!(" {}", self.delegate.description)),
         ]);
 
         style.apply(colors, &mut changes);
@@ -441,8 +421,7 @@ impl<'a> TransientState<'a> {
         ]);
 
         if let Some(context) = self.context {
-            // 5 base elements + 5 per entry
-            let mut changes = Vec::with_capacity(5 + context.entries.len() * 5);
+            let mut changes = vec![];
             changes.extend([
                 Change::Text("\r\n\r\n".to_string()),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
@@ -457,7 +436,7 @@ impl<'a> TransientState<'a> {
                     Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)),
                     Change::Text(entry.label.clone()),
                     Change::AllAttributes(CellAttributes::default()),
-                    Change::Text(concat_str(": ", &entry.id)),
+                    Change::Text(format!(": {}", entry.id)),
                 ]);
             }
 
@@ -517,7 +496,7 @@ impl<'a> TransientState<'a> {
                     }
 
                     self.buf.add_changes(vec![
-                        Change::Text(concat_str(": ", prompt_state.line.get_line())),
+                        Change::Text(format!(": {}", prompt_state.line.get_line())),
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
                             x: Position::Absolute(cursor_x),
@@ -530,10 +509,7 @@ impl<'a> TransientState<'a> {
                     let max_width = cols.saturating_sub(6);
 
                     let selector_size = selector_state.choices.len().min(selector_state.max_items);
-                    let visible_rows = selector_size.min(selector_state.max_items + 1);
-
-                    // 8 base elements + ~10 per visible row (varies due to line.changes)
-                    let mut changes = Vec::with_capacity(8 + visible_rows * 10);
+                    let mut changes = vec![];
                     changes.extend([
                         Change::CursorPosition {
                             x: Position::Absolute(0),
@@ -550,7 +526,7 @@ impl<'a> TransientState<'a> {
                         )),
                         Change::Text(selector_state.option.delegate.description.clone()),
                         Change::AllAttributes(CellAttributes::default()),
-                        Change::Text(concat_str(": ", &selector_state.filter_term)),
+                        Change::Text(format!(": {}", selector_state.filter_term)),
                     ]);
 
                     for (row_num, (entry_idx, entry)) in selector_state
