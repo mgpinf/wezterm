@@ -10,9 +10,8 @@ tags:
 This creates an overlay with keyboard driven menu similar to
 Emacs transient menus. 
 
-We can view and set switches, options, cyclic switches and
-select an argument to trigger action with the current state
-of above-mentioned entities passed as an argument.
+We can view and set switches, options, and cyclic switches, then trigger an
+action with the current state of those entries passed to its callback.
 
 Entry keys can contain multiple characters. While an incomplete key prefix is
 active, entries that cannot be reached from that prefix are dimmed. For matching
@@ -309,7 +308,7 @@ containers_selector_actions = function(state)
           choices = containers,
           section = {
             header = header 'Actions',
-            arguments = {
+            actions = {
               {
                 key = 'l',
                 description = 'Logs',
