@@ -4,7 +4,7 @@ use crate::overlay::common::{
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
-    KeyAssignment, TransientArgument as KTransientArgument, TransientContext as KTransientContext,
+    KeyAssignment, TransientAction as KTransientAction, TransientContext as KTransientContext,
     TransientCyclicSwitch as KTransientCyclicSwitch, TransientEntry as KTransientEntry,
     TransientMenu as KTransientMenu, TransientOption as KTransientOption,
     TransientSection as KTransientSection, TransientSwitch as KTransientSwitch,
@@ -274,11 +274,11 @@ impl<'a> TransientCyclicSwitch<'a> {
     }
 }
 
-struct TransientArgument<'a> {
-    delegate: &'a KTransientArgument,
+struct TransientAction<'a> {
+    delegate: &'a KTransientAction,
 }
 
-impl<'a> TransientArgument<'a> {
+impl<'a> TransientAction<'a> {
     fn render(
         &self,
         colors: &OverlayColors,
@@ -310,7 +310,7 @@ struct TransientSection<'a> {
 enum RenderableEntity<'a> {
     Opt(TransientOption<'a>),
     Switch(TransientSwitch<'a>),
-    Argument(TransientArgument<'a>),
+    Action(TransientAction<'a>),
     CyclicSwitch(TransientCyclicSwitch<'a>),
 }
 
@@ -320,7 +320,7 @@ impl RenderableEntity<'_> {
             Self::Opt(option) => &option.delegate.key,
             Self::Switch(switch) => &switch.delegate.key,
             Self::CyclicSwitch(cyclic_switch) => &cyclic_switch.delegate.key,
-            Self::Argument(positional_arg) => &positional_arg.delegate.key,
+            Self::Action(action) => &action.delegate.key,
         }
     }
 
@@ -339,8 +339,8 @@ impl RenderableEntity<'_> {
             Self::CyclicSwitch(cyclic_switch) => {
                 cyclic_switch.render(colors, style, max_key_width, buf)
             }
-            Self::Argument(positional_arg) => {
-                positional_arg.render(colors, style, max_key_width, buf)
+            Self::Action(action) => {
+                action.render(colors, style, max_key_width, buf)
             }
         }
     }
@@ -651,15 +651,15 @@ impl<'a> TransientState<'a> {
                             });
                         }
                     }
-                    RenderableEntity::Argument(positional_arg) => {
-                        let name = match *positional_arg.delegate.action {
+                    RenderableEntity::Action(action) => {
+                        let name = match *action.delegate.action {
                             KeyAssignment::EmitEvent(ref id) => id,
                             _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
                         };
 
                         let result = TransientResult::from(self.sections);
                         self.trigger_event(name, Some(result));
-                        if !positional_arg.delegate.keep_overlay {
+                        if !action.delegate.keep_overlay {
                             return Ok(LoopAction::Break);
                         }
                     }
@@ -980,8 +980,8 @@ fn create_keymap<'a>(
                 RenderableEntity::CyclicSwitch(cyclic_switch) => {
                     keymap.insert(&cyclic_switch.delegate.key, entity);
                 }
-                RenderableEntity::Argument(positional_arg) => {
-                    keymap.insert(&positional_arg.delegate.key, entity);
+                RenderableEntity::Action(action) => {
+                    keymap.insert(&action.delegate.key, entity);
                 }
             }
         }
@@ -1018,9 +1018,9 @@ fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSec
                         active_idx: Cell::new(active_idx),
                     })
                 }
-                KTransientEntry::TransientArgument(positional_arg) => {
-                    RenderableEntity::Argument(TransientArgument {
-                        delegate: positional_arg,
+                KTransientEntry::TransientAction(action) => {
+                    RenderableEntity::Action(TransientAction {
+                        delegate: action,
                     })
                 }
             };

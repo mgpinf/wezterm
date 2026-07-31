@@ -54,7 +54,7 @@ act.TransientMenu {
       description = 'Verbose',
       flag = '--verbose',
     },
-    { type = 'argument', key = 'r', description = 'Run', action = callback },
+    { type = 'action', key = 'r', description = 'Run', action = callback },
   },
 }
 ```
@@ -82,7 +82,7 @@ act.TransientMenu {
       header = 'Actions',
       entries = {
         {
-          type = 'argument',
+          type = 'action',
           key = 'r',
           description = 'Run',
           action = callback,
@@ -129,7 +129,7 @@ entries = {
     flag = '--choice=',
     choices = { 'a', 'b' },
   },
-  { type = 'argument', key = 'l', description = 'Logs', action = callback },
+  { type = 'action', key = 'l', description = 'Logs', action = callback },
 }
 ```
 
@@ -137,7 +137,7 @@ The `type` field accepts:
 * `"switch"` - boolean toggle, see [TransientSwitch](../TransientSwitch.md)
 * `"option"` - value input, see [TransientOption](../TransientOption.md)
 * `"cyclic"` - cycle through choices, see [TransientCyclicSwitch](../TransientCyclicSwitch.md)
-* `"argument"` - trigger action, see [TransientArgument](../TransientArgument.md)
+* `"action"` - trigger an action, see [TransientAction](../TransientAction.md)
 
 ## Combining TransientMenu and SelectorActions for viewing logs for Docker containers with an ability to move between KeyAssignments
 
@@ -235,7 +235,7 @@ containers_logs_transient = function(state)
             header = header 'Actions',
             entries = {
               {
-                type = 'argument',
+                type = 'action',
                 key = 'l',
                 description = 'Logs',
                 action = wezterm.action_callback(
@@ -351,7 +351,7 @@ docker_actions_transient = function(state)
             header = header 'Actions',
             entries = {
               {
-                type = 'argument',
+                type = 'action',
                 key = 'c',
                 description = 'Containers',
                 action = wezterm.action_callback(
