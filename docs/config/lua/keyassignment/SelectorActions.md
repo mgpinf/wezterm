@@ -9,7 +9,7 @@ tags:
 {{since('nightly')}}
 
 Activates an overlay to display a list of choices for the
-user to select from along with list of [TransientArgument](../TransientArgument.md)
+user to select from along with list of [TransientAction](../TransientAction.md)
 objects 
 
 The arguments can use multi-character keys. While an incomplete key prefix is
