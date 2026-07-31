@@ -339,9 +339,7 @@ impl RenderableEntity<'_> {
             Self::CyclicSwitch(cyclic_switch) => {
                 cyclic_switch.render(colors, style, max_key_width, buf)
             }
-            Self::Action(action) => {
-                action.render(colors, style, max_key_width, buf)
-            }
+            Self::Action(action) => action.render(colors, style, max_key_width, buf),
         }
     }
 }
@@ -1019,9 +1017,7 @@ fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSec
                     })
                 }
                 KTransientEntry::TransientAction(action) => {
-                    RenderableEntity::Action(TransientAction {
-                        delegate: action,
-                    })
+                    RenderableEntity::Action(TransientAction { delegate: action })
                 }
             };
             entries.push(transient_entry);

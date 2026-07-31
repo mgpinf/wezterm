@@ -1044,10 +1044,10 @@ impl FromDynamic for TransientMenu {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
-pub struct ArgumentSection {
+pub struct SelectorActionSection {
     #[dynamic(default)]
     pub header: Option<String>,
-    pub arguments: Vec<TransientAction>,
+    pub actions: Vec<TransientAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -1067,7 +1067,7 @@ pub struct SelectorActions {
     #[dynamic(default)]
     pub context: Option<TransientContext>,
     pub choices: Vec<SelectorActionsEntry>,
-    pub section: ArgumentSection,
+    pub section: SelectorActionSection,
     #[dynamic(default)]
     pub multiple: bool,
     #[dynamic(default)]
