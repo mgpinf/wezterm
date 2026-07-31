@@ -28,9 +28,9 @@ struct SelectorEntry<'a> {
     idx: usize,
 }
 
-struct ArgumentSection<'a> {
+struct ActionSection<'a> {
     header: String,
-    arguments: &'a [TransientAction],
+    actions: &'a [TransientAction],
     max_key_width: usize,
 }
 
@@ -51,7 +51,7 @@ struct SelectorState<'a> {
     typed: String,
     context: Option<&'a TransientContext>,
     colors: OverlayColors,
-    section: ArgumentSection<'a>,
+    section: ActionSection<'a>,
     cancel: Option<Box<KeyAssignment>>,
     repeat: [u8; 2],
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
@@ -68,7 +68,7 @@ impl<'a> SelectorState<'a> {
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context_size = args.context.as_ref().map_or(0, |v| v.entries.len() + 2);
-        let actions_size = args.section.arguments.len() + 1;
+        let actions_size = args.section.actions.len() + 1;
         let overhead = context_size + actions_size + 3;
 
         let (_, rows) = buf.dimensions();
@@ -77,20 +77,20 @@ impl<'a> SelectorState<'a> {
         let multiple_idx = args.multiple.then(|| vec![false; choices.len()]);
         let filtered_entries = choices.iter().collect();
 
-        let arguments = &args.section.arguments;
+        let actions = &args.section.actions;
 
-        let max_key_width = arguments
+        let max_key_width = actions
             .iter()
             .map(|a| unicode_column_width(display_key(&a.key), None))
             .max()
             .unwrap_or(0);
-        let section = ArgumentSection {
+        let section = ActionSection {
             header: args
                 .section
                 .header
                 .clone()
                 .unwrap_or_else(|| "Default".to_string()),
-            arguments,
+            actions,
             max_key_width,
         };
 
@@ -275,7 +275,7 @@ impl<'a> SelectorState<'a> {
             changes.push(Change::Text("\r\n\r\n".to_string()));
         }
 
-        // Section header and arguments
+        // Section header and actions
         changes.push(Change::Attribute(AttributeChange::Intensity(
             Intensity::Bold,
         )));
@@ -285,7 +285,7 @@ impl<'a> SelectorState<'a> {
         changes.push(Change::Text(self.section.header.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
 
-        for action in self.section.arguments {
+        for action in self.section.actions {
             let entry_start = changes.len();
             changes.push(Change::Text("\r\n  ".to_string()));
             let style = EntryRenderStyle::new(&action.key, &self.typed);
@@ -636,7 +636,7 @@ impl<'a> SelectorState<'a> {
                 }
                 InputEvent::Resized { cols, rows } => {
                     let context_size = self.context.as_ref().map_or(0, |v| v.entries.len() + 2);
-                    let actions_size = self.section.arguments.len() + 1;
+                    let actions_size = self.section.actions.len() + 1;
                     let overhead = context_size + actions_size + 3;
                     self.max_items = rows.saturating_sub(overhead);
                     self.separator_line = "─".repeat(cols);
@@ -671,7 +671,7 @@ struct SelectorActionsResult {
 impl_lua_conversion_dynamic!(SelectorActionsResult);
 
 fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<'a, TransientAction>) {
-    for action in &args.section.arguments {
+    for action in &args.section.actions {
         keymap.insert(&action.key, action);
     }
 }

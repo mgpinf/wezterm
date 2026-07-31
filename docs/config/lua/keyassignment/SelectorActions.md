@@ -8,12 +8,11 @@ tags:
 
 {{since('nightly')}}
 
-Activates an overlay to display a list of choices for the
-user to select from along with list of [TransientAction](../TransientAction.md)
-objects 
+Activates an overlay that displays a list of choices and a list of
+[TransientAction](../TransientAction.md) objects.
 
-The arguments can use multi-character keys. While an incomplete key prefix is
-active, arguments that cannot be reached from that prefix are dimmed and the
+The actions can use multi-character keys. While an incomplete key prefix is
+active, actions that cannot be reached from that prefix are dimmed and the
 consumed portion of matching keys is shown using
 `transient_entry_non_matching_fg`, as described for
 [TransientMenu](TransientMenu.md).
@@ -22,7 +21,7 @@ consumed portion of matching keys is shown using
 
 * `description` - text to display at the top of the menu
 * `title` - optional, the title that will be set for the overlay pane
-* `context` - an optional argument that accepts a
+* `context` - an optional field that accepts a
   [TransientContext](../TransientContext.md) object
 * `choices` - a lua table consisting of the potential choices. Each entry
   is itself a table with a `label` field, an optional `id` field and an optional
@@ -32,20 +31,19 @@ consumed portion of matching keys is shown using
   with [wezterm.format](../wezterm/format.md) to produce styled text.
   The metadata is a table of key-value pairs where keys are strings and values
   can be of any type. e.g. `metadata = { container_id = "abc123", status = "running" }`.
-* `section` - an [SelectorActionsArgumentSection](../SelectorActionsArgumentSection.md)
+* `section` - a [SelectorActionSection](../SelectorActionSection.md)
   object
-* `multiple` - this is an optional argument. Defaults to `false`.
+* `multiple` - an optional boolean that defaults to `false`.
   If set to `true`, user can select multiple choices.
-* `fuzzy_description` - text to display when in fuzzy finding mode.
-  This is an optional argument. Defaults to text mentioned against
-  `description`
+* `fuzzy_description` - optional text to display when in fuzzy finding mode.
+  Defaults to the value of `description`
 * `fuzzy` - a boolean that defaults to `false`. If `true`, SelectorActions will start
   in its fuzzy finding mode (this is equivalent to starting the SelectorActions and
   pressing <kbd>Ctrl</kbd> + <kbd>/</kbd> in the default mode)
 * `cancel` - event callback registered via `wezterm.action_callback`. The
   callback's function signature is `(window, pane)` where `window` and
   `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
-  This is an optional argument. If present, this callback is called when the
+  This is an optional field. If present, this callback is called when the
   user cancels the current overlay
 
 
