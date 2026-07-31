@@ -4,7 +4,7 @@ use crate::overlay::common::{
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
-    KeyAssignment, SelectorActions, SelectorActionsEntry, TransientArgument, TransientContext,
+    KeyAssignment, SelectorActions, SelectorActionsEntry, TransientAction, TransientContext,
 };
 use config::ColorAttribute;
 use luahelper::impl_lua_conversion_dynamic;
@@ -30,7 +30,7 @@ struct SelectorEntry<'a> {
 
 struct ArgumentSection<'a> {
     header: String,
-    arguments: &'a [TransientArgument],
+    arguments: &'a [TransientAction],
     max_key_width: usize,
 }
 
@@ -47,7 +47,7 @@ struct SelectorState<'a> {
     fuzzy_description: String,
     window: GuiWin,
     pane: MuxPane,
-    keymap: &'a KeyMap<'a, TransientArgument>,
+    keymap: &'a KeyMap<'a, TransientAction>,
     typed: String,
     context: Option<&'a TransientContext>,
     colors: OverlayColors,
@@ -63,13 +63,13 @@ impl<'a> SelectorState<'a> {
         args: &'a SelectorActions,
         window: GuiWin,
         pane: MuxPane,
-        keymap: &'a KeyMap<'a, TransientArgument>,
+        keymap: &'a KeyMap<'a, TransientAction>,
         choices: &'a [SelectorEntry<'_>],
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context_size = args.context.as_ref().map_or(0, |v| v.entries.len() + 2);
-        let positional_args_size = args.section.arguments.len() + 1;
-        let overhead = context_size + positional_args_size + 3;
+        let actions_size = args.section.arguments.len() + 1;
+        let overhead = context_size + actions_size + 3;
 
         let (_, rows) = buf.dimensions();
         let max_items = rows.saturating_sub(overhead);
@@ -285,18 +285,18 @@ impl<'a> SelectorState<'a> {
         changes.push(Change::Text(self.section.header.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
 
-        for positional_arg in self.section.arguments {
+        for action in self.section.arguments {
             let entry_start = changes.len();
             changes.push(Change::Text("\r\n  ".to_string()));
-            let style = EntryRenderStyle::new(&positional_arg.key, &self.typed);
+            let style = EntryRenderStyle::new(&action.key, &self.typed);
             style.append_key(
                 &self.colors,
-                &positional_arg.key,
+                &action.key,
                 self.section.max_key_width,
                 &mut changes,
             );
             changes.push(Change::AllAttributes(CellAttributes::default()));
-            changes.push(Change::Text(format!(" {}", positional_arg.description)));
+            changes.push(Change::Text(format!(" {}", action.description)));
 
             style.apply(&self.colors, &mut changes[entry_start..]);
         }
@@ -412,8 +412,8 @@ impl<'a> SelectorState<'a> {
         self.typed.push(c);
 
         match self.keymap.lookup(&self.typed) {
-            KeyLookup::Found(positional_arg) => {
-                let name = match *positional_arg.action {
+            KeyLookup::Found(action) => {
+                let name = match *action.action {
                     KeyAssignment::EmitEvent(ref id) => id,
                     _ => anyhow::bail!(
                         "SelectorActions requires action to be defined by wezterm.action_callback"
@@ -452,7 +452,7 @@ impl<'a> SelectorState<'a> {
 
                 let result = SelectorActionsResult { choices };
                 self.trigger_event(name, Some(result));
-                if positional_arg.keep_overlay {
+                if action.keep_overlay {
                     self.typed.clear();
                 } else {
                     return Ok(LoopAction::Break);
@@ -636,8 +636,8 @@ impl<'a> SelectorState<'a> {
                 }
                 InputEvent::Resized { cols, rows } => {
                     let context_size = self.context.as_ref().map_or(0, |v| v.entries.len() + 2);
-                    let positional_args_size = self.section.arguments.len() + 1;
-                    let overhead = context_size + positional_args_size + 3;
+                    let actions_size = self.section.arguments.len() + 1;
+                    let overhead = context_size + actions_size + 3;
                     self.max_items = rows.saturating_sub(overhead);
                     self.separator_line = "─".repeat(cols);
 
@@ -670,9 +670,9 @@ struct SelectorActionsResult {
 }
 impl_lua_conversion_dynamic!(SelectorActionsResult);
 
-fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<'a, TransientArgument>) {
-    for positional_arg in &args.section.arguments {
-        keymap.insert(&positional_arg.key, positional_arg);
+fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<'a, TransientAction>) {
+    for action in &args.section.arguments {
+        keymap.insert(&action.key, action);
     }
 }
 

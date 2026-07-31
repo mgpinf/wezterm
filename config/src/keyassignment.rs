@@ -864,7 +864,7 @@ pub struct TransientOption {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
-pub struct TransientArgument {
+pub struct TransientAction {
     pub key: String,
     pub description: String,
     pub action: Box<KeyAssignment>,
@@ -877,7 +877,7 @@ pub enum TransientEntry {
     TransientSwitch(TransientSwitch),
     TransientOption(TransientOption),
     TransientCyclicSwitch(TransientCyclicSwitch),
-    TransientArgument(TransientArgument),
+    TransientAction(TransientAction),
 }
 
 impl FromDynamic for TransientEntry {
@@ -917,14 +917,14 @@ impl FromDynamic for TransientEntry {
                     "cyclic" => Ok(Self::TransientCyclicSwitch(
                         TransientCyclicSwitch::from_dynamic(value, inner_options)?,
                     )),
-                    "argument" => Ok(Self::TransientArgument(TransientArgument::from_dynamic(
+                    "action" => Ok(Self::TransientAction(TransientAction::from_dynamic(
                         value,
                         inner_options,
                     )?)),
                     _ => Err(wezterm_dynamic::Error::InvalidVariantForType {
                         variant_name: type_name.to_string(),
                         type_name: "TransientEntry",
-                        possible: &["switch", "option", "cyclic", "argument"],
+                        possible: &["switch", "option", "cyclic", "action"],
                     }),
                 }
             }
@@ -1053,7 +1053,7 @@ impl FromDynamic for TransientMenu {
 pub struct ArgumentSection {
     #[dynamic(default)]
     pub header: Option<String>,
-    pub arguments: Vec<TransientArgument>,
+    pub arguments: Vec<TransientAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
