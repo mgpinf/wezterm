@@ -27,6 +27,8 @@ upon the input.
   `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
   This is an optional argument. If present, this callback is called when the
   user selects `No` or closes the confirmation menu.
+* `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
+  the size of the overlay. Defaults to the full tab. {{since('nightly', inline=True)}}
 
 ## Example of choosing a program with user confirmation
 

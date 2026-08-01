@@ -671,13 +671,24 @@ impl super::TermWindow {
             Some(MouseCapture::TerminalPane(_))
         );
 
-        for pos in self.get_panes_to_render() {
+        let panes = self.get_panes_to_render();
+        let modal_overlay_active = panes.iter().any(|pos| pos.is_overlay);
+        let mut matched_pane = false;
+
+        // Panes are painted from back to front, so hit-test in reverse order.
+        // When a tab overlay is active, the visible panes beneath it are not
+        // interactive; clicks outside a bounded overlay are ignored.
+        for pos in panes.into_iter().rev() {
+            if modal_overlay_active && !pos.is_overlay {
+                continue;
+            }
             if !is_already_captured
                 && row >= pos.top as i64
                 && row <= (pos.top + pos.height) as i64
                 && column >= pos.left
                 && column <= pos.left + pos.width
             {
+                matched_pane = true;
                 if pane.pane_id() != pos.pane.pane_id() {
                     // We're over a pane that isn't active
                     match &event.kind {
@@ -712,6 +723,7 @@ impl super::TermWindow {
                 row = row.saturating_sub(pos.top as i64);
                 break;
             } else if is_already_captured && pane.pane_id() == pos.pane.pane_id() {
+                matched_pane = true;
                 column = column.saturating_sub(pos.left);
                 row = row.saturating_sub(pos.top as i64).max(0);
 
@@ -726,6 +738,11 @@ impl super::TermWindow {
 
                 break;
             }
+        }
+
+        if modal_overlay_active && !matched_pane {
+            context.set_cursor(Some(MouseCursor::Arrow));
+            return;
         }
 
         if capture_mouse {

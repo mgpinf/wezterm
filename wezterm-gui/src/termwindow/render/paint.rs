@@ -1,7 +1,9 @@
-use crate::termwindow::{RenderFrame, TermWindowNotif};
+use crate::quad::TripleLayerQuadAllocator;
+use crate::termwindow::{RenderFrame, TermWindowNotif, BOUNDED_OVERLAY_ZINDEX};
 use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::WindowOps;
 use anyhow::Context;
+use mux::tab::PositionedPane;
 use smol::Timer;
 use std::time::{Duration, Instant};
 use wezterm_font::ClearShapeCache;
@@ -161,6 +163,27 @@ impl crate::TermWindow {
         Ok(())
     }
 
+    fn paint_positioned_pane(
+        &mut self,
+        pos: &PositionedPane,
+        layers: &mut TripleLayerQuadAllocator,
+        focused: bool,
+    ) -> anyhow::Result<()> {
+        if pos.is_overlay {
+            // A tab overlay is modal. Discard hit targets collected from any
+            // visible panes underneath it before registering its own targets.
+            self.ui_items.clear();
+        }
+        if pos.is_active {
+            self.update_text_cursor(pos);
+            if focused {
+                pos.pane.advise_focus();
+                mux::Mux::get().record_focus_for_current_identity(pos.pane.pane_id());
+            }
+        }
+        self.paint_pane(pos, layers).context("paint_pane")
+    }
+
     pub fn paint_pass(&mut self) -> anyhow::Result<()> {
         {
             let gl_state = self.render_state.as_ref().unwrap();
@@ -173,6 +196,11 @@ impl crate::TermWindow {
         self.ui_items.clear();
 
         let panes = self.get_panes_to_render();
+        let bounded_overlay_idx = panes.iter().position(|pos| {
+            pos.is_overlay
+                && (pos.width < self.terminal_size.cols || pos.height < self.terminal_size.rows)
+        });
+        let base_pane_count = bounded_overlay_idx.unwrap_or(panes.len());
         let focused = self.focused.is_some();
         let window_is_transparent =
             !self.window_background.is_empty() || self.config.window_background_opacity != 1.0;
@@ -249,24 +277,39 @@ impl crate::TermWindow {
             .context("filled_rectangle for window background")?;
         }
 
-        for pos in panes {
-            if pos.is_active {
-                self.update_text_cursor(&pos);
-                if focused {
-                    pos.pane.advise_focus();
-                    mux::Mux::get().record_focus_for_current_identity(pos.pane.pane_id());
-                }
-            }
-            self.paint_pane(&pos, &mut layers).context("paint_pane")?;
+        for pos in panes.iter().take(base_pane_count) {
+            self.paint_positioned_pane(pos, &mut layers, focused)?;
         }
 
-        if let Some(pane) = self.get_active_pane_or_overlay() {
+        let split_pane = if bounded_overlay_idx.is_some() {
+            self.get_active_pane_no_overlay()
+        } else {
+            self.get_active_pane_or_overlay()
+        };
+        if let Some(pane) = split_pane {
             let splits = self.get_splits();
             for split in &splits {
                 self.paint_split(&mut layers, split, &pane)
                     .context("paint_split")?;
             }
         }
+
+        drop(layers);
+
+        if let Some(overlay_idx) = bounded_overlay_idx {
+            let gl_state = self.render_state.as_ref().unwrap();
+            let overlay_layer = gl_state
+                .layer_for_zindex(BOUNDED_OVERLAY_ZINDEX)
+                .context("layer_for_zindex for bounded overlay")?;
+            let mut overlay_layers = overlay_layer.quad_allocator();
+            self.paint_positioned_pane(&panes[overlay_idx], &mut overlay_layers, focused)?;
+        }
+
+        let gl_state = self.render_state.as_ref().unwrap();
+        let layer = gl_state
+            .layer_for_zindex(0)
+            .context("layer_for_zindex(0)")?;
+        let mut layers = layer.quad_allocator();
 
         if self.show_tab_bar {
             self.paint_tab_bar(&mut layers).context("paint_tab_bar")?;

@@ -29,6 +29,8 @@ pub struct LauncherActionArgs {
     pub delimiter: String,
     #[dynamic(default)]
     pub pane_count_in_suffix: bool,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
 }
 
 impl Default for LauncherActionArgs {
@@ -41,6 +43,7 @@ impl Default for LauncherActionArgs {
             alphabet: None,
             delimiter: default_delimiter(),
             pane_count_in_suffix: false,
+            dimensions: OverlayDimensions::default(),
         }
     }
 }
@@ -59,6 +62,8 @@ pub struct ShowTabNavigatorArgs {
     pub delimiter: String,
     #[dynamic(default)]
     pub pane_count_in_suffix: bool,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
 }
 
 impl Default for ShowTabNavigatorArgs {
@@ -70,6 +75,7 @@ impl Default for ShowTabNavigatorArgs {
             fuzzy: false,
             delimiter: default_delimiter(),
             pane_count_in_suffix: false,
+            dimensions: OverlayDimensions::default(),
         }
     }
 }
@@ -675,6 +681,8 @@ pub struct PromptInputLine {
     /// Text to show for prompt
     #[dynamic(default = "default_prompt")]
     pub prompt: String,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
 }
 
 fn default_prompt() -> String {
@@ -706,6 +714,9 @@ pub struct InputSelector {
 
     #[dynamic(default = "default_fuzzy_description")]
     pub fuzzy_description: String,
+
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
 }
 
 fn default_num_alphabet() -> String {
@@ -728,6 +739,8 @@ pub struct Confirmation {
     /// Text to show for confirmation
     #[dynamic(default = "default_message")]
     pub message: String,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
 }
 
 fn default_message() -> String {
@@ -963,6 +976,8 @@ pub struct TransientMenu {
     pub sections: Vec<TransientSection>,
     #[dynamic(default)]
     pub cancel: Option<Box<KeyAssignment>>,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
 }
 
 impl FromDynamic for TransientMenu {
@@ -1006,6 +1021,12 @@ impl FromDynamic for TransientMenu {
             .map(|v| Box::<KeyAssignment>::from_dynamic(v, options))
             .transpose()?;
 
+        let dimensions = obj
+            .get_by_str("dimensions")
+            .map(|v| OverlayDimensions::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or_default();
+
         let entries_val = obj.get_by_str("entries");
         let sections_val = obj.get_by_str("sections");
         let header_val = obj.get_by_str("header");
@@ -1045,6 +1066,7 @@ impl FromDynamic for TransientMenu {
             context,
             sections,
             cancel,
+            dimensions,
         })
     }
 }
@@ -1082,6 +1104,8 @@ pub struct SelectorActions {
     pub fuzzy: bool,
     #[dynamic(default)]
     pub cancel: Option<Box<KeyAssignment>>,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -1215,6 +1239,27 @@ pub enum KeyAssignment {
 }
 impl_lua_conversion_dynamic!(KeyAssignment);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic)]
+pub struct OverlayDimensions {
+    #[dynamic(default = "default_full_overlay_size")]
+    pub width: SplitSize,
+    #[dynamic(default = "default_full_overlay_size")]
+    pub height: SplitSize,
+}
+
+impl Default for OverlayDimensions {
+    fn default() -> Self {
+        Self {
+            width: default_full_overlay_size(),
+            height: default_full_overlay_size(),
+        }
+    }
+}
+
+fn default_full_overlay_size() -> SplitSize {
+    SplitSize::Percent(100)
+}
+
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct SplitPane {
     pub direction: PaneDirection,
@@ -1240,7 +1285,7 @@ pub struct FloatingPaneSpawn {
 }
 impl_lua_conversion_dynamic!(FloatingPaneSpawn);
 
-#[derive(Debug, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic)]
 pub enum SplitSize {
     Cells(usize),
     Percent(u8),

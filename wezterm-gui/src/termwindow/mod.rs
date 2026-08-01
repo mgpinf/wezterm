@@ -6,8 +6,9 @@ use crate::frontend::{front_end, try_front_end};
 use crate::inputmap::InputMap;
 use crate::overlay::{
     confirm_close_pane, confirm_close_tab, confirm_close_window, confirm_quit_program, launcher,
-    start_overlay, start_overlay_pane, ActivateMatchPosition, CopyModeParams, CopyOverlay,
-    LauncherArgs, LauncherFlags, QuickSelectOverlay,
+    resolve_overlay_dimensions, start_overlay, start_overlay_pane, start_overlay_with_dimensions,
+    ActivateMatchPosition, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
+    QuickSelectOverlay,
 };
 use crate::resize_increment_calculator::ResizeIncrementCalculator;
 use crate::scripting::guiwin::GuiWin;
@@ -30,9 +31,9 @@ use ::wezterm_term::input::{ClickPosition, MouseButton as TMB};
 use ::window::*;
 use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
-    Confirmation, DisplayText, InnerPattern, KeyAssignment, LauncherActionArgs, PaneDirection,
-    Pattern, PromptInputLine, QuickSelectArguments, RotationDirection, SelectorActions,
-    ShowTabNavigatorArgs, SpawnCommand, SplitSize, TransientMenu,
+    Confirmation, DisplayText, InnerPattern, KeyAssignment, LauncherActionArgs, OverlayDimensions,
+    PaneDirection, Pattern, PromptInputLine, QuickSelectArguments, RotationDirection,
+    SelectorActions, ShowTabNavigatorArgs, SpawnCommand, SplitSize, TransientMenu,
 };
 use config::window::WindowLevel;
 use config::{
@@ -88,6 +89,7 @@ use crate::spawn::SpawnWhere;
 use prevcursor::PrevCursorPos;
 
 const ATLAS_SIZE: usize = 128;
+pub(crate) const BOUNDED_OVERLAY_ZINDEX: i8 = 5;
 
 lazy_static::lazy_static! {
     static ref WINDOW_CLASS: Mutex<String> = Mutex::new(wezterm_gui_subcommands::DEFAULT_WINDOW_CLASS.to_owned());
@@ -189,6 +191,7 @@ pub struct SemanticZoneCache {
 pub struct OverlayState {
     pub pane: Arc<dyn Pane>,
     pub key_table_state: KeyTableState,
+    pub dimensions: OverlayDimensions,
 }
 
 #[derive(Default)]
@@ -2277,15 +2280,17 @@ impl TermWindow {
             None => return,
         };
 
+        let dimensions = args.dimensions;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::selector::selector(term, args, gui_win, pane)
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
+        let (overlay, future) =
+            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::selector::selector(term, args, gui_win, pane)
+            });
+        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
         promise::spawn::spawn(future).detach();
     }
 
@@ -2301,15 +2306,17 @@ impl TermWindow {
             None => return,
         };
 
+        let dimensions = args.dimensions;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::prompt::show_line_prompt_overlay(term, args, gui_win, pane)
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
+        let (overlay, future) =
+            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::prompt::show_line_prompt_overlay(term, args, gui_win, pane)
+            });
+        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
         promise::spawn::spawn(future).detach();
     }
 
@@ -2325,15 +2332,17 @@ impl TermWindow {
             None => return,
         };
 
+        let dimensions = args.dimensions;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::confirm::show_confirmation_overlay(term, args, gui_win, pane)
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
+        let (overlay, future) =
+            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::confirm::show_confirmation_overlay(term, args, gui_win, pane)
+            });
+        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
         promise::spawn::spawn(future).detach();
     }
 
@@ -2366,15 +2375,17 @@ impl TermWindow {
             None => return,
         };
 
+        let dimensions = args.dimensions;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::transient::show_transient_menu_overlay(term, args, gui_win, pane)
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
+        let (overlay, future) =
+            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::transient::show_transient_menu_overlay(term, args, gui_win, pane)
+            });
+        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
         promise::spawn::spawn(future).detach();
     }
 
@@ -2390,17 +2401,19 @@ impl TermWindow {
             None => return,
         };
 
+        let dimensions = args.dimensions;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::selector_actions::show_selector_actions_overlay(
-                term, args, gui_win, pane,
-            )
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
+        let (overlay, future) =
+            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::selector_actions::show_selector_actions_overlay(
+                    term, args, gui_win, pane,
+                )
+            });
+        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
         promise::spawn::spawn(future).detach();
     }
 
@@ -2459,6 +2472,7 @@ impl TermWindow {
             alphabet: None,
             delimiter: args.delimiter.clone(),
             pane_count_in_suffix: args.pane_count_in_suffix,
+            dimensions: args.dimensions,
         };
         self.show_launcher_impl(args, active_tab_idx);
     }
@@ -2516,6 +2530,7 @@ impl TermWindow {
         let alphabet = args.alphabet.unwrap_or(config.launcher_alphabet.clone());
         let delimiter = args.delimiter;
         let pane_count_in_suffix = args.pane_count_in_suffix;
+        let dimensions = args.dimensions;
 
         promise::spawn::spawn(async move {
             let args = LauncherArgs::new(
@@ -2537,12 +2552,14 @@ impl TermWindow {
                 let mux = Mux::get();
                 if let Some(tab) = mux.get_tab(tab_id) {
                     let window = window.clone();
-                    let (overlay, future) =
-                        start_overlay(term_window, &tab, move |_tab_id, term| {
-                            launcher(args, term, window, initial_choice_idx)
-                        });
+                    let (overlay, future) = start_overlay_with_dimensions(
+                        term_window,
+                        &tab,
+                        dimensions,
+                        move |_tab_id, term| launcher(args, term, window, initial_choice_idx),
+                    );
 
-                    term_window.assign_overlay(tab_id, overlay);
+                    term_window.assign_overlay_with_dimensions(tab_id, overlay, dimensions);
                     promise::spawn::spawn(future).detach();
                 }
             })));
@@ -2883,6 +2900,7 @@ impl TermWindow {
                     alphabet: args.alphabet.clone(),
                     delimiter: args.delimiter.clone(),
                     pane_count_in_suffix: args.pane_count_in_suffix,
+                    dimensions: args.dimensions,
                 };
                 self.show_launcher_impl(args, 0);
             }
@@ -3417,9 +3435,16 @@ impl TermWindow {
     /// Resize overlays to match their corresponding tab/pane dimensions
     pub fn resize_overlays(&self) {
         let mux = Mux::get();
-        for (_, state) in self.tab_state.borrow().iter() {
-            if let Some(overlay) = state.overlay.as_ref().map(|o| &o.pane) {
-                overlay.resize(self.terminal_size).ok();
+        for (tab_id, state) in self.tab_state.borrow().iter() {
+            if let Some(overlay) = state.overlay.as_ref() {
+                let available = mux
+                    .get_tab(*tab_id)
+                    .map(|tab| tab.get_size())
+                    .unwrap_or(self.terminal_size);
+                overlay
+                    .pane
+                    .resize(resolve_overlay_dimensions(available, overlay.dimensions).size)
+                    .ok();
             }
         }
         for (pane_id, state) in self.pane_state.borrow().iter() {
@@ -3497,13 +3522,26 @@ impl TermWindow {
         self.pane_state(pane.pane_id()).viewport = None;
     }
 
+    fn get_tab_overlay_and_dimensions(
+        &self,
+        tab_id: TabId,
+    ) -> Option<(Arc<dyn Pane>, OverlayDimensions)> {
+        let (pane, dimensions) = {
+            let state = self.tab_state(tab_id);
+            let overlay = state.overlay.as_ref()?;
+            (Arc::clone(&overlay.pane), overlay.dimensions)
+        };
+        let pane = self
+            .pane_state(pane.pane_id())
+            .overlay
+            .as_ref()
+            .map_or(pane, |nested| Arc::clone(&nested.pane));
+        Some((pane, dimensions))
+    }
+
     fn get_tab_overlay(&self, tab_id: TabId) -> Option<Arc<dyn Pane>> {
-        self.tab_state(tab_id).overlay.as_ref().map(|overlay| {
-            self.pane_state(overlay.pane.pane_id())
-                .overlay
-                .as_ref()
-                .map_or_else(|| overlay.pane.clone(), |nested| nested.pane.clone())
-        })
+        self.get_tab_overlay_and_dimensions(tab_id)
+            .map(|(pane, _)| pane)
     }
 
     fn get_active_pane_no_overlay(&self) -> Option<Arc<dyn Pane>> {
@@ -3571,11 +3609,15 @@ impl TermWindow {
 
         let tab_id = tab.tab_id();
 
-        if self.tab_state(tab_id).overlay.is_some() {
-            vec![]
-        } else {
-            tab.iter_splits()
+        if let Some((_, dimensions)) = self.get_tab_overlay_and_dimensions(tab_id) {
+            let available = tab.get_size();
+            let resolved = resolve_overlay_dimensions(available, dimensions);
+            if resolved.size.cols == available.cols && resolved.size.rows == available.rows {
+                return vec![];
+            }
         }
+
+        tab.iter_splits()
     }
 
     fn pos_pane_to_pane_info(pos: &PositionedPane) -> PaneInformation {
@@ -3640,21 +3682,35 @@ impl TermWindow {
     fn get_pos_panes_for_tab(&self, tab: &Arc<Tab>) -> Vec<PositionedPane> {
         let tab_id = tab.tab_id();
 
-        if let Some(pane) = self.get_tab_overlay(tab_id) {
-            let size = tab.get_size();
-            vec![PositionedPane {
+        if let Some((pane, dimensions)) = self.get_tab_overlay_and_dimensions(tab_id) {
+            let available = tab.get_size();
+            let resolved = resolve_overlay_dimensions(available, dimensions);
+            let is_bounded =
+                resolved.size.cols < available.cols || resolved.size.rows < available.rows;
+            let mut panes = if is_bounded { tab.iter_panes() } else { vec![] };
+
+            for pos in &mut panes {
+                pos.is_active = false;
+                if let Some(overlay) = self.pane_state(pos.pane.pane_id()).overlay.as_ref() {
+                    pos.pane = Arc::clone(&overlay.pane);
+                }
+            }
+
+            panes.push(PositionedPane {
                 index: 0,
                 is_active: true,
                 is_zoomed: false,
                 is_floating: false,
-                left: 0,
-                top: 0,
-                width: size.cols as _,
-                height: size.rows as _,
-                pixel_width: size.cols as usize * self.render_metrics.cell_size.width as usize,
-                pixel_height: size.rows as usize * self.render_metrics.cell_size.height as usize,
+                is_overlay: true,
+                left: resolved.left,
+                top: resolved.top,
+                width: resolved.size.cols,
+                height: resolved.size.rows,
+                pixel_width: resolved.size.pixel_width,
+                pixel_height: resolved.size.pixel_height,
                 pane,
-            }]
+            });
+            panes
         } else {
             let mut panes = tab.iter_panes();
             for p in &mut panes {
@@ -3725,15 +3781,26 @@ impl TermWindow {
         self.pane_state(pane_id).overlay.replace(OverlayState {
             pane,
             key_table_state: KeyTableState::default(),
+            dimensions: OverlayDimensions::default(),
         });
         self.update_title();
     }
 
     pub fn assign_overlay(&mut self, tab_id: TabId, overlay: Arc<dyn Pane>) {
+        self.assign_overlay_with_dimensions(tab_id, overlay, OverlayDimensions::default());
+    }
+
+    pub fn assign_overlay_with_dimensions(
+        &mut self,
+        tab_id: TabId,
+        overlay: Arc<dyn Pane>,
+        dimensions: OverlayDimensions,
+    ) {
         self.cancel_overlay_for_tab(tab_id, None);
         self.tab_state(tab_id).overlay.replace(OverlayState {
             pane: overlay,
             key_table_state: KeyTableState::default(),
+            dimensions,
         });
         self.update_title();
     }

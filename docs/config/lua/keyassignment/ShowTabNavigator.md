@@ -34,6 +34,8 @@ The choice corresponding to the current tab is initially selected.
   styled suffix rather than as part of the tab label. Pane counts in the suffix
   are not included in fuzzy matching. Defaults to `false`, which preserves the
   previous display and search behavior.
+* `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
+  the size of the tab navigator. Defaults to the full tab.
 
 For example, this assignment opens the tab navigator directly in fuzzy
 filtering mode with customized text, uses `":"` as the delimiter, and displays

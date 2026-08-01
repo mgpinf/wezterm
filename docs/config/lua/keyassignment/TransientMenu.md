@@ -29,6 +29,8 @@ controls the dimmed foreground.
   callback's function signature is `(window, pane)` where `window` and
   `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
   Called when the user cancels the overlay
+* `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
+  the size of the overlay. Defaults to the full tab. {{since('nightly', inline=True)}}
 
 For specifying menu entries, use **one** of the following:
 

@@ -463,7 +463,7 @@ impl<'a> TransientState<'a> {
                     self.buf.add_changes(vec![
                         Change::CursorPosition {
                             x: Position::Absolute(0),
-                            y: Position::Absolute(rows - 3),
+                            y: Position::Absolute(rows.saturating_sub(3)),
                         },
                         Change::ClearToEndOfScreen(ColorAttribute::Default),
                         Change::Attribute(AttributeChange::Foreground(self.colors.separator_fg)),
@@ -498,7 +498,7 @@ impl<'a> TransientState<'a> {
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
                             x: Position::Absolute(cursor_x),
-                            y: Position::Absolute(rows - 2),
+                            y: Position::Absolute(rows.saturating_sub(2)),
                         },
                     ]);
                 }

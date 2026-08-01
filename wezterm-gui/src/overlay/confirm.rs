@@ -19,7 +19,7 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
     let size = term.get_screen_size()?;
 
     // Render 80% wide, centered
-    let text_width = size.cols * 80 / 100;
+    let text_width = (size.cols * 80 / 100).max(1);
     let x_pos = size.cols * 10 / 100;
 
     // Fit text to the width
@@ -29,9 +29,9 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
     // Now we want to vertically center the prompt in the view.
     // After the prompt there will be a blank line and then the "buttons",
     // so we add two to the number of rows.
-    let top_row = (size.rows - (message_rows + 2)) / 2;
+    let top_row = size.rows.saturating_sub(message_rows + 2) / 2;
 
-    let button_row = top_row + message_rows + 1;
+    let button_row = (top_row + message_rows + 1).min(size.rows.saturating_sub(1));
     let mut active = ActiveButton::None;
 
     let yes_x = x_pos;

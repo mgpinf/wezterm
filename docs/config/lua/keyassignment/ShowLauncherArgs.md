@@ -17,6 +17,8 @@ The arguments are a lua table with the following keys:
   to calculate one or two key press shortcuts that can be used to quickly choose from
   the Launcher when in the default mode. Defaults to the same value as
   [launcher_alphabet](../config/launcher_alphabet.md) {{since('nightly', inline=True)}}
+* `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
+  the size of the launcher. Defaults to the full tab. {{since('nightly', inline=True)}}
 
 The possible flags are listed below. You must explicitly list each item that you
 want to include in the launcher. If you only specify `"FUZZY"` then you will see
@@ -51,4 +53,3 @@ config.keys = {
   },
 }
 ```
-
