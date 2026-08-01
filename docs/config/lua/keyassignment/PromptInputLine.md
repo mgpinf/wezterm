@@ -13,7 +13,7 @@ from the user.
 When the user enters the line, emits an event that allows you to act
 upon the input.
 
-`PromptInputLine` accepts four fields:
+`PromptInputLine` accepts the following fields:
 
 * `description` - the text to show at the top of the display area. You may
   embed escape sequences and/or use [wezterm.format](../wezterm/format.md).
@@ -28,6 +28,8 @@ upon the input.
 * `initial_value` - optional.  If provided, the initial content of the input
   field will be set to this value.  The user may edit it prior to submitting
   the input. {{since('nightly', inline=True)}}
+* `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
+  the size of the overlay. Defaults to the full tab. {{since('nightly', inline=True)}}
 
 ## Example of interactively renaming the current tab
 

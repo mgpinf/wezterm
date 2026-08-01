@@ -5,7 +5,7 @@ use crate::termwindow::render::{
     same_hyperlink, CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
     RenderScreenLineParams,
 };
-use crate::termwindow::{ScrollHit, UIItem, UIItemType};
+use crate::termwindow::{ScrollHit, UIItem, UIItemType, BOUNDED_OVERLAY_ZINDEX};
 use ::window::bitmaps::TextureRect;
 use ::window::DeadKeyStatus;
 use anyhow::Context;
@@ -151,7 +151,10 @@ impl crate::TermWindow {
             )
         };
 
-        if self.window_background.is_empty() {
+        let is_bounded_overlay = pos.is_overlay
+            && (pos.width < self.terminal_size.cols || pos.height < self.terminal_size.rows);
+
+        if self.window_background.is_empty() || is_bounded_overlay {
             // Per-pane, palette-specified background
 
             let mut quad = self
@@ -226,7 +229,7 @@ impl crate::TermWindow {
         // do a per-pane scrollbar.  That will require more extensive
         // changes to ScrollHit, mouse positioning, PositionedPane
         // and tab size calculation.
-        if pos.is_active && self.show_scroll_bar {
+        if pos.is_active && self.show_scroll_bar && !is_bounded_overlay {
             let thumb_y_offset = top_bar_height as usize + border.top.get();
 
             let min_height = self.min_scroll_bar_height();
@@ -661,14 +664,24 @@ impl crate::TermWindow {
 
         Ok(ComputedElement {
             item_type: None,
-            zindex: 0,
+            zindex: if pos.is_overlay
+                && (pos.width < self.terminal_size.cols || pos.height < self.terminal_size.rows)
+            {
+                BOUNDED_OVERLAY_ZINDEX
+            } else {
+                0
+            },
             bounds: background_rect,
             border: PixelDimension::default(),
             border_rect: background_rect,
             border_corners: None,
             colors: ElementColors {
                 border: BorderColor::default(),
-                bg: if self.window_background.is_empty() {
+                bg: if self.window_background.is_empty()
+                    || (pos.is_overlay
+                        && (pos.width < self.terminal_size.cols
+                            || pos.height < self.terminal_size.rows))
+                {
                     palette
                         .background
                         .to_linear()

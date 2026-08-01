@@ -66,6 +66,8 @@ pub struct PositionedPane {
     pub is_zoomed: bool,
     /// true if this pane is floating
     pub is_floating: bool,
+    /// true if this pane is an internal GUI overlay
+    pub is_overlay: bool,
     /// The offset from the top left corner of the containing tab to the top
     /// left corner of this pane, in cells.
     pub left: usize,
@@ -89,6 +91,7 @@ impl std::fmt::Debug for PositionedPane {
             .field("is_active", &self.is_active)
             .field("is_zoomed", &self.is_zoomed)
             .field("is_floating", &self.is_floating)
+            .field("is_overlay", &self.is_overlay)
             .field("left", &self.left)
             .field("top", &self.top)
             .field("width", &self.width)
@@ -1038,6 +1041,7 @@ impl TabInner {
                         is_active: true,
                         is_zoomed: false,
                         is_floating: true,
+                        is_overlay: false,
                         left: 0,
                         top: 0,
                         width: size.cols.into(),
@@ -1057,6 +1061,7 @@ impl TabInner {
                     is_active: true,
                     is_zoomed: true,
                     is_floating: false,
+                    is_overlay: false,
                     left: 0,
                     top: 0,
                     width: size.cols.into(),
@@ -1104,6 +1109,7 @@ impl TabInner {
                     is_active: index == active_idx,
                     is_zoomed: zoomed_id == Some(pane.pane_id()),
                     is_floating: false,
+                    is_overlay: false,
                     left,
                     top,
                     width: dims.cols as _,
@@ -1136,6 +1142,7 @@ impl TabInner {
                     is_active: true,
                     is_zoomed: false,
                     is_floating: true,
+                    is_overlay: false,
                     left: 0,
                     top: 0,
                     width: size.cols.into(),

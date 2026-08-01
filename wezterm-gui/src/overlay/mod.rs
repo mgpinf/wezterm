@@ -1,4 +1,5 @@
 use crate::termwindow::TermWindow;
+use config::keyassignment::{OverlayDimensions, SplitSize};
 use mux::pane::{Pane, PaneId};
 use mux::tab::{Tab, TabId};
 use mux::termwiztermtab::{allocate, TermWizTerminal};
@@ -28,6 +29,56 @@ pub use debug::show_debug_overlay;
 pub use launcher::{launcher, LauncherArgs, LauncherFlags};
 pub use quickselect::QuickSelectOverlay;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedOverlayDimensions {
+    pub size: TerminalSize,
+    pub left: usize,
+    pub top: usize,
+}
+
+fn resolve_overlay_axis(value: SplitSize, available: usize) -> usize {
+    if available == 0 {
+        return 0;
+    }
+
+    let requested = match value {
+        SplitSize::Cells(cells) => cells,
+        SplitSize::Percent(percent) => available.saturating_mul(percent as usize) / 100,
+    };
+
+    requested.clamp(1, available)
+}
+
+pub fn resolve_overlay_dimensions(
+    available: TerminalSize,
+    dimensions: OverlayDimensions,
+) -> ResolvedOverlayDimensions {
+    let cols = resolve_overlay_axis(dimensions.width, available.cols);
+    let rows = resolve_overlay_axis(dimensions.height, available.rows);
+    let pixel_width = if available.cols == 0 {
+        0
+    } else {
+        available.pixel_width.saturating_mul(cols) / available.cols
+    };
+    let pixel_height = if available.rows == 0 {
+        0
+    } else {
+        available.pixel_height.saturating_mul(rows) / available.rows
+    };
+
+    ResolvedOverlayDimensions {
+        size: TerminalSize {
+            rows,
+            cols,
+            pixel_width,
+            pixel_height,
+            dpi: available.dpi,
+        },
+        left: available.cols.saturating_sub(cols) / 2,
+        top: available.rows.saturating_sub(rows) / 2,
+    }
+}
+
 pub fn start_overlay<T, F>(
     term_window: &TermWindow,
     tab: &Arc<Tab>,
@@ -40,11 +91,27 @@ where
     T: Send + 'static,
     F: Send + 'static + FnOnce(TabId, TermWizTerminal) -> anyhow::Result<T>,
 {
+    start_overlay_with_dimensions(term_window, tab, OverlayDimensions::default(), func)
+}
+
+pub fn start_overlay_with_dimensions<T, F>(
+    term_window: &TermWindow,
+    tab: &Arc<Tab>,
+    dimensions: OverlayDimensions,
+    func: F,
+) -> (
+    Arc<dyn Pane>,
+    Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>>>>,
+)
+where
+    T: Send + 'static,
+    F: Send + 'static + FnOnce(TabId, TermWizTerminal) -> anyhow::Result<T>,
+{
     let tab_id = tab.tab_id();
-    let tab_size = tab.get_size();
+    let overlay_size = resolve_overlay_dimensions(tab.get_size(), dimensions).size;
     let term_config: Arc<dyn TerminalConfiguration + Send + Sync> =
         Arc::new(config::TermConfig::with_config(term_window.config.clone()));
-    let (tw_term, tw_tab) = allocate(tab_size, term_config);
+    let (tw_term, tw_tab) = allocate(overlay_size, term_config);
 
     let window = term_window.window.clone().unwrap();
 
@@ -93,4 +160,59 @@ where
     });
 
     (tw_tab, Box::pin(future))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn available_size() -> TerminalSize {
+        TerminalSize {
+            rows: 40,
+            cols: 100,
+            pixel_width: 1000,
+            pixel_height: 800,
+            dpi: 96,
+        }
+    }
+
+    #[test]
+    fn default_overlay_dimensions_fill_the_tab() {
+        let resolved = resolve_overlay_dimensions(available_size(), OverlayDimensions::default());
+        assert_eq!(resolved.size, available_size());
+        assert_eq!(resolved.left, 0);
+        assert_eq!(resolved.top, 0);
+    }
+
+    #[test]
+    fn percentage_overlay_dimensions_are_centered() {
+        let resolved = resolve_overlay_dimensions(
+            available_size(),
+            OverlayDimensions {
+                width: SplitSize::Percent(60),
+                height: SplitSize::Percent(50),
+            },
+        );
+        assert_eq!(resolved.size.cols, 60);
+        assert_eq!(resolved.size.rows, 20);
+        assert_eq!(resolved.size.pixel_width, 600);
+        assert_eq!(resolved.size.pixel_height, 400);
+        assert_eq!(resolved.left, 20);
+        assert_eq!(resolved.top, 10);
+    }
+
+    #[test]
+    fn cell_overlay_dimensions_are_clamped_to_the_tab() {
+        let resolved = resolve_overlay_dimensions(
+            available_size(),
+            OverlayDimensions {
+                width: SplitSize::Cells(120),
+                height: SplitSize::Cells(0),
+            },
+        );
+        assert_eq!(resolved.size.cols, 100);
+        assert_eq!(resolved.size.rows, 1);
+        assert_eq!(resolved.left, 0);
+        assert_eq!(resolved.top, 19);
+    }
 }

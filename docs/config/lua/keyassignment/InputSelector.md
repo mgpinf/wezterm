@@ -30,6 +30,8 @@ upon the input.
 * `fuzzy` - a boolean that defaults to `false`. If `true`, InputSelector will start
   in its fuzzy finding mode (this is equivalent to starting the InputSelector and
   pressing / in the default mode).
+* `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
+  the size of the overlay. Defaults to the full tab. {{since('nightly', inline=True)}}
 
 {{since('20240127-113634-bbcac864')}}
 
@@ -239,4 +241,3 @@ return config
 See also:
    * [PromptInputLine](PromptInputLine.md).
    * [Confirmation](Confirmation.md).
-

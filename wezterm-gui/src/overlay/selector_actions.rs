@@ -237,7 +237,7 @@ impl<'a> SelectorState<'a> {
         let (cols, rows) = self.buf.dimensions();
         let max_width = cols.saturating_sub(6);
         let selector_size = self.choices.len().min(self.max_items);
-        let selector_start_row = rows - selector_size - 3;
+        let selector_start_row = rows.saturating_sub(selector_size + 3);
         let max_items = self.max_items;
 
         let mut changes = vec![];
