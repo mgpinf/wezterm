@@ -41,6 +41,12 @@ return {
           },
         },
         auto_close_on_success = false,
+        dimensions = {
+          width = { Percent = 70 },
+          height = { Cells = 20 },
+        },
+        border = true,
+        border_color = { AnsiColor = 'Blue' },
       },
     },
   },
@@ -54,6 +60,9 @@ return {
 | `commands` | list | n/a | List of `CommandRunnerCommand` entries |
 | `auto_close_on_success` | boolean | `false` | Close the overlay when all commands finish successfully |
 | `alphabet` | string | `"1234567890abcdefhilmnopstuvwxyz"` | Characters used to build quick-select labels in the list view |
+| `dimensions` | [OverlayDimensions](../OverlayDimensions.md) | full tab | Size of the command runner overlay |
+| `border` | boolean | `false` | Draw a single renderer-owned border around a bounded overlay |
+| `border_color` | `ColorSpec` | overlay foreground color | Color of the renderer-owned border; for example, `{ AnsiColor = 'Blue' }` or `{ Color = '#7aa2f7' }` |
 
 ## CommandRunnerCommand
 
