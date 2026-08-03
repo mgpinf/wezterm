@@ -859,6 +859,12 @@ pub struct CommandRunner {
     pub auto_close_on_success: bool,
     #[dynamic(default = "default_num_alphabet")]
     pub alphabet: String,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

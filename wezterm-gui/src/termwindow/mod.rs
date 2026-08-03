@@ -2379,13 +2379,25 @@ impl TermWindow {
             None => return,
         };
 
+        let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
+        let args = args.clone();
+
         let args = args.clone();
         let window = self.window.clone().unwrap();
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::command_runner::show_command_runner_overlay(term, args, window)
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
+        let (overlay, future) =
+            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::command_runner::show_command_runner_overlay(term, args, window)
+            });
+        self.assign_overlay_with_dimensions_and_border(
+            tab.tab_id(),
+            overlay,
+            dimensions,
+            border,
+            border_color,
+        );
         promise::spawn::spawn(future).detach();
     }
 
