@@ -8,10 +8,13 @@ tags:
 {{since('nightly')}}
 
 Spawn a new floating pane into the current tab. A tab can have one floating pane.
-If a floating pane is active, it occupies the entire area of the tab, obscuring
-any tiled panes or zoomed panes.
+By default, a floating pane occupies the entire area of the tab, obscuring any
+tiled panes or zoomed panes. Its dimensions can be configured so that the panes
+beneath it remain visible, but they are not interactive until the floating pane
+is hidden or closed.
 
 The rendering priority for a tab is:
+
 1. Tab Overlay (e.g. Launcher, InputSelector)
 2. Floating Pane
 3. Zoomed Pane
@@ -28,6 +31,12 @@ these additional options:
   `wezterm.action_callback`. The callback is invoked after the spawned floating
   pane closes, with the signature `(window, pane)`. `pane` is the pane that was
   active when the floating pane was spawned.
+* `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
+  the size of the floating pane. Defaults to the full tab.
+* `border` - optional boolean that draws a single renderer-owned border around a
+  bounded floating pane. Defaults to `false`.
+* `border_color` - optional `ColorSpec` such as `{ AnsiColor = 'Blue' }` or
+  `{ Color = '#7aa2f7' }`. Defaults to the floating pane foreground color.
 
 The callback runs when the floating pane is removed. If your `exit_behavior`
 keeps exited processes visible, the callback will run after you close the pane.
@@ -52,6 +61,12 @@ config.keys = {
     action = act.SpawnCommandInFloatingPane {
       args = { 'htop' },
       replace_current = true,
+      dimensions = {
+        width = { Percent = 70 },
+        height = { Cells = 20 },
+      },
+      border = true,
+      border_color = { AnsiColor = 'Blue' },
     },
   },
 }

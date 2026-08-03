@@ -196,12 +196,17 @@ impl crate::TermWindow {
         self.ui_items.clear();
 
         let panes = self.get_panes_to_render();
-        let bounded_overlay_idx = panes.iter().position(|pos| {
-            pos.is_overlay
+        let bounded_overlay_idx = panes.iter().rposition(|pos| {
+            (pos.is_overlay || pos.is_floating)
                 && (pos.width < self.terminal_size.cols || pos.height < self.terminal_size.rows)
         });
-        let bounded_overlay_border_color =
-            bounded_overlay_idx.and_then(|_| self.get_active_tab_overlay_border_color());
+        let bounded_overlay_border_color = bounded_overlay_idx.and_then(|idx| {
+            if panes[idx].is_overlay {
+                self.get_active_tab_overlay_border_color()
+            } else {
+                self.get_active_floating_pane_border_color()
+            }
+        });
         let base_pane_count = bounded_overlay_idx.unwrap_or(panes.len());
         let focused = self.focused.is_some();
         let window_is_transparent =

@@ -1350,6 +1350,12 @@ pub struct FloatingPaneSpawn {
     /// Optional callback invoked after the spawned floating pane closes.
     #[dynamic(default)]
     pub action: Option<Box<KeyAssignment>>,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 impl_lua_conversion_dynamic!(FloatingPaneSpawn);
 

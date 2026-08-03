@@ -29,10 +29,17 @@ impl super::TermWindow {
     fn resolve_ui_item(&self, event: &MouseEvent) -> Option<UIItem> {
         let x = event.coords.x;
         let y = event.coords.y;
+        let modal_pane_active = self
+            .get_panes_to_render()
+            .iter()
+            .any(|pos| pos.is_overlay || pos.is_floating);
         self.ui_items
             .iter()
             .rev()
-            .find(|item| item.hit_test(x, y))
+            .find(|item| {
+                item.hit_test(x, y)
+                    && !(modal_pane_active && matches!(&item.item_type, UIItemType::Split(_)))
+            })
             .cloned()
     }
 
@@ -673,13 +680,16 @@ impl super::TermWindow {
 
         let panes = self.get_panes_to_render();
         let modal_overlay_active = panes.iter().any(|pos| pos.is_overlay);
+        let floating_pane_active = panes.iter().any(|pos| pos.is_floating);
         let mut matched_pane = false;
 
         // Panes are painted from back to front, so hit-test in reverse order.
-        // When a tab overlay is active, the visible panes beneath it are not
-        // interactive; clicks outside a bounded overlay are ignored.
+        // When a tab overlay or floating pane is active, the visible panes
+        // beneath it are not interactive; clicks outside it are ignored.
         for pos in panes.into_iter().rev() {
-            if modal_overlay_active && !pos.is_overlay {
+            if (modal_overlay_active && !pos.is_overlay)
+                || (!modal_overlay_active && floating_pane_active && !pos.is_floating)
+            {
                 continue;
             }
             if !is_already_captured
@@ -740,7 +750,7 @@ impl super::TermWindow {
             }
         }
 
-        if modal_overlay_active && !matched_pane {
+        if (modal_overlay_active || floating_pane_active) && !matched_pane {
             context.set_cursor(Some(MouseCursor::Arrow));
             return;
         }
