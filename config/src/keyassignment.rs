@@ -93,6 +93,16 @@ impl Default for ShowTabNavigatorArgs {
     }
 }
 
+#[derive(Default, Debug, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
+pub struct ShowDebugOverlayArgs {
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
+}
+
 bitflags::bitflags! {
     #[derive(Default,  FromDynamic, ToDynamic)]
     #[dynamic(try_from="String", into="String")]
@@ -1214,7 +1224,7 @@ pub enum KeyAssignment {
     ScrollToTop,
     ScrollToBottom,
     ShowTabNavigator(ShowTabNavigatorArgs),
-    ShowDebugOverlay,
+    ShowDebugOverlay(ShowDebugOverlayArgs),
     HideApplication,
     QuitApplication,
     SpawnCommandInNewTab(SpawnCommand),

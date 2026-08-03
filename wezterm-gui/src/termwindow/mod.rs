@@ -33,7 +33,8 @@ use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
     Confirmation, DisplayText, InnerPattern, KeyAssignment, LauncherActionArgs, OverlayDimensions,
     PaneDirection, Pattern, PromptInputLine, QuickSelectArguments, RotationDirection,
-    SelectorActions, ShowTabNavigatorArgs, SpawnCommand, SplitSize, TransientMenu,
+    SelectorActions, ShowDebugOverlayArgs, ShowTabNavigatorArgs, SpawnCommand, SplitSize,
+    TransientMenu,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2497,7 +2498,7 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
-    fn show_debug_overlay(&mut self) {
+    fn show_debug_overlay(&mut self, args: &ShowDebugOverlayArgs) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
             Some(tab) => tab,
@@ -2509,10 +2510,21 @@ impl TermWindow {
         let opengl_info = self.opengl_info.as_deref().unwrap_or("Unknown").to_string();
         let connection_info = self.connection_name.clone();
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::show_debug_overlay(term, gui_win, opengl_info, connection_info)
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
+        let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
+
+        let (overlay, future) =
+            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::show_debug_overlay(term, gui_win, opengl_info, connection_info)
+            });
+        self.assign_overlay_with_dimensions_and_border(
+            tab.tab_id(),
+            overlay,
+            dimensions,
+            border,
+            border_color,
+        );
         promise::spawn::spawn(future).detach();
     }
 
@@ -2962,7 +2974,7 @@ impl TermWindow {
             ScrollToTop => self.scroll_to_top(pane),
             ScrollToBottom => self.scroll_to_bottom(pane),
             ShowTabNavigator(args) => self.show_tab_navigator(args),
-            ShowDebugOverlay => self.show_debug_overlay(),
+            ShowDebugOverlay(args) => self.show_debug_overlay(args),
             ShowLauncher => self.show_launcher(),
             ShowLauncherArgs(args) => {
                 let title = args.title.clone().unwrap_or("Launcher".to_string());
