@@ -4,7 +4,8 @@ use crate::renderable::StableCursorPosition;
 use crate::{Mux, MuxNotification, WindowId};
 use bintree::PathBranch;
 use config::configuration;
-use config::keyassignment::PaneDirection;
+use config::keyassignment::{OverlayDimensions, PaneDirection, SplitSize as ConfigSplitSize};
+use config::ColorSpec;
 use parking_lot::Mutex;
 use rangeset::intersects_range;
 use serde::{Deserialize, Serialize};
@@ -46,8 +47,61 @@ struct TabInner {
     zoomed: Option<Arc<dyn Pane>>,
     floating: Option<Arc<dyn Pane>>,
     floating_hidden: bool,
+    floating_dimensions: OverlayDimensions,
+    floating_border: bool,
+    floating_border_color: Option<ColorSpec>,
     title: String,
     recency: Recency,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResolvedFloatingDimensions {
+    size: TerminalSize,
+    left: usize,
+    top: usize,
+}
+
+fn resolve_floating_axis(value: ConfigSplitSize, available: usize) -> usize {
+    if available == 0 {
+        return 0;
+    }
+
+    let requested = match value {
+        ConfigSplitSize::Cells(cells) => cells,
+        ConfigSplitSize::Percent(percent) => available.saturating_mul(percent as usize) / 100,
+    };
+
+    requested.clamp(1, available)
+}
+
+fn resolve_floating_dimensions(
+    available: TerminalSize,
+    dimensions: OverlayDimensions,
+) -> ResolvedFloatingDimensions {
+    let cols = resolve_floating_axis(dimensions.width, available.cols);
+    let rows = resolve_floating_axis(dimensions.height, available.rows);
+    let pixel_width = if available.cols == 0 {
+        0
+    } else {
+        available.pixel_width.saturating_mul(cols) / available.cols
+    };
+    let pixel_height = if available.rows == 0 {
+        0
+    } else {
+        available.pixel_height.saturating_mul(rows) / available.rows
+    };
+
+    ResolvedFloatingDimensions {
+        size: TerminalSize {
+            rows,
+            cols,
+            pixel_width,
+            pixel_height,
+            dpi: available.dpi,
+        },
+        left: available.cols.saturating_sub(cols) / 2,
+        top: available.rows.saturating_sub(rows) / 2,
+    }
 }
 
 /// A Tab is a container of Panes
@@ -722,8 +776,22 @@ impl Tab {
         self.inner.lock().assign_pane(pane)
     }
 
-    pub fn assign_floating_pane(&self, pane: &Arc<dyn Pane>) {
-        self.inner.lock().assign_floating_pane(pane)
+    pub fn assign_floating_pane(
+        &self,
+        pane: &Arc<dyn Pane>,
+        dimensions: OverlayDimensions,
+        border: bool,
+        border_color: Option<ColorSpec>,
+    ) {
+        self.inner
+            .lock()
+            .assign_floating_pane(pane, dimensions, border, border_color)
+    }
+
+    pub fn floating_pane_border_color(&self) -> Option<Option<ColorSpec>> {
+        let inner = self.inner.lock();
+        (inner.floating.is_some() && !inner.floating_hidden && inner.floating_border)
+            .then_some(inner.floating_border_color)
     }
 
     /// Swap the active pane with the specified pane_index
@@ -791,6 +859,9 @@ impl TabInner {
             zoomed: None,
             floating: None,
             floating_hidden: false,
+            floating_dimensions: OverlayDimensions::default(),
+            floating_border: false,
+            floating_border_color: None,
             title: String::new(),
             recency: Recency::default(),
         }
@@ -1029,27 +1100,38 @@ impl TabInner {
         Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
+    fn position_floating_pane(&self, pane: Arc<dyn Pane>, index: usize) -> PositionedPane {
+        let resolved = resolve_floating_dimensions(self.size, self.floating_dimensions);
+        PositionedPane {
+            index,
+            is_active: true,
+            is_zoomed: false,
+            is_floating: true,
+            is_overlay: false,
+            left: resolved.left,
+            top: resolved.top,
+            width: resolved.size.cols,
+            pixel_width: resolved.size.pixel_width,
+            height: resolved.size.rows,
+            pixel_height: resolved.size.pixel_height,
+            pane,
+        }
+    }
+
     fn iter_panes_impl(&mut self, respect_zoom_state: bool) -> Vec<PositionedPane> {
         let mut panes = vec![];
+        let floating = if respect_zoom_state && !self.floating_hidden {
+            self.floating
+                .as_ref()
+                .map(|pane| self.position_floating_pane(Arc::clone(pane), 0))
+        } else {
+            None
+        };
 
         if respect_zoom_state {
-            if !self.floating_hidden {
-                if let Some(floating) = self.floating.as_ref() {
-                    let size = self.size;
-                    panes.push(PositionedPane {
-                        index: 0,
-                        is_active: true,
-                        is_zoomed: false,
-                        is_floating: true,
-                        is_overlay: false,
-                        left: 0,
-                        top: 0,
-                        width: size.cols.into(),
-                        pixel_width: size.pixel_width.into(),
-                        height: size.rows.into(),
-                        pixel_height: size.pixel_height.into(),
-                        pane: Arc::clone(floating),
-                    });
+            if let Some(floating) = floating.as_ref() {
+                if floating.width == self.size.cols && floating.height == self.size.rows {
+                    panes.push(floating.clone());
                     return panes;
                 }
             }
@@ -1058,7 +1140,7 @@ impl TabInner {
                 let size = self.size;
                 panes.push(PositionedPane {
                     index: 0,
-                    is_active: true,
+                    is_active: floating.is_none(),
                     is_zoomed: true,
                     is_floating: false,
                     is_overlay: false,
@@ -1070,6 +1152,10 @@ impl TabInner {
                     pixel_height: size.pixel_height.into(),
                     pane: Arc::clone(zoomed),
                 });
+                if let Some(mut floating) = floating {
+                    floating.index = panes.len();
+                    panes.push(floating);
+                }
                 return panes;
             }
         }
@@ -1106,7 +1192,7 @@ impl TabInner {
 
                 panes.push(PositionedPane {
                     index,
-                    is_active: index == active_idx,
+                    is_active: floating.is_none() && index == active_idx,
                     is_zoomed: zoomed_id == Some(pane.pane_id()),
                     is_floating: false,
                     is_overlay: false,
@@ -1129,28 +1215,19 @@ impl TabInner {
             }
         }
 
-        if !respect_zoom_state {
+        if respect_zoom_state {
+            if let Some(mut floating) = floating {
+                floating.index = panes.len();
+                panes.push(floating);
+            }
+        } else {
             if let Some(floating) = self.floating.as_ref() {
                 // When we're ignoring zoom state (which usually means we're iterating panes
                 // for management purposes like resolving IDs or finding the active pane
                 // for spawning new tabs), we need to make sure the floating pane is included
                 // in the list. Otherwise, the Mux won't be able to "see" it, and operations
                 // targeting it will fail.
-                let size = self.size;
-                panes.push(PositionedPane {
-                    index: panes.len(),
-                    is_active: true,
-                    is_zoomed: false,
-                    is_floating: true,
-                    is_overlay: false,
-                    left: 0,
-                    top: 0,
-                    width: size.cols.into(),
-                    pixel_width: size.pixel_width.into(),
-                    height: size.rows.into(),
-                    pixel_height: size.pixel_height.into(),
-                    pane: Arc::clone(floating),
-                });
+                panes.push(self.position_floating_pane(Arc::clone(floating), panes.len()));
             }
         }
 
@@ -1159,7 +1236,11 @@ impl TabInner {
 
     fn iter_splits(&mut self) -> Vec<PositionedSplit> {
         let mut dividers = vec![];
-        if self.zoomed.is_some() || (self.floating.is_some() && !self.floating_hidden) {
+        let floating_fills_tab = self.floating.is_some() && !self.floating_hidden && {
+            let resolved = resolve_floating_dimensions(self.size, self.floating_dimensions);
+            resolved.size.cols == self.size.cols && resolved.size.rows == self.size.rows
+        };
+        if self.zoomed.is_some() || floating_fills_tab {
             return dividers;
         }
 
@@ -1221,10 +1302,6 @@ impl TabInner {
             return;
         }
 
-        if let Some(floating) = &self.floating {
-            floating.resize(size).ok();
-        }
-
         if let Some(zoomed) = &self.zoomed {
             self.size = size;
             zoomed.resize(size).ok();
@@ -1260,6 +1337,11 @@ impl TabInner {
 
             // And then resize the individual panes to match
             apply_sizes_from_splits(self.pane.as_mut().unwrap(), &size);
+        }
+
+        if let Some(floating) = &self.floating {
+            let size = resolve_floating_dimensions(self.size, self.floating_dimensions).size;
+            floating.resize(size).ok();
         }
 
         Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
@@ -1906,8 +1988,18 @@ impl TabInner {
         }
     }
 
-    fn assign_floating_pane(&mut self, pane: &Arc<dyn Pane>) {
-        pane.resize(self.size).ok();
+    fn assign_floating_pane(
+        &mut self,
+        pane: &Arc<dyn Pane>,
+        dimensions: OverlayDimensions,
+        border: bool,
+        border_color: Option<ColorSpec>,
+    ) {
+        self.floating_dimensions = dimensions;
+        self.floating_border = border;
+        self.floating_border_color = border_color;
+        pane.resize(resolve_floating_dimensions(self.size, dimensions).size)
+            .ok();
         self.floating.replace(Arc::clone(pane));
         self.floating_hidden = false;
         Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
@@ -2657,7 +2749,7 @@ mod test {
         assert_eq!(false, panes[0].is_floating);
 
         let floating_pane = FakePane::new(2, size);
-        tab.assign_floating_pane(&floating_pane);
+        tab.assign_floating_pane(&floating_pane, OverlayDimensions::default(), false, None);
 
         let panes = tab.iter_panes();
         assert_eq!(1, panes.len());
@@ -2706,7 +2798,7 @@ mod test {
         assert_eq!(1, tab.iter_splits().len());
 
         let floating_pane = FakePane::new(3, size);
-        tab.assign_floating_pane(&floating_pane);
+        tab.assign_floating_pane(&floating_pane, OverlayDimensions::default(), false, None);
         assert!(tab.iter_splits().is_empty());
         let panes = tab.iter_panes();
         assert_eq!(1, panes.len());
@@ -2720,5 +2812,42 @@ mod test {
         assert_eq!(1, panes[0].pane.pane_id());
         assert_eq!(2, panes[1].pane.pane_id());
         assert!(panes.iter().all(|pane| !pane.is_floating));
+    }
+
+    #[test]
+    fn test_bounded_floating_pane_keeps_underlying_panes_visible() {
+        let size = TerminalSize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 800,
+            pixel_height: 600,
+            dpi: 96,
+        };
+        let tab = Tab::new(&size);
+        let pane = FakePane::new(1, size);
+        tab.assign_pane(&pane);
+
+        let floating_pane = FakePane::new(2, size);
+        tab.assign_floating_pane(
+            &floating_pane,
+            OverlayDimensions {
+                width: ConfigSplitSize::Percent(50),
+                height: ConfigSplitSize::Cells(10),
+            },
+            true,
+            None,
+        );
+
+        let panes = tab.iter_panes();
+        assert_eq!(2, panes.len());
+        assert!(!panes[0].is_active);
+        assert!(!panes[0].is_floating);
+        assert!(panes[1].is_active);
+        assert!(panes[1].is_floating);
+        assert_eq!(20, panes[1].left);
+        assert_eq!(7, panes[1].top);
+        assert_eq!(40, panes[1].width);
+        assert_eq!(10, panes[1].height);
+        assert_eq!(Some(None), tab.floating_pane_border_color());
     }
 }

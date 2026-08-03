@@ -3639,6 +3639,12 @@ impl TermWindow {
         overlay.border.then_some(overlay.border_color)
     }
 
+    fn get_active_floating_pane_border_color(&self) -> Option<Option<ColorSpec>> {
+        Mux::get()
+            .get_active_tab_for_window(self.mux_window_id)?
+            .floating_pane_border_color()
+    }
+
     fn get_active_pane_no_overlay(&self) -> Option<Arc<dyn Pane>> {
         let mux = Mux::get();
         mux.get_active_tab_for_window(self.mux_window_id)

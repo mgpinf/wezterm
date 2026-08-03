@@ -1,3 +1,4 @@
+use crate::overlay::resolve_overlay_dimensions;
 use crate::scripting::guiwin::GuiWin;
 use crate::spawn::SpawnWhere;
 use config::keyassignment::{FloatingPaneSpawn, KeyAssignment, SpawnCommand, SpawnTabDomain};
@@ -90,7 +91,7 @@ impl super::TermWindow {
     }
 
     pub fn spawn_floating_pane(&self, spawn: &FloatingPaneSpawn, source_pane_id: PaneId) {
-        let size = self.terminal_size;
+        let size = resolve_overlay_dimensions(self.terminal_size, spawn.dimensions).size;
         let term_config = Arc::new(TermConfig::with_config(self.config.clone()));
         let src_window_id = self.mux_window_id;
         let window = GuiWin::new(self);
@@ -98,11 +99,19 @@ impl super::TermWindow {
         let command = spawn.command.clone();
         let replace_current = spawn.replace_current;
         let action = spawn.action.clone();
+        let dimensions = spawn.dimensions;
+        let border = spawn.border;
+        let border_color = spawn.border_color;
 
         promise::spawn::spawn(async move {
             match crate::spawn::spawn_command_internal(
                 command,
-                SpawnWhere::FloatingPane { replace_current },
+                SpawnWhere::FloatingPane {
+                    replace_current,
+                    dimensions,
+                    border,
+                    border_color,
+                },
                 size,
                 Some(src_window_id),
                 term_config,

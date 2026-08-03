@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Context};
-use config::keyassignment::{SpawnCommand, SpawnTabDomain};
-use config::TermConfig;
+use config::keyassignment::{OverlayDimensions, SpawnCommand, SpawnTabDomain};
+use config::{ColorSpec, TermConfig};
 use mux::activity::Activity;
 use mux::domain::SplitSource;
 use mux::pane::PaneId;
@@ -16,7 +16,12 @@ pub enum SpawnWhere {
     NewWindow,
     NewTab,
     SplitPane(SplitRequest),
-    FloatingPane { replace_current: bool },
+    FloatingPane {
+        replace_current: bool,
+        dimensions: OverlayDimensions,
+        border: bool,
+        border_color: Option<ColorSpec>,
+    },
 }
 
 pub fn spawn_command_impl(
@@ -127,7 +132,12 @@ pub async fn spawn_command_internal(
                 bail!("there is no active tab while splitting pane!?");
             }
         }
-        SpawnWhere::FloatingPane { replace_current } => {
+        SpawnWhere::FloatingPane {
+            replace_current,
+            dimensions,
+            border,
+            border_color,
+        } => {
             // Floating panes are a specific layout preference handled by the Tab itself,
             // rather than a global window management concern like SplitPane or NewTab.
             // By implementing this here in the Controller (GUI), we orchestrate the
@@ -185,7 +195,7 @@ pub async fn spawn_command_internal(
                     .await?;
                 pane.set_config(term_config);
                 let pane_id = pane.pane_id();
-                tab.assign_floating_pane(&pane);
+                tab.assign_floating_pane(&pane, dimensions, border, border_color);
                 Some(pane_id)
             } else {
                 None
