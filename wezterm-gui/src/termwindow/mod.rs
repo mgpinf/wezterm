@@ -37,8 +37,8 @@ use config::keyassignment::{
 };
 use config::window::WindowLevel;
 use config::{
-    configuration, AudibleBell, ConfigHandle, Dimension, DimensionContext, FrontEndSelection,
-    GeometryOrigin, GuiPosition, TermConfig, WindowCloseConfirmation,
+    configuration, AudibleBell, ColorSpec, ConfigHandle, Dimension, DimensionContext,
+    FrontEndSelection, GeometryOrigin, GuiPosition, TermConfig, WindowCloseConfirmation,
 };
 use lfucache::*;
 use mlua::{FromLua, LuaSerdeExt, UserData, UserDataFields};
@@ -192,6 +192,8 @@ pub struct OverlayState {
     pub pane: Arc<dyn Pane>,
     pub key_table_state: KeyTableState,
     pub dimensions: OverlayDimensions,
+    pub border: bool,
+    pub border_color: Option<ColorSpec>,
 }
 
 #[derive(Default)]
@@ -2281,6 +2283,8 @@ impl TermWindow {
         };
 
         let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
@@ -2290,7 +2294,13 @@ impl TermWindow {
             start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
                 crate::overlay::selector::selector(term, args, gui_win, pane)
             });
-        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
+        self.assign_overlay_with_dimensions_and_border(
+            tab.tab_id(),
+            overlay,
+            dimensions,
+            border,
+            border_color,
+        );
         promise::spawn::spawn(future).detach();
     }
 
@@ -2307,6 +2317,8 @@ impl TermWindow {
         };
 
         let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
@@ -2316,7 +2328,13 @@ impl TermWindow {
             start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
                 crate::overlay::prompt::show_line_prompt_overlay(term, args, gui_win, pane)
             });
-        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
+        self.assign_overlay_with_dimensions_and_border(
+            tab.tab_id(),
+            overlay,
+            dimensions,
+            border,
+            border_color,
+        );
         promise::spawn::spawn(future).detach();
     }
 
@@ -2333,6 +2351,8 @@ impl TermWindow {
         };
 
         let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
@@ -2342,7 +2362,13 @@ impl TermWindow {
             start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
                 crate::overlay::confirm::show_confirmation_overlay(term, args, gui_win, pane)
             });
-        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
+        self.assign_overlay_with_dimensions_and_border(
+            tab.tab_id(),
+            overlay,
+            dimensions,
+            border,
+            border_color,
+        );
         promise::spawn::spawn(future).detach();
     }
 
@@ -2376,6 +2402,8 @@ impl TermWindow {
         };
 
         let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
@@ -2385,7 +2413,13 @@ impl TermWindow {
             start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
                 crate::overlay::transient::show_transient_menu_overlay(term, args, gui_win, pane)
             });
-        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
+        self.assign_overlay_with_dimensions_and_border(
+            tab.tab_id(),
+            overlay,
+            dimensions,
+            border,
+            border_color,
+        );
         promise::spawn::spawn(future).detach();
     }
 
@@ -2402,6 +2436,8 @@ impl TermWindow {
         };
 
         let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
         let args = args.clone();
 
         let gui_win = GuiWin::new(self);
@@ -2413,7 +2449,13 @@ impl TermWindow {
                     term, args, gui_win, pane,
                 )
             });
-        self.assign_overlay_with_dimensions(tab.tab_id(), overlay, dimensions);
+        self.assign_overlay_with_dimensions_and_border(
+            tab.tab_id(),
+            overlay,
+            dimensions,
+            border,
+            border_color,
+        );
         promise::spawn::spawn(future).detach();
     }
 
@@ -2473,6 +2515,8 @@ impl TermWindow {
             delimiter: args.delimiter.clone(),
             pane_count_in_suffix: args.pane_count_in_suffix,
             dimensions: args.dimensions,
+            border: args.border,
+            border_color: args.border_color,
         };
         self.show_launcher_impl(args, active_tab_idx);
     }
@@ -2531,6 +2575,8 @@ impl TermWindow {
         let delimiter = args.delimiter;
         let pane_count_in_suffix = args.pane_count_in_suffix;
         let dimensions = args.dimensions;
+        let border = args.border;
+        let border_color = args.border_color;
 
         promise::spawn::spawn(async move {
             let args = LauncherArgs::new(
@@ -2559,7 +2605,13 @@ impl TermWindow {
                         move |_tab_id, term| launcher(args, term, window, initial_choice_idx),
                     );
 
-                    term_window.assign_overlay_with_dimensions(tab_id, overlay, dimensions);
+                    term_window.assign_overlay_with_dimensions_and_border(
+                        tab_id,
+                        overlay,
+                        dimensions,
+                        border,
+                        border_color,
+                    );
                     promise::spawn::spawn(future).detach();
                 }
             })));
@@ -2901,6 +2953,8 @@ impl TermWindow {
                     delimiter: args.delimiter.clone(),
                     pane_count_in_suffix: args.pane_count_in_suffix,
                     dimensions: args.dimensions,
+                    border: args.border,
+                    border_color: args.border_color,
                 };
                 self.show_launcher_impl(args, 0);
             }
@@ -3544,6 +3598,13 @@ impl TermWindow {
             .map(|(pane, _)| pane)
     }
 
+    fn get_active_tab_overlay_border_color(&self) -> Option<Option<ColorSpec>> {
+        let tab = Mux::get().get_active_tab_for_window(self.mux_window_id)?;
+        let state = self.tab_state(tab.tab_id());
+        let overlay = state.overlay.as_ref()?;
+        overlay.border.then_some(overlay.border_color)
+    }
+
     fn get_active_pane_no_overlay(&self) -> Option<Arc<dyn Pane>> {
         let mux = Mux::get();
         mux.get_active_tab_for_window(self.mux_window_id)
@@ -3782,6 +3843,8 @@ impl TermWindow {
             pane,
             key_table_state: KeyTableState::default(),
             dimensions: OverlayDimensions::default(),
+            border: false,
+            border_color: None,
         });
         self.update_title();
     }
@@ -3796,11 +3859,24 @@ impl TermWindow {
         overlay: Arc<dyn Pane>,
         dimensions: OverlayDimensions,
     ) {
+        self.assign_overlay_with_dimensions_and_border(tab_id, overlay, dimensions, false, None);
+    }
+
+    pub fn assign_overlay_with_dimensions_and_border(
+        &mut self,
+        tab_id: TabId,
+        overlay: Arc<dyn Pane>,
+        dimensions: OverlayDimensions,
+        border: bool,
+        border_color: Option<ColorSpec>,
+    ) {
         self.cancel_overlay_for_tab(tab_id, None);
         self.tab_state(tab_id).overlay.replace(OverlayState {
             pane: overlay,
             key_table_state: KeyTableState::default(),
             dimensions,
+            border,
+            border_color,
         });
         self.update_title();
     }

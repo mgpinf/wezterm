@@ -36,6 +36,11 @@ The choice corresponding to the current tab is initially selected.
   previous display and search behavior.
 * `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
   the size of the tab navigator. Defaults to the full tab.
+* `border` - optional boolean that draws a single renderer-owned border around a
+  bounded tab navigator. Defaults to `false`. {{since('nightly', inline=True)}}
+* `border_color` - optional `ColorSpec` such as `{ AnsiColor = 'Blue' }` or
+  `{ Color = '#7aa2f7' }`. Defaults to the overlay foreground color.
+  {{since('nightly', inline=True)}}
 
 For example, this assignment opens the tab navigator directly in fuzzy
 filtering mode with customized text, uses `":"` as the delimiter, and displays
