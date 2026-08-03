@@ -1159,6 +1159,12 @@ pub struct DisplayText {
     pub text: String,
     #[dynamic(default)]
     pub title: String,
+    #[dynamic(default)]
+    pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
