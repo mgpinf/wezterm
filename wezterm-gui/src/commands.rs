@@ -793,7 +793,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: Some("oct_search"),
         },
-        ShowDebugOverlay => CommandDef {
+        ShowDebugOverlay(_) => CommandDef {
             brief: "Show debug overlay".into(),
             doc: "Activates the debug overlay and Lua REPL".into(),
             keys: vec![(Modifiers::CTRL.union(Modifiers::SHIFT), "l".into())],
@@ -2210,7 +2210,9 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         OpenUri("https://wezterm.org/".to_string()),
         OpenUri("https://github.com/wezterm/wezterm/discussions/".to_string()),
         OpenUri("https://github.com/wezterm/wezterm/issues/".to_string()),
-        ShowDebugOverlay,
+        ShowDebugOverlay(ShowDebugOverlayArgs {
+            ..Default::default()
+        }),
         // ----------------- Misc
         OpenLinkAtMouseCursor,
     ];
