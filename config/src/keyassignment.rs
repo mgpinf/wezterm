@@ -2,6 +2,7 @@ use crate::config::{ExitBehavior, ExitBehaviorMessaging};
 use crate::default_true;
 use crate::keys::KeyNoAction;
 use crate::window::WindowLevel;
+use crate::ColorSpec;
 use luahelper::impl_lua_conversion_dynamic;
 use ordered_float::NotNan;
 use portable_pty::CommandBuilder;
@@ -31,6 +32,10 @@ pub struct LauncherActionArgs {
     pub pane_count_in_suffix: bool,
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 impl Default for LauncherActionArgs {
@@ -44,6 +49,8 @@ impl Default for LauncherActionArgs {
             delimiter: default_delimiter(),
             pane_count_in_suffix: false,
             dimensions: OverlayDimensions::default(),
+            border: false,
+            border_color: None,
         }
     }
 }
@@ -64,6 +71,10 @@ pub struct ShowTabNavigatorArgs {
     pub pane_count_in_suffix: bool,
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 impl Default for ShowTabNavigatorArgs {
@@ -76,6 +87,8 @@ impl Default for ShowTabNavigatorArgs {
             delimiter: default_delimiter(),
             pane_count_in_suffix: false,
             dimensions: OverlayDimensions::default(),
+            border: false,
+            border_color: None,
         }
     }
 }
@@ -683,6 +696,10 @@ pub struct PromptInputLine {
     pub prompt: String,
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 fn default_prompt() -> String {
@@ -717,6 +734,10 @@ pub struct InputSelector {
 
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 fn default_num_alphabet() -> String {
@@ -741,6 +762,10 @@ pub struct Confirmation {
     pub message: String,
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 fn default_message() -> String {
@@ -978,6 +1003,10 @@ pub struct TransientMenu {
     pub cancel: Option<Box<KeyAssignment>>,
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 impl FromDynamic for TransientMenu {
@@ -1027,6 +1056,17 @@ impl FromDynamic for TransientMenu {
             .transpose()?
             .unwrap_or_default();
 
+        let border = obj
+            .get_by_str("border")
+            .map(|v| bool::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or_default();
+
+        let border_color = obj
+            .get_by_str("border_color")
+            .map(|v| ColorSpec::from_dynamic(v, options))
+            .transpose()?;
+
         let entries_val = obj.get_by_str("entries");
         let sections_val = obj.get_by_str("sections");
         let header_val = obj.get_by_str("header");
@@ -1067,6 +1107,8 @@ impl FromDynamic for TransientMenu {
             sections,
             cancel,
             dimensions,
+            border,
+            border_color,
         })
     }
 }
@@ -1106,6 +1148,10 @@ pub struct SelectorActions {
     pub cancel: Option<Box<KeyAssignment>>,
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
+    #[dynamic(default)]
+    pub border: bool,
+    #[dynamic(default)]
+    pub border_color: Option<ColorSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -1361,4 +1407,31 @@ pub struct KeyTables {
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeyTableEntry {
     pub action: KeyAssignment,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::AnsiColor;
+
+    #[test]
+    fn overlay_border_options_round_trip_through_dynamic_config() {
+        let mut value = LauncherActionArgs::default().to_dynamic();
+        let Value::Object(ref mut object) = value else {
+            panic!("launcher arguments did not convert to an object");
+        };
+        object.insert("flags".to_dynamic(), "FUZZY".to_dynamic());
+        object.insert("border".to_dynamic(), true.to_dynamic());
+        object.insert(
+            "border_color".to_dynamic(),
+            ColorSpec::AnsiColor(AnsiColor::Blue).to_dynamic(),
+        );
+
+        let parsed = LauncherActionArgs::from_dynamic(&value, Default::default()).unwrap();
+        assert!(parsed.border);
+        assert_eq!(
+            parsed.border_color,
+            Some(ColorSpec::AnsiColor(AnsiColor::Blue))
+        );
+    }
 }

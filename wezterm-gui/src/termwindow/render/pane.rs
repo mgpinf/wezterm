@@ -9,7 +9,7 @@ use crate::termwindow::{ScrollHit, UIItem, UIItemType, BOUNDED_OVERLAY_ZINDEX};
 use ::window::bitmaps::TextureRect;
 use ::window::DeadKeyStatus;
 use anyhow::Context;
-use config::VisualBellTarget;
+use config::{ColorSpec, VisualBellTarget};
 use mux::pane::{PaneId, WithPaneLines};
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use mux::tab::PositionedPane;
@@ -21,6 +21,94 @@ use wezterm_term::{Line, StableRowIndex};
 use window::color::LinearRgba;
 
 impl crate::TermWindow {
+    pub fn paint_overlay_border(
+        &self,
+        pos: &PositionedPane,
+        border_color: Option<ColorSpec>,
+        layers: &mut TripleLayerQuadAllocator,
+    ) -> anyhow::Result<()> {
+        let cell_width = self.render_metrics.cell_size.width as f32;
+        let cell_height = self.render_metrics.cell_size.height as f32;
+        let (padding_left, padding_top) = self.padding_left_top();
+        let tab_bar_height = if self.show_tab_bar {
+            self.tab_bar_pixel_height()
+                .context("tab_bar_pixel_height for overlay border")?
+        } else {
+            0.
+        };
+        let top_bar_height = if self.config.tab_bar_at_bottom {
+            0.
+        } else {
+            tab_bar_height
+        };
+        let os_border = self.get_os_border();
+        let top_pixel_y = top_bar_height + padding_top + os_border.top.get() as f32;
+
+        // Match the pane background bounds so that the border encloses the
+        // complete overlay, including the half-cell padding used around panes.
+        let (x, width_delta) = if pos.left == 0 {
+            (
+                0.,
+                padding_left + os_border.left.get() as f32 + (cell_width / 2.0),
+            )
+        } else {
+            (
+                padding_left + os_border.left.get() as f32 - (cell_width / 2.0)
+                    + (pos.left as f32 * cell_width),
+                cell_width,
+            )
+        };
+        let (y, height_delta) = if pos.top == 0 {
+            (top_pixel_y - padding_top, padding_top + (cell_height / 2.0))
+        } else {
+            (
+                top_pixel_y + (pos.top as f32 * cell_height) - (cell_height / 2.0),
+                cell_height,
+            )
+        };
+        let bounds: ::window::RectF = euclid::rect(
+            x,
+            y,
+            if pos.left + pos.width >= self.terminal_size.cols {
+                self.dimensions.pixel_width as f32 - x
+            } else {
+                (pos.width as f32 * cell_width) + width_delta
+            },
+            if pos.top + pos.height >= self.terminal_size.rows {
+                self.dimensions.pixel_height as f32 - y
+            } else {
+                (pos.height as f32 * cell_height) + height_delta
+            },
+        );
+
+        let thickness = (self.render_metrics.underline_height.max(1) as f32)
+            .min(bounds.width())
+            .min(bounds.height());
+        if thickness <= 0. {
+            return Ok(());
+        }
+
+        let palette = pos.pane.palette();
+        let color = palette
+            .resolve_fg(border_color.unwrap_or(ColorSpec::Default).into())
+            .to_linear();
+        let right = bounds.max_x() - thickness;
+        let bottom = bounds.max_y() - thickness;
+        let border_rects = [
+            euclid::rect(bounds.min_x(), bounds.min_y(), bounds.width(), thickness),
+            euclid::rect(bounds.min_x(), bottom, bounds.width(), thickness),
+            euclid::rect(bounds.min_x(), bounds.min_y(), thickness, bounds.height()),
+            euclid::rect(right, bounds.min_y(), thickness, bounds.height()),
+        ];
+
+        for rect in border_rects {
+            self.filled_rectangle(layers, 2, rect, color)
+                .context("filled_rectangle for overlay border")?;
+        }
+
+        Ok(())
+    }
+
     fn paint_pane_box_model(&mut self, pos: &PositionedPane) -> anyhow::Result<()> {
         let computed = self.build_pane(pos)?;
         let mut ui_items = computed.ui_items();

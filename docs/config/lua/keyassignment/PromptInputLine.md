@@ -30,6 +30,11 @@ upon the input.
   the input. {{since('nightly', inline=True)}}
 * `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
   the size of the overlay. Defaults to the full tab. {{since('nightly', inline=True)}}
+* `border` - optional boolean that draws a single renderer-owned border around a
+  bounded overlay. Defaults to `false`. {{since('nightly', inline=True)}}
+* `border_color` - optional `ColorSpec` such as `{ AnsiColor = 'Blue' }` or
+  `{ Color = '#7aa2f7' }`. Defaults to the overlay foreground color.
+  {{since('nightly', inline=True)}}
 
 ## Example of interactively renaming the current tab
 

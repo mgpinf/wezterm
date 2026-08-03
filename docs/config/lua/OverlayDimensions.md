@@ -20,6 +20,9 @@ full-tab overlay. Values are clamped to the available tab size, and a bounded
 overlay is centered in the tab. The panes beneath a bounded overlay remain
 visible but are not interactive until the overlay closes.
 
+A renderer-drawn border does not change the requested dimensions; it is drawn
+inside the overlay's pixel bounds.
+
 For example:
 
 ```lua

@@ -200,6 +200,8 @@ impl crate::TermWindow {
             pos.is_overlay
                 && (pos.width < self.terminal_size.cols || pos.height < self.terminal_size.rows)
         });
+        let bounded_overlay_border_color =
+            bounded_overlay_idx.and_then(|_| self.get_active_tab_overlay_border_color());
         let base_pane_count = bounded_overlay_idx.unwrap_or(panes.len());
         let focused = self.focused.is_some();
         let window_is_transparent =
@@ -303,6 +305,9 @@ impl crate::TermWindow {
                 .context("layer_for_zindex for bounded overlay")?;
             let mut overlay_layers = overlay_layer.quad_allocator();
             self.paint_positioned_pane(&panes[overlay_idx], &mut overlay_layers, focused)?;
+            if let Some(border_color) = bounded_overlay_border_color {
+                self.paint_overlay_border(&panes[overlay_idx], border_color, &mut overlay_layers)?;
+            }
         }
 
         let gl_state = self.render_state.as_ref().unwrap();

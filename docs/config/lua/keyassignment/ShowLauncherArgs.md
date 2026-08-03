@@ -19,6 +19,11 @@ The arguments are a lua table with the following keys:
   [launcher_alphabet](../config/launcher_alphabet.md) {{since('nightly', inline=True)}}
 * `dimensions` - optional [OverlayDimensions](../OverlayDimensions.md) controlling
   the size of the launcher. Defaults to the full tab. {{since('nightly', inline=True)}}
+* `border` - optional boolean that draws a single renderer-owned border around a
+  bounded launcher. Defaults to `false`. {{since('nightly', inline=True)}}
+* `border_color` - optional `ColorSpec` such as `{ AnsiColor = 'Blue' }` or
+  `{ Color = '#7aa2f7' }`. Defaults to the overlay foreground color.
+  {{since('nightly', inline=True)}}
 
 The possible flags are listed below. You must explicitly list each item that you
 want to include in the launcher. If you only specify `"FUZZY"` then you will see
