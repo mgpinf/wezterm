@@ -90,6 +90,7 @@ use crate::spawn::SpawnWhere;
 use prevcursor::PrevCursorPos;
 
 const ATLAS_SIZE: usize = 128;
+pub(crate) const BOUNDED_FLOATING_PANE_ZINDEX: i8 = 4;
 pub(crate) const BOUNDED_OVERLAY_ZINDEX: i8 = 5;
 
 lazy_static::lazy_static! {

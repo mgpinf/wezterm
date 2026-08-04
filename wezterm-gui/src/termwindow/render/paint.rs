@@ -1,5 +1,5 @@
 use crate::quad::TripleLayerQuadAllocator;
-use crate::termwindow::{RenderFrame, TermWindowNotif, BOUNDED_OVERLAY_ZINDEX};
+use crate::termwindow::{RenderFrame, TermWindowNotif};
 use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::WindowOps;
 use anyhow::Context;
@@ -169,9 +169,10 @@ impl crate::TermWindow {
         layers: &mut TripleLayerQuadAllocator,
         focused: bool,
     ) -> anyhow::Result<()> {
-        if pos.is_overlay {
-            // A tab overlay is modal. Discard hit targets collected from any
-            // visible panes underneath it before registering its own targets.
+        if pos.is_overlay || pos.is_floating {
+            // Overlays and floating panes are modal. Discard hit targets
+            // collected from any visible panes underneath them before
+            // registering their own targets.
             self.ui_items.clear();
         }
         if pos.is_active {
@@ -196,18 +197,15 @@ impl crate::TermWindow {
         self.ui_items.clear();
 
         let panes = self.get_panes_to_render();
-        let bounded_overlay_idx = panes.iter().rposition(|pos| {
-            (pos.is_overlay || pos.is_floating)
-                && (pos.width < self.terminal_size.cols || pos.height < self.terminal_size.rows)
-        });
-        let bounded_overlay_border_color = bounded_overlay_idx.and_then(|idx| {
-            if panes[idx].is_overlay {
-                self.get_active_tab_overlay_border_color()
-            } else {
-                self.get_active_floating_pane_border_color()
-            }
-        });
-        let base_pane_count = bounded_overlay_idx.unwrap_or(panes.len());
+        let bounded_panes = panes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, pos)| self.bounded_pane_zindex(pos).map(|zindex| (idx, zindex)))
+            .collect::<Vec<_>>();
+        let base_pane_count = bounded_panes
+            .first()
+            .map(|(idx, _)| *idx)
+            .unwrap_or(panes.len());
         let focused = self.focused.is_some();
         let window_is_transparent =
             !self.window_background.is_empty() || self.config.window_background_opacity != 1.0;
@@ -288,10 +286,10 @@ impl crate::TermWindow {
             self.paint_positioned_pane(pos, &mut layers, focused)?;
         }
 
-        let split_pane = if bounded_overlay_idx.is_some() {
-            self.get_active_pane_no_overlay()
-        } else {
+        let split_pane = if bounded_panes.is_empty() {
             self.get_active_pane_or_overlay()
+        } else {
+            self.get_active_pane_no_overlay()
         };
         if let Some(pane) = split_pane {
             let splits = self.get_splits();
@@ -303,15 +301,21 @@ impl crate::TermWindow {
 
         drop(layers);
 
-        if let Some(overlay_idx) = bounded_overlay_idx {
+        for (pane_idx, zindex) in bounded_panes {
+            let pos = &panes[pane_idx];
+            let border_color = if pos.is_overlay {
+                self.get_active_tab_overlay_border_color()
+            } else {
+                self.get_active_floating_pane_border_color()
+            };
             let gl_state = self.render_state.as_ref().unwrap();
-            let overlay_layer = gl_state
-                .layer_for_zindex(BOUNDED_OVERLAY_ZINDEX)
-                .context("layer_for_zindex for bounded overlay")?;
-            let mut overlay_layers = overlay_layer.quad_allocator();
-            self.paint_positioned_pane(&panes[overlay_idx], &mut overlay_layers, focused)?;
-            if let Some(border_color) = bounded_overlay_border_color {
-                self.paint_overlay_border(&panes[overlay_idx], border_color, &mut overlay_layers)?;
+            let pane_layer = gl_state
+                .layer_for_zindex(zindex)
+                .context("layer_for_zindex for bounded pane")?;
+            let mut pane_layers = pane_layer.quad_allocator();
+            self.paint_positioned_pane(pos, &mut pane_layers, focused)?;
+            if let Some(border_color) = border_color {
+                self.paint_overlay_border(pos, border_color, &mut pane_layers)?;
             }
         }
 
