@@ -710,6 +710,8 @@ pub struct PromptInputLine {
     pub border: bool,
     #[dynamic(default)]
     pub border_color: Option<ColorSpec>,
+    #[dynamic(default)]
+    pub hide_description: bool,
 }
 
 fn default_prompt() -> String {

@@ -35,6 +35,7 @@ upon the input.
 * `border_color` - optional `ColorSpec` such as `{ AnsiColor = 'Blue' }` or
   `{ Color = '#7aa2f7' }`. Defaults to the overlay foreground color.
   {{since('nightly', inline=True)}}
+* `hide_description` - optional boolean to hide description. {{since('nightly', inline=True)}}
 
 ## Example of interactively renaming the current tab
 

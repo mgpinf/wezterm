@@ -55,9 +55,11 @@ pub fn show_line_prompt_overlay(
     };
 
     term.no_grab_mouse_in_raw_mode();
-    let mut text = args.description.replace("\r\n", "\n").replace("\n", "\r\n");
-    text.push_str("\r\n");
-    term.render(&[Change::Text(text)])?;
+    if !args.hide_description {
+        let mut text = args.description.replace("\r\n", "\n").replace("\n", "\r\n");
+        text.push_str("\r\n");
+        term.render(&[Change::Text(text)])?;
+    }
 
     let mut host = PromptHost::new();
     let mut editor = LineEditor::new(&mut term);
