@@ -903,14 +903,8 @@ impl<'a> TransientState<'a> {
     }
 }
 
-#[derive(FromDynamic, ToDynamic)]
-struct TransientResultEntry {
-    value: Value,
-    metadata: Option<HashMap<String, Value>>,
-}
-
 struct TransientResult {
-    entries: HashMap<String, TransientResultEntry>,
+    entries: HashMap<String, Value>,
 }
 
 impl ToDynamic for TransientResult {
@@ -938,13 +932,7 @@ mod test {
 
     #[test]
     fn transient_result_converts_to_the_entries_map() {
-        let entries = HashMap::from([(
-            "--follow".to_string(),
-            TransientResultEntry {
-                value: true.to_dynamic(),
-                metadata: None,
-            },
-        )]);
+        let entries = HashMap::from([("--follow".to_string(), true.to_dynamic())]);
         let expected = entries.to_dynamic();
 
         assert_eq!(TransientResult { entries }.to_dynamic(), expected);
@@ -961,32 +949,23 @@ impl From<&[TransientSection<'_>]> for TransientResult {
                     RenderableEntity::Opt(option) => {
                         entries.insert(
                             option.delegate.flag.clone(),
-                            TransientResultEntry {
-                                value: option.value.borrow().to_dynamic(),
-                                metadata: option.delegate.metadata.clone(),
-                            },
+                            option.value.borrow().to_dynamic(),
                         );
                     }
                     RenderableEntity::Switch(switch) => {
                         entries.insert(
                             switch.delegate.flag.clone(),
-                            TransientResultEntry {
-                                value: switch.value.get().to_dynamic(),
-                                metadata: switch.delegate.metadata.clone(),
-                            },
+                            switch.value.get().to_dynamic(),
                         );
                     }
                     RenderableEntity::CyclicSwitch(cyclic_switch) => {
                         entries.insert(
                             cyclic_switch.delegate.flag.clone(),
-                            TransientResultEntry {
-                                value: cyclic_switch
-                                    .active_idx
-                                    .get()
-                                    .map(|idx| cyclic_switch.delegate.choices.get(idx).cloned())
-                                    .to_dynamic(),
-                                metadata: cyclic_switch.delegate.metadata.clone(),
-                            },
+                            cyclic_switch
+                                .active_idx
+                                .get()
+                                .map(|idx| cyclic_switch.delegate.choices.get(idx).cloned())
+                                .to_dynamic(),
                         );
                     }
                     _ => {}
