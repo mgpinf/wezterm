@@ -141,6 +141,14 @@ fn compile_search_regex(pattern: &str, mode: SearchMode) -> Option<Regex> {
     let regex = match mode {
         SearchMode::CaseInsensitive => Regex::new(&format!("(?i){}", regex::escape(pattern))),
         SearchMode::CaseSensitive => Regex::new(&regex::escape(pattern)),
+        SearchMode::CaseSmart => {
+            if pattern.chars().any(|c| c.is_uppercase()) {
+                Regex::new(&regex::escape(pattern))
+            } else {
+                Regex::new(&format!("(?i){}", regex::escape(pattern)))
+            }
+        }
+
         SearchMode::Regex => Regex::new(pattern),
     };
 
@@ -675,6 +683,7 @@ enum SearchMode {
     #[default]
     CaseSensitive,
     CaseInsensitive,
+    CaseSmart,
     Regex,
 }
 
@@ -682,7 +691,8 @@ impl SearchMode {
     fn next(self) -> Self {
         match self {
             SearchMode::CaseSensitive => SearchMode::CaseInsensitive,
-            SearchMode::CaseInsensitive => SearchMode::Regex,
+            SearchMode::CaseInsensitive => SearchMode::CaseSmart,
+            SearchMode::CaseSmart => SearchMode::Regex,
             SearchMode::Regex => SearchMode::CaseSensitive,
         }
     }
@@ -691,6 +701,7 @@ impl SearchMode {
         match self {
             SearchMode::CaseInsensitive => "case-insensitive",
             SearchMode::CaseSensitive => "case-sensitive",
+            SearchMode::CaseSmart => "case-smart",
             SearchMode::Regex => "regex",
         }
     }
