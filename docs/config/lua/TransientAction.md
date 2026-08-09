@@ -17,9 +17,9 @@ It is a lua object with the following fields:
   callback's function signature is `(window, pane, result)` where `window` and
   `pane` are the [Window](./window/index.md) and [Pane](./pane/index.md)
   objects from the current pane and window. When used with `TransientMenu`,
-  `result` is a [TransientResult](./TransientResult.md) object. When used with
+  `result` is a [TransientResult](./TransientResult.md). When used with
   `SelectorActions`, it is a
-  [SelectorActionsResult](./SelectorActionsResult.md) object
+  [SelectorActionsResult](./SelectorActionsResult.md).
 * `keep_overlay` - optional boolean (default: `false`). When set to `true`, the
   overlay will remain open after the action callback is triggered,
   allowing the user to continue interacting with the menu. When `false` (the

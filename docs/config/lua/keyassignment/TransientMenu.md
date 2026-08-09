@@ -321,7 +321,7 @@ containers_selector_actions = function(state)
                 description = 'Logs',
                 action = wezterm.action_callback(
                   function(inner_window, inner_pane, result)
-                    state.choices = result.choices
+                    state.choices = result
 
                     inner_window:perform_action(
                       containers_logs_transient(state),

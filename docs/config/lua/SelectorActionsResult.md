@@ -8,24 +8,31 @@ tags:
 
 {{since('nightly')}}
 
-The `SelectorActionsResult` struct is a lua object with the following fields:
-* `choices` - a lua table consisting of the selected choices. Each entry
-  is itself a table with a `label` field, an optional `id` field, and an
-  optional `metadata` field. The metadata is a table of string key-value
-  pairs that were attached to the original choice.
+The `SelectorActionsResult` is a Lua array containing the selected choices.
+Each choice is a table with a `label` field, an optional `id` field, and an
+optional `metadata` field. The metadata is a table of string key-value pairs
+that were attached to the original choice.
 
 
-Example of `SelectorActionsResult` object:
+Example of a `SelectorActionsResult` array:
 
 ```lua
 local result = {
-  choices = {
-    {
-      label = 'choice1',
-      id = 'random_id',
-      metadata = { status = 'running' },
-    },
-    { label = 'choice2' },
+  {
+    label = 'choice1',
+    id = 'random_id',
+    metadata = { status = 'running' },
   },
+  { label = 'choice2' },
 }
+```
+
+The result is always an array, including when `multiple` is `false`:
+
+```lua
+wezterm.action_callback(function(window, pane, result)
+  for _, choice in ipairs(result) do
+    wezterm.log_info(choice.label)
+  end
+end)
 ```

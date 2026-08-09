@@ -17,7 +17,7 @@ use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::buffered::BufferedTerminal;
 use termwiz::terminal::Terminal;
 use termwiz_funcs::truncate_right;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
+use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
 use wezterm_term::unicode_column_width;
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::{Clipboard, Modifiers, WindowOps};
@@ -664,11 +664,58 @@ impl<'a> SelectorState<'a> {
     }
 }
 
-#[derive(FromDynamic, ToDynamic)]
 struct SelectorActionsResult {
     choices: Vec<SelectorActionsEntry>,
 }
+
+impl ToDynamic for SelectorActionsResult {
+    fn to_dynamic(&self) -> Value {
+        self.choices.to_dynamic()
+    }
+}
+
+impl FromDynamic for SelectorActionsResult {
+    fn from_dynamic(
+        value: &Value,
+        options: wezterm_dynamic::FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        Ok(Self {
+            choices: Vec::from_dynamic(value, options)?,
+        })
+    }
+}
+
 impl_lua_conversion_dynamic!(SelectorActionsResult);
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn selector_actions_result_converts_to_and_from_the_choices_array() {
+        let choices = vec![SelectorActionsEntry {
+            label: "choice1".to_string(),
+            id: Some("random_id".to_string()),
+            metadata: None,
+        }];
+        let value = choices.to_dynamic();
+
+        assert_eq!(
+            SelectorActionsResult {
+                choices: choices.clone(),
+            }
+            .to_dynamic(),
+            value
+        );
+
+        assert_eq!(
+            SelectorActionsResult::from_dynamic(&value, Default::default())
+                .unwrap()
+                .choices,
+            choices
+        );
+    }
+}
 
 fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<'a, TransientAction>) {
     for action in &args.section.actions {
