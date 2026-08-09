@@ -16,7 +16,7 @@ It is a lua object with the following fields:
   If omitted, switch is not set
 * `description` - text to describe the switch
 * `flag` - text used as the key in the [TransientResult](./TransientResult.md)
-  entries table
+  table
 * `metadata` - a table with key value pairs where keys are strings
   and values can be of any data type
 

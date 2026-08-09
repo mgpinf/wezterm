@@ -909,11 +909,47 @@ struct TransientResultEntry {
     metadata: Option<HashMap<String, Value>>,
 }
 
-#[derive(FromDynamic, ToDynamic)]
 struct TransientResult {
     entries: HashMap<String, TransientResultEntry>,
 }
+
+impl ToDynamic for TransientResult {
+    fn to_dynamic(&self) -> Value {
+        self.entries.to_dynamic()
+    }
+}
+
+impl FromDynamic for TransientResult {
+    fn from_dynamic(
+        value: &Value,
+        options: wezterm_dynamic::FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        Ok(Self {
+            entries: HashMap::from_dynamic(value, options)?,
+        })
+    }
+}
+
 impl_lua_conversion_dynamic!(TransientResult);
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn transient_result_converts_to_the_entries_map() {
+        let entries = HashMap::from([(
+            "--follow".to_string(),
+            TransientResultEntry {
+                value: true.to_dynamic(),
+                metadata: None,
+            },
+        )]);
+        let expected = entries.to_dynamic();
+
+        assert_eq!(TransientResult { entries }.to_dynamic(), expected);
+    }
+}
 
 impl From<&[TransientSection<'_>]> for TransientResult {
     fn from(value: &[TransientSection<'_>]) -> Self {

@@ -247,11 +247,11 @@ containers_logs_transient = function(state)
                 action = wezterm.action_callback(
                   function(inner_window, inner_pane, result)
                     local cmd = { 'docker', 'logs' }
-                    for _, entry in ipairs(result.entries) do
+                    for flag, entry in pairs(result) do
                       if entry.value == true then
-                        table.insert(cmd, entry.flag)
+                        table.insert(cmd, flag)
                       elseif entry.value then
-                        table.insert(cmd, entry.flag .. entry.value)
+                        table.insert(cmd, flag .. entry.value)
                       end
                     end
 

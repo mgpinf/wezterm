@@ -17,7 +17,7 @@ It is a lua object with the following fields:
   If omitted, cyclic switch is not set
 * `description` - text to describe the cyclic switch
 * `flag` - text used as the key in the [TransientResult](./TransientResult.md)
-  entries table
+  table
 * `allow_nil` - Optional argument that determines whether to
   allow to set the cyclic switch to `nil` if currently at the
   last choice. If omitted, cyclic switch is set to `nil` if

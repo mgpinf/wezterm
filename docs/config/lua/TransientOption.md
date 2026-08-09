@@ -16,7 +16,7 @@ It is a lua object with the following fields:
   If omitted, option is not set
 * `description` - text to describe the option
 * `flag` - text used as the key in the [TransientResult](./TransientResult.md)
-  entries table
+  table
 * `allow_nil` - optional argument that determines whether to allow
   setting the option to `nil` if previously set to a string.
   If omitted, option is set to false if previously set.

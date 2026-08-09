@@ -7,9 +7,8 @@ tags:
 
 {{since('nightly')}}
 
-The `TransientResult` is a lua object with the following fields:
-* `entries` - a table mapping flag names to their values. Each key is
-  the `flag` string from one of the below entries:
+The `TransientResult` is a lua table mapping flag names to their values. Each key
+is the `flag` string from one of the following entries:
   * [TransientSwitch](./TransientSwitch.md)
   * [TransientOption](./TransientOption.md)
   * [TransientCyclicSwitch](./TransientCyclicSwitch.md)
@@ -27,12 +26,10 @@ Each value against the key is a lua object with following fields:
 Example of `TransientResult` object:
 ```lua
 local result = {
-  entries = {
-    ['--follow'] = { value = true },
-    ['--tail='] = {
-      value = '100',
-      metadata = { additional_description = 'Output the last N lines' },
-    },
+  ['--follow'] = { value = true },
+  ['--tail='] = {
+    value = '100',
+    metadata = { additional_description = 'Output the last N lines' },
   },
 }
 ```
@@ -40,7 +37,7 @@ local result = {
 Example of using `TransientResult`:
 ```lua
 wezterm.action_callback(function(window, pane, result)
-  local follow = result.entries['--follow']
-  local tail = result.entries['--tail=']
+  local follow = result['--follow']
+  local tail = result['--tail=']
 end)
 ```
