@@ -9,9 +9,7 @@ tags:
 {{since('nightly')}}
 
 The `SelectorActionsResult` is a Lua array containing the selected choices.
-Each choice is a table with a `label` field, an optional `id` field, and an
-optional `metadata` field. The metadata is a table of string key-value pairs
-that were attached to the original choice.
+Each choice is a table with a `label` field, and an optional `id` field.
 
 
 Example of a `SelectorActionsResult` array:
@@ -21,7 +19,6 @@ local result = {
   {
     label = 'choice1',
     id = 'random_id',
-    metadata = { status = 'running' },
   },
   { label = 'choice2' },
 }

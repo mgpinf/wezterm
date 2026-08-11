@@ -1137,8 +1137,6 @@ pub struct SelectorActionsEntry {
     pub label: String,
     #[dynamic(default)]
     pub id: Option<String>,
-    #[dynamic(default)]
-    pub metadata: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

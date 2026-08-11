@@ -431,7 +431,6 @@ impl<'a> SelectorState<'a> {
                             .map(|(idx, _)| SelectorActionsEntry {
                                 label: self.choices[idx].delegate.label.clone(),
                                 id: self.choices[idx].delegate.id.clone(),
-                                metadata: self.choices[idx].delegate.metadata.clone(),
                             }),
                     );
                 }
@@ -446,7 +445,6 @@ impl<'a> SelectorState<'a> {
                     choices.push(SelectorActionsEntry {
                         label: entry.delegate.label.clone(),
                         id: entry.delegate.id.clone(),
-                        metadata: entry.delegate.metadata.clone(),
                     });
                 }
 
@@ -696,7 +694,6 @@ mod test {
         let choices = vec![SelectorActionsEntry {
             label: "choice1".to_string(),
             id: Some("random_id".to_string()),
-            metadata: None,
         }];
         let value = choices.to_dynamic();
 
