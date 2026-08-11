@@ -39,48 +39,84 @@ controls the dimmed foreground.
 
 For specifying menu entries, use **one** of the following:
 
-* `sections` - list of [TransientSection](#transientsection) objects (for multi-section menus)
-* `entries` - list of [TransientEntry](#transiententry) objects (for single-section menus)
-  * `header` - optional, section header text (only valid with `entries`)
+* `entries` - list of [TransientEntry](#transiententry) objects for a
+  single-section menu
+* `header` - optional section header text; only valid with `entries`
+* `sections` - list of [TransientSection](#transientsection) objects for a
+  multi-section menu
 
 Note: You cannot combine `sections` with `entries` or `header`.
 
-#### Single-section menus
+## Basic example
 
-For menus with a single section, use `entries` directly:
-
-```lua
-act.TransientMenu {
-  description = 'My Menu',
-  header = 'Actions', -- optional, defaults to empty string
-  entries = {
-    {
-      type = 'switch',
-      key = '-v',
-      description = 'Verbose',
-      flag = '--verbose',
-    },
-    { type = 'action', key = 'r', description = 'Run', action = callback },
-  },
-}
-```
-
-#### Multi-section menus
-
-For menus with multiple sections, use `sections`:
+This complete configuration opens a menu with a switch, an option, and an
+action. The action callback receives a table that maps each entry's `flag` to
+its current value.
 
 ```lua
-act.TransientMenu {
-  description = 'My Menu',
-  sections = {
-    {
-      header = 'Flags',
+local wezterm = require 'wezterm'
+local act = wezterm.action
+
+local config = wezterm.config_builder()
+
+config.keys = {
+  {
+    key = 'm',
+    mods = 'CTRL|SHIFT',
+    action = act.TransientMenu {
+      description = 'Example menu',
+      header = 'Arguments',
       entries = {
         {
           type = 'switch',
-          key = '-v',
-          description = 'Verbose',
+          key = 'v',
+          description = 'Verbose output',
           flag = '--verbose',
+        },
+        {
+          type = 'option',
+          key = 'f',
+          description = 'Output format',
+          flag = '--format=',
+          default = 'text',
+          choices = { 'text', 'json' },
+        },
+        {
+          type = 'action',
+          key = 'r',
+          description = 'Run',
+          action = wezterm.action_callback(function(window, pane, result)
+            wezterm.log_info('verbose: ' .. tostring(result['--verbose']))
+            wezterm.log_info('format: ' .. tostring(result['--format=']))
+          end),
+        },
+      },
+    },
+  },
+}
+
+return config
+```
+
+## Sections
+
+Use `sections` to organize entries under multiple headers:
+
+```lua
+local wezterm = require 'wezterm'
+local act = wezterm.action
+
+act.TransientMenu {
+  description = 'Build',
+  sections = {
+    {
+      header = 'Arguments',
+      entries = {
+        {
+          type = 'switch',
+          key = 'r',
+          description = 'Release mode',
+          flag = '--release',
         },
       },
     },
@@ -89,9 +125,11 @@ act.TransientMenu {
       entries = {
         {
           type = 'action',
-          key = 'r',
-          description = 'Run',
-          action = callback,
+          key = 'b',
+          description = 'Build',
+          action = wezterm.action_callback(function(window, pane, result)
+            wezterm.log_info('release: ' .. tostring(result['--release']))
+          end),
         },
       },
     },
@@ -99,300 +137,53 @@ act.TransientMenu {
 }
 ```
 
-
 ### `TransientSection`
 
 `TransientSection` struct is a lua object with the following fields:
+
 * `header` - text to describe the section
 * `entries` - list of [TransientEntry](#transiententry) objects
-
 
 ### `TransientEntry`
 
 `TransientEntry` is a lua object with a `type` field to specify the entry type,
-and all other fields at the same level:
-
-```lua
-entries = {
-  {
-    type = 'switch',
-    key = '-f',
-    description = 'Follow',
-    flag = '--follow',
-    default = true,
-  },
-  {
-    type = 'option',
-    key = '-t',
-    description = 'Tail',
-    flag = '--tail=',
-    default = '0',
-  },
-  {
-    type = 'cyclic',
-    key = '-c',
-    description = 'Choice',
-    flag = '--choice=',
-    choices = { 'a', 'b' },
-  },
-  { type = 'action', key = 'l', description = 'Logs', action = callback },
-}
-```
+with all other fields at the same level.
 
 The `type` field accepts:
+
 * `"switch"` - boolean toggle, see [TransientSwitch](../TransientSwitch.md)
 * `"option"` - value input, see [TransientOption](../TransientOption.md)
 * `"cyclic"` - cycle through choices, see [TransientCyclicSwitch](../TransientCyclicSwitch.md)
 * `"action"` - trigger an action, see [TransientAction](../TransientAction.md)
 
-## Combining TransientMenu and SelectorActions for viewing logs for Docker containers with an ability to move between KeyAssignments
+## Cyclic switch
 
-{% raw %}
+A cyclic switch advances to the next choice each time its key is pressed. If
+`allow_nil` is `true`, advancing past the last choice unsets the switch.
+
 ```lua
 local wezterm = require 'wezterm'
 local act = wezterm.action
 
-local function description(text)
-  return wezterm.format {
-    { Attribute = { Intensity = 'Bold' } },
-    { Foreground = { AnsiColor = 'Teal' } },
-    { Text = text },
-  }
-end
-
-local function header(text)
-  return wezterm.format {
-    { Attribute = { Intensity = 'Bold' } },
-    { Foreground = { AnsiColor = 'Navy' } },
-    { Text = text },
-  }
-end
-
-local function entry_label(text)
-  return wezterm.format {
-    { Foreground = { AnsiColor = 'Olive' } },
-    { Text = text },
-  }
-end
-
-local function fuzzy_description(text)
-  return wezterm.format {
-    { Attribute = { Intensity = 'Bold' } },
-    { Foreground = { AnsiColor = 'Teal' } },
-    { Text = text },
-    'ResetAttributes',
-    { Text = ': ' },
-  }
-end
-
-local docker_actions_transient
-local containers_selector_actions
-local containers_logs_transient
-
-containers_logs_transient = function(state)
-  return wezterm.action_callback(function(window, pane)
-    local selected_containers = {}
-    for _, id in ipairs(state.selected_container_ids) do
-      table.insert(selected_containers, state.container_names_by_id[id])
-    end
-
-    window:perform_action(
-      act.TransientMenu {
-        description = description 'Docker container logs',
-        context = {
-          header = header 'Context',
-          entries = {
-            {
-              label = entry_label 'Entity',
-              id = 'Containers',
-            },
-            {
-              label = entry_label 'Operation',
-              id = 'Logs',
-            },
-            {
-              label = entry_label 'Selected containers',
-              id = table.concat(selected_containers, ', '),
-            },
-          },
-        },
-        sections = {
-          {
-            header = header 'Flags',
-            entries = {
-              {
-                type = 'switch',
-                key = '-f',
-                default = true,
-                description = 'Follow',
-                flag = '--follow',
-              },
-              {
-                type = 'option',
-                key = '-t',
-                default = '0',
-                description = 'Tail',
-                flag = '--tail=',
-                allow_nil = false,
-              },
-            },
-          },
-          {
-            header = header 'Actions',
-            entries = {
-              {
-                type = 'action',
-                key = 'l',
-                description = 'Logs',
-                action = wezterm.action_callback(
-                  function(inner_window, inner_pane, result)
-                    local cmd = { 'docker', 'logs' }
-                    for flag, entry in pairs(result) do
-                      if entry.value == true then
-                        table.insert(cmd, flag)
-                      elseif entry.value then
-                        table.insert(cmd, flag .. entry.value)
-                      end
-                    end
-
-                    local cmd_len = #cmd
-                    for _, id in ipairs(state.selected_container_ids) do
-                      cmd[cmd_len + 1] = id
-                      inner_window:perform_action(
-                        act.SpawnCommandInNewTab { args = cmd },
-                        inner_pane
-                      )
-                    end
-                  end
-                ),
-              },
-            },
-          },
-        },
-        cancel = wezterm.action_callback(function(inner_window, inner_pane)
-          state.selected_container_ids = nil
-          inner_window:perform_action(
-            containers_selector_actions(state),
-            inner_pane
-          )
-        end),
-      },
-      pane
-    )
-  end)
-end
-
-containers_selector_actions = function(state)
-  return wezterm.action_callback(function(window, pane)
-    local success, stdout, stderr = wezterm.run_child_process {
-      'docker',
-      'container',
-      'ls',
-      '--format',
-      '{{.ID}}:{{.Names}}',
-    }
-    if success then
-      local containers = {}
-      state.container_names_by_id = {}
-      for _, line in ipairs(wezterm.split_by_newlines(stdout)) do
-        local id, name = line:match '(.-):(.+)'
-        if id and name then
-          table.insert(containers, { label = name, id = id })
-          state.container_names_by_id[id] = name
-        end
-      end
-
-      window:perform_action(
-        act.SelectorActions {
-          description = description 'Select containers',
-          context = {
-            header = header 'Context',
-            entries = {
-              {
-                label = entry_label 'Entity',
-                id = 'Containers',
-              },
-            },
-          },
-          choices = containers,
-          section = {
-            header = header 'Actions',
-            actions = {
-              {
-                key = 'l',
-                description = 'Logs',
-                action = wezterm.action_callback(
-                  function(inner_window, inner_pane, result)
-                    state.selected_container_ids = result
-
-                    inner_window:perform_action(
-                      containers_logs_transient(state),
-                      inner_pane
-                    )
-                  end
-                ),
-              },
-            },
-          },
-          fuzzy_description = fuzzy_description 'Select containers',
-          multiple = true,
-          cancel = wezterm.action_callback(function(inner_window, inner_pane)
-            inner_window:perform_action(
-              docker_actions_transient(state),
-              inner_pane
-            )
-          end),
-        },
-        pane
-      )
-    end
-  end)
-end
-
-docker_actions_transient = function(state)
-  return wezterm.action_callback(function(window, pane)
-    window:perform_action(
-      act.TransientMenu {
-        description = description 'Docker action',
-        sections = {
-          {
-            header = header 'Actions',
-            entries = {
-              {
-                type = 'action',
-                key = 'c',
-                description = 'Containers',
-                action = wezterm.action_callback(
-                  function(inner_window, inner_pane, result)
-                    inner_window:perform_action(
-                      containers_selector_actions(state),
-                      inner_pane
-                    )
-                  end
-                ),
-              },
-            },
-          },
-        },
-      },
-      pane
-    )
-  end)
-end
-
-local config = wezterm.config_builder()
-
-config.keys = {
-  {
-    key = 'k',
-    mods = 'CTRL',
-    action = wezterm.action_callback(function(window, pane)
-      local state = {}
-      window:perform_action(docker_actions_transient(state), pane)
-    end),
+act.TransientMenu {
+  description = 'Select an ordering',
+  entries = {
+    {
+      type = 'cyclic',
+      key = 'o',
+      description = 'Order',
+      flag = '--order=',
+      choices = { 'topological', 'date', 'author-date' },
+      allow_nil = true,
+    },
+    {
+      type = 'action',
+      key = 'a',
+      description = 'Apply',
+      action = wezterm.action_callback(function(window, pane, result)
+        wezterm.log_info('order: ' .. tostring(result['--order=']))
+      end),
+    },
   },
 }
-
-return config
 ```
-{% endraw %}
