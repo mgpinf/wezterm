@@ -192,8 +192,8 @@ local containers_logs_transient
 containers_logs_transient = function(state)
   return wezterm.action_callback(function(window, pane)
     local selected_containers = {}
-    for _, container in ipairs(state.choices) do
-      table.insert(selected_containers, container.label)
+    for _, id in ipairs(state.selected_container_ids) do
+      table.insert(selected_containers, state.container_names_by_id[id])
     end
 
     window:perform_action(
@@ -256,8 +256,8 @@ containers_logs_transient = function(state)
                     end
 
                     local cmd_len = #cmd
-                    for _, container in ipairs(state.choices) do
-                      cmd[cmd_len + 1] = container.id
+                    for _, id in ipairs(state.selected_container_ids) do
+                      cmd[cmd_len + 1] = id
                       inner_window:perform_action(
                         act.SpawnCommandInNewTab { args = cmd },
                         inner_pane
@@ -270,7 +270,7 @@ containers_logs_transient = function(state)
           },
         },
         cancel = wezterm.action_callback(function(inner_window, inner_pane)
-          state.choices = nil
+          state.selected_container_ids = nil
           inner_window:perform_action(
             containers_selector_actions(state),
             inner_pane
@@ -293,10 +293,12 @@ containers_selector_actions = function(state)
     }
     if success then
       local containers = {}
+      state.container_names_by_id = {}
       for _, line in ipairs(wezterm.split_by_newlines(stdout)) do
         local id, name = line:match '(.-):(.+)'
         if id and name then
           table.insert(containers, { label = name, id = id })
+          state.container_names_by_id[id] = name
         end
       end
 
@@ -321,7 +323,7 @@ containers_selector_actions = function(state)
                 description = 'Logs',
                 action = wezterm.action_callback(
                   function(inner_window, inner_pane, result)
-                    state.choices = result
+                    state.selected_container_ids = result
 
                     inner_window:perform_action(
                       containers_logs_transient(state),

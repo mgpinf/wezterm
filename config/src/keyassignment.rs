@@ -1135,8 +1135,7 @@ pub struct SelectorActionSection {
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct SelectorActionsEntry {
     pub label: String,
-    #[dynamic(default)]
-    pub id: Option<String>,
+    pub id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

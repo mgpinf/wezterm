@@ -186,11 +186,7 @@ impl<'a> SelectorState<'a> {
 
     fn copy_active_choice_to_clipboard(&self) {
         if let Some(entry) = self.filtered_entries.get(self.active_idx) {
-            let text = entry
-                .delegate
-                .id
-                .as_deref()
-                .unwrap_or(&entry.delegate.label);
+            let text = entry.delegate.id.as_str();
             let clipboard = [Clipboard::Clipboard, Clipboard::PrimarySelection];
             for &c in &clipboard {
                 self.window.window.set_clipboard(c, text.to_string());
@@ -420,35 +416,29 @@ impl<'a> SelectorState<'a> {
                     ),
                 };
 
-                let mut choices: Vec<SelectorActionsEntry> = vec![];
+                let mut ids: Vec<String> = vec![];
 
                 if let Some(multiple_idx) = self.multiple_idx.as_deref() {
-                    choices.extend(
+                    ids.extend(
                         multiple_idx
                             .iter()
                             .enumerate()
                             .filter(|(_, val)| **val)
-                            .map(|(idx, _)| SelectorActionsEntry {
-                                label: self.choices[idx].delegate.label.clone(),
-                                id: self.choices[idx].delegate.id.clone(),
-                            }),
+                            .map(|(idx, _)| self.choices[idx].delegate.id.clone()),
                     );
                 }
 
-                if choices.is_empty() && self.filtered_entries.is_empty() {
+                if ids.is_empty() && self.filtered_entries.is_empty() {
                     self.typed.clear();
                     return Ok(LoopAction::SkipRender);
                 }
 
-                if choices.is_empty() {
+                if ids.is_empty() {
                     let entry = self.filtered_entries[self.active_idx];
-                    choices.push(SelectorActionsEntry {
-                        label: entry.delegate.label.clone(),
-                        id: entry.delegate.id.clone(),
-                    });
+                    ids.push(entry.delegate.id.clone());
                 }
 
-                let result = SelectorActionsResult { choices };
+                let result = SelectorActionsResult { ids };
                 self.trigger_event(name, Some(result));
                 if action.keep_overlay {
                     self.typed.clear();
@@ -663,12 +653,12 @@ impl<'a> SelectorState<'a> {
 }
 
 struct SelectorActionsResult {
-    choices: Vec<SelectorActionsEntry>,
+    ids: Vec<String>,
 }
 
 impl ToDynamic for SelectorActionsResult {
     fn to_dynamic(&self) -> Value {
-        self.choices.to_dynamic()
+        self.ids.to_dynamic()
     }
 }
 
@@ -678,7 +668,7 @@ impl FromDynamic for SelectorActionsResult {
         options: wezterm_dynamic::FromDynamicOptions,
     ) -> Result<Self, wezterm_dynamic::Error> {
         Ok(Self {
-            choices: Vec::from_dynamic(value, options)?,
+            ids: Vec::from_dynamic(value, options)?,
         })
     }
 }
@@ -690,26 +680,20 @@ mod test {
     use super::*;
 
     #[test]
-    fn selector_actions_result_converts_to_and_from_the_choices_array() {
-        let choices = vec![SelectorActionsEntry {
-            label: "choice1".to_string(),
-            id: Some("random_id".to_string()),
-        }];
-        let value = choices.to_dynamic();
+    fn selector_actions_result_converts_to_and_from_the_ids_array() {
+        let ids = vec!["choice1".to_string(), "choice2".to_string()];
+        let value = ids.to_dynamic();
 
         assert_eq!(
-            SelectorActionsResult {
-                choices: choices.clone(),
-            }
-            .to_dynamic(),
+            SelectorActionsResult { ids: ids.clone() }.to_dynamic(),
             value
         );
 
         assert_eq!(
             SelectorActionsResult::from_dynamic(&value, Default::default())
                 .unwrap()
-                .choices,
-            choices
+                .ids,
+            ids
         );
     }
 }

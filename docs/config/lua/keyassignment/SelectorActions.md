@@ -24,10 +24,11 @@ consumed portion of matching keys is shown using
 * `context` - an optional field that accepts a
   [TransientContext](../TransientContext.md) object
 * `choices` - a lua table consisting of the potential choices. Each entry
-  is itself a table with a `label` field and an optional `id` field
+  is itself a table with required string `label` and `id` fields.
   The label will be shown in the list, while the id can be a different
-  string that is meaningful to your action. The label can be used together
-  with [wezterm.format](../wezterm/format.md) to produce styled text.
+  string that is meaningful to your action and will be returned when the
+  choice is selected. The label can be used together with
+  [wezterm.format](../wezterm/format.md) to produce styled text.
 * `section` - a [SelectorActionSection](../SelectorActionSection.md)
   object
 * `multiple` - an optional boolean that defaults to `false`.
