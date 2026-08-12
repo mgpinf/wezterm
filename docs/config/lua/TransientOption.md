@@ -7,36 +7,51 @@ tags:
 
 {{since('nightly')}}
 
-The `TransientOption` struct specifies information about a command line
-flag that can be toggled and requires a value when activated.
+The `TransientOption` struct specifies a command-line option that takes a
+string value.
 
 It is a lua object with the following fields:
+
 * `key` - text to enter in order to set option
-* `default` - optional argument indicating default value.
-  If omitted, option is not set
+* `default` - optional initial value. If omitted, the option is unset
 * `description` - text to describe the option
 * `flag` - text used as the key in the [TransientResult](./TransientResult.md)
   table
-* `allow_nil` - optional argument that determines whether to allow
-  setting the option to `nil` if previously set to a string.
-  If omitted, option is set to false if previously set.
-  Else, user is prompted for value
-* `choices` - Optional argument indicating the list of choices
-  to select from. If provided, a selector is displayed
-  when setting an option. Else, a line prompt is displayed
-  If omitted, when setting an option, a line prompt is displayed
-  when setting an option
+* `allow_nil` - optional boolean that controls whether pressing the entry key
+  while the option is set can unset it. Defaults to `true`
+* `choices` - optional non-empty list of allowed values
+* `input` - optional input method:
+  * `"prompt"` reads an arbitrary value using a line editor and cannot be used
+    with `choices`
+  * `"select"` opens a searchable selector and requires `choices`
+  * `"cycle"` advances through `choices` each time the entry key is pressed
 
+If `input` is omitted, it defaults to `"prompt"` when `choices` is absent and
+to `"select"` when `choices` is present. For `"select"` and `"cycle"`, the
+`default` value must be one of the configured choices.
 
 Example of `TransientOption` object:
 
 ```lua
 local option = {
   key = '-t',
-  default = '100',
+  default = 'choice1',
   description = 'Tail',
   flag = '--tail=',
   allow_nil = true,
   choices = { 'choice1', 'choice2' },
+  input = 'select',
+}
+```
+
+To cycle through the values without opening a selector:
+
+```lua
+local option = {
+  key = 'o',
+  description = 'Order',
+  flag = '--order=',
+  choices = { 'topological', 'date', 'author-date' },
+  input = 'cycle',
 }
 ```

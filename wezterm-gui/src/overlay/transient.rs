@@ -5,8 +5,8 @@ use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
     KeyAssignment, TransientAction as KTransientAction, TransientContext as KTransientContext,
-    TransientCyclicSwitch as KTransientCyclicSwitch, TransientEntry as KTransientEntry,
-    TransientMenu as KTransientMenu, TransientOption as KTransientOption,
+    TransientEntry as KTransientEntry, TransientMenu as KTransientMenu,
+    TransientOption as KTransientOption, TransientOptionInput as KTransientOptionInput,
     TransientSection as KTransientSection, TransientSwitch as KTransientSwitch,
 };
 use config::ColorAttribute;
@@ -154,6 +154,10 @@ impl<'a> TransientOption<'a> {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
+        if self.delegate.resolved_input() == KTransientOptionInput::Cycle {
+            return self.render_cycle(colors, style, max_key_width, buf);
+        }
+
         let delegate = self.delegate;
 
         let mut changes = vec![];
@@ -188,15 +192,8 @@ impl<'a> TransientOption<'a> {
 
         Ok(())
     }
-}
 
-struct TransientCyclicSwitch<'a> {
-    delegate: &'a KTransientCyclicSwitch,
-    active_idx: Cell<Option<usize>>,
-}
-
-impl<'a> TransientCyclicSwitch<'a> {
-    fn render(
+    fn render_cycle(
         &self,
         colors: &OverlayColors,
         style: EntryRenderStyle,
@@ -213,20 +210,21 @@ impl<'a> TransientCyclicSwitch<'a> {
             Change::Text(format!(" {} (", delegate.description)),
         ]);
 
-        if let Some(idx) = self.active_idx.get() {
+        let value = self.value.borrow();
+        if value.is_some() {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-            if !delegate.choices.is_empty() {
+            if let Some(choices) = delegate.choices.as_deref() {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
-                for (cur_idx, choice) in delegate.choices.iter().enumerate() {
-                    if cur_idx == idx {
+                for (cur_idx, choice) in choices.iter().enumerate() {
+                    if value.as_deref() == Some(choice.as_str()) {
                         changes.extend([
                             Change::Text(prefix.to_string()),
                             Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
@@ -250,12 +248,12 @@ impl<'a> TransientCyclicSwitch<'a> {
                 Change::Text(delegate.flag.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-            if !delegate.choices.is_empty() {
+            if let Some(choices) = delegate.choices.as_deref() {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_flag_fg,
                 )));
                 let mut prefix = "[";
-                for (cur_idx, choice) in delegate.choices.iter().enumerate() {
+                for (cur_idx, choice) in choices.iter().enumerate() {
                     changes.push(Change::Text(format!("{prefix}{choice}")));
                     if cur_idx == 0 {
                         prefix = "|";
@@ -311,7 +309,6 @@ enum RenderableEntity<'a> {
     Opt(TransientOption<'a>),
     Switch(TransientSwitch<'a>),
     Action(TransientAction<'a>),
-    CyclicSwitch(TransientCyclicSwitch<'a>),
 }
 
 impl RenderableEntity<'_> {
@@ -319,7 +316,6 @@ impl RenderableEntity<'_> {
         match self {
             Self::Opt(option) => &option.delegate.key,
             Self::Switch(switch) => &switch.delegate.key,
-            Self::CyclicSwitch(cyclic_switch) => &cyclic_switch.delegate.key,
             Self::Action(action) => &action.delegate.key,
         }
     }
@@ -336,9 +332,6 @@ impl RenderableEntity<'_> {
         match self {
             Self::Opt(option) => option.render(colors, style, max_key_width, buf),
             Self::Switch(switch) => switch.render(colors, style, max_key_width, buf),
-            Self::CyclicSwitch(cyclic_switch) => {
-                cyclic_switch.render(colors, style, max_key_width, buf)
-            }
             Self::Action(action) => action.render(colors, style, max_key_width, buf),
         }
     }
@@ -603,52 +596,71 @@ impl<'a> TransientState<'a> {
                     RenderableEntity::Switch(switch) => {
                         switch.value.update(|val| !val);
                     }
-                    RenderableEntity::Opt(option) => {
-                        if option.value.borrow().is_none() || !option.delegate.allow_nil {
-                            self.mode = if let Some(choices) = option.delegate.choices.as_deref() {
-                                let (_, rows) = self.buf.dimensions();
-                                let max_items = rows.saturating_sub(ROW_OVERHEAD);
-                                let filtered_entries =
-                                    choices.iter().map(|choice| choice.as_str()).collect();
-
-                                Some(InputMode::Selector(SelectorState {
-                                    active_idx: 0,
-                                    max_items,
-                                    top_row: 0,
-                                    filter_term: String::new(),
-                                    filtered_entries,
-                                    choices,
-                                    option,
-                                }))
-                            } else {
-                                Some(InputMode::Prompt(PromptState {
-                                    line: LineEditBuffer::default(),
-                                    option,
-                                }))
-                            }
-                        } else {
-                            option.value.replace(None);
-                        }
-                    }
-                    RenderableEntity::CyclicSwitch(cyclic_switch) => {
-                        if !cyclic_switch.delegate.choices.is_empty() {
-                            cyclic_switch.active_idx.update(|idx| {
-                                if let Some(idx) = idx {
-                                    if idx == cyclic_switch.delegate.choices.len() - 1 {
-                                        if cyclic_switch.delegate.allow_nil {
+                    RenderableEntity::Opt(option) => match option.delegate.resolved_input() {
+                        KTransientOptionInput::Cycle => {
+                            let choices = option.delegate.choices.as_deref().ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "TransientOption with input='cycle' requires choices"
+                                )
+                            })?;
+                            let next_value = {
+                                let value = option.value.borrow();
+                                match value
+                                    .as_deref()
+                                    .and_then(|value| choices.iter().position(|item| item == value))
+                                {
+                                    Some(idx) if idx == choices.len() - 1 => {
+                                        if option.delegate.allow_nil {
                                             None
                                         } else {
-                                            Some(0)
+                                            Some(choices[0].clone())
                                         }
-                                    } else {
-                                        Some(idx + 1)
                                     }
-                                } else {
-                                    Some(0)
+                                    Some(idx) => Some(choices[idx + 1].clone()),
+                                    None => Some(choices[0].clone()),
                                 }
-                            });
+                            };
+                            option.value.replace(next_value);
                         }
-                    }
+                        input => {
+                            if option.value.borrow().is_none() || !option.delegate.allow_nil {
+                                self.mode = match input {
+                                    KTransientOptionInput::Select => {
+                                        let choices = option.delegate.choices.as_deref().ok_or_else(
+                                            || {
+                                                anyhow::anyhow!(
+                                                    "TransientOption with input='select' requires choices"
+                                                )
+                                            },
+                                        )?;
+                                        let (_, rows) = self.buf.dimensions();
+                                        let max_items = rows.saturating_sub(ROW_OVERHEAD);
+                                        let filtered_entries =
+                                            choices.iter().map(|choice| choice.as_str()).collect();
+
+                                        Some(InputMode::Selector(SelectorState {
+                                            active_idx: 0,
+                                            max_items,
+                                            top_row: 0,
+                                            filter_term: String::new(),
+                                            filtered_entries,
+                                            choices,
+                                            option,
+                                        }))
+                                    }
+                                    KTransientOptionInput::Prompt => {
+                                        Some(InputMode::Prompt(PromptState {
+                                            line: LineEditBuffer::default(),
+                                            option,
+                                        }))
+                                    }
+                                    KTransientOptionInput::Cycle => unreachable!(),
+                                };
+                            } else {
+                                option.value.replace(None);
+                            }
+                        }
+                    },
                     RenderableEntity::Action(action) => {
                         let name = match *action.delegate.action {
                             KeyAssignment::EmitEvent(ref id) => id,
@@ -958,16 +970,6 @@ impl From<&[TransientSection<'_>]> for TransientResult {
                             switch.value.get().to_dynamic(),
                         );
                     }
-                    RenderableEntity::CyclicSwitch(cyclic_switch) => {
-                        entries.insert(
-                            cyclic_switch.delegate.flag.clone(),
-                            cyclic_switch
-                                .active_idx
-                                .get()
-                                .map(|idx| cyclic_switch.delegate.choices.get(idx).cloned())
-                                .to_dynamic(),
-                        );
-                    }
                     _ => {}
                 }
             }
@@ -989,9 +991,6 @@ fn create_keymap<'a>(
                 }
                 RenderableEntity::Opt(option) => {
                     keymap.insert(&option.delegate.key, entity);
-                }
-                RenderableEntity::CyclicSwitch(cyclic_switch) => {
-                    keymap.insert(&cyclic_switch.delegate.key, entity);
                 }
                 RenderableEntity::Action(action) => {
                     keymap.insert(&action.delegate.key, entity);
@@ -1017,18 +1016,6 @@ fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSec
                     RenderableEntity::Opt(TransientOption {
                         delegate: option,
                         value: RefCell::new(option.default.clone()),
-                    })
-                }
-                KTransientEntry::TransientCyclicSwitch(cyclic_switch) => {
-                    let active_idx = cyclic_switch.default.as_deref().and_then(|default| {
-                        cyclic_switch
-                            .choices
-                            .iter()
-                            .position(|choice| choice == default)
-                    });
-                    RenderableEntity::CyclicSwitch(TransientCyclicSwitch {
-                        delegate: cyclic_switch,
-                        active_idx: Cell::new(active_idx),
                     })
                 }
                 KTransientEntry::TransientAction(action) => {

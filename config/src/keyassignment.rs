@@ -888,16 +888,47 @@ pub struct TransientSwitch {
     pub flag: String,
 }
 
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
-pub struct TransientCyclicSwitch {
-    pub key: String,
-    #[dynamic(default)]
-    pub default: Option<String>,
-    pub description: String,
-    pub flag: String,
-    pub choices: Vec<String>,
-    #[dynamic(default = "crate::default_true")]
-    pub allow_nil: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransientOptionInput {
+    Prompt,
+    Select,
+    Cycle,
+}
+
+impl FromDynamic for TransientOptionInput {
+    fn from_dynamic(
+        value: &Value,
+        _options: FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        match value {
+            Value::String(value) => match value.as_str() {
+                "prompt" => Ok(Self::Prompt),
+                "select" => Ok(Self::Select),
+                "cycle" => Ok(Self::Cycle),
+                _ => Err(wezterm_dynamic::Error::InvalidVariantForType {
+                    variant_name: value.clone(),
+                    type_name: "TransientOptionInput",
+                    possible: &["prompt", "select", "cycle"],
+                }),
+            },
+            _ => Err(wezterm_dynamic::Error::Message(
+                "TransientOption 'input' field must be a string".to_string(),
+            )),
+        }
+    }
+}
+
+impl ToDynamic for TransientOptionInput {
+    fn to_dynamic(&self) -> Value {
+        Value::String(
+            match self {
+                Self::Prompt => "prompt",
+                Self::Select => "select",
+                Self::Cycle => "cycle",
+            }
+            .to_string(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -911,6 +942,57 @@ pub struct TransientOption {
     pub allow_nil: bool,
     #[dynamic(default)]
     pub choices: Option<Vec<String>>,
+    #[dynamic(default)]
+    pub input: Option<TransientOptionInput>,
+}
+
+impl TransientOption {
+    pub fn resolved_input(&self) -> TransientOptionInput {
+        self.input.unwrap_or_else(|| {
+            if self.choices.is_some() {
+                TransientOptionInput::Select
+            } else {
+                TransientOptionInput::Prompt
+            }
+        })
+    }
+
+    fn validate(&self) -> Result<(), wezterm_dynamic::Error> {
+        let input = self.resolved_input();
+        match input {
+            TransientOptionInput::Prompt if self.choices.is_some() => {
+                Err(wezterm_dynamic::Error::Message(
+                    "TransientOption with input='prompt' cannot define choices".to_string(),
+                ))
+            }
+            TransientOptionInput::Select | TransientOptionInput::Cycle => {
+                let input_name = match input {
+                    TransientOptionInput::Select => "select",
+                    TransientOptionInput::Cycle => "cycle",
+                    TransientOptionInput::Prompt => unreachable!(),
+                };
+                let Some(choices) = self.choices.as_ref().filter(|choices| !choices.is_empty())
+                else {
+                    return Err(wezterm_dynamic::Error::Message(format!(
+                        "TransientOption with input='{}' requires a non-empty choices list",
+                        input_name
+                    )));
+                };
+
+                if let Some(default) = self.default.as_ref() {
+                    if !choices.contains(default) {
+                        return Err(wezterm_dynamic::Error::Message(format!(
+                            "TransientOption default '{}' is not present in choices",
+                            default
+                        )));
+                    }
+                }
+
+                Ok(())
+            }
+            TransientOptionInput::Prompt => Ok(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -926,7 +1008,6 @@ pub struct TransientAction {
 pub enum TransientEntry {
     TransientSwitch(TransientSwitch),
     TransientOption(TransientOption),
-    TransientCyclicSwitch(TransientCyclicSwitch),
     TransientAction(TransientAction),
 }
 
@@ -960,13 +1041,11 @@ impl FromDynamic for TransientEntry {
                         value,
                         inner_options,
                     )?)),
-                    "option" => Ok(Self::TransientOption(TransientOption::from_dynamic(
-                        value,
-                        inner_options,
-                    )?)),
-                    "cyclic" => Ok(Self::TransientCyclicSwitch(
-                        TransientCyclicSwitch::from_dynamic(value, inner_options)?,
-                    )),
+                    "option" => {
+                        let option = TransientOption::from_dynamic(value, inner_options)?;
+                        option.validate()?;
+                        Ok(Self::TransientOption(option))
+                    }
                     "action" => Ok(Self::TransientAction(TransientAction::from_dynamic(
                         value,
                         inner_options,
@@ -974,7 +1053,7 @@ impl FromDynamic for TransientEntry {
                     _ => Err(wezterm_dynamic::Error::InvalidVariantForType {
                         variant_name: type_name.to_string(),
                         type_name: "TransientEntry",
-                        possible: &["switch", "option", "cyclic", "action"],
+                        possible: &["switch", "option", "action"],
                     }),
                 }
             }
@@ -1434,6 +1513,70 @@ pub struct KeyTableEntry {
 mod test {
     use super::*;
     use crate::AnsiColor;
+
+    fn transient_option(
+        input: Option<TransientOptionInput>,
+        choices: Option<Vec<&str>>,
+        default: Option<&str>,
+    ) -> TransientOption {
+        TransientOption {
+            key: "o".to_string(),
+            default: default.map(str::to_string),
+            description: "Order".to_string(),
+            flag: "--order=".to_string(),
+            allow_nil: true,
+            choices: choices.map(|choices| choices.into_iter().map(str::to_string).collect()),
+            input,
+        }
+    }
+
+    #[test]
+    fn transient_option_infers_input_from_choices() {
+        assert_eq!(
+            TransientOptionInput::from_dynamic(
+                &Value::String("cycle".to_string()),
+                Default::default(),
+            )
+            .unwrap(),
+            TransientOptionInput::Cycle
+        );
+        assert_eq!(
+            transient_option(None, None, None).resolved_input(),
+            TransientOptionInput::Prompt
+        );
+        assert_eq!(
+            transient_option(None, Some(vec!["date"]), None).resolved_input(),
+            TransientOptionInput::Select
+        );
+    }
+
+    #[test]
+    fn transient_option_validates_input_and_choices() {
+        assert!(transient_option(
+            Some(TransientOptionInput::Cycle),
+            Some(vec!["date", "author-date"]),
+            Some("date"),
+        )
+        .validate()
+        .is_ok());
+        assert!(
+            transient_option(Some(TransientOptionInput::Cycle), None, None)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            transient_option(Some(TransientOptionInput::Prompt), Some(vec!["date"]), None,)
+                .validate()
+                .is_err()
+        );
+        assert!(transient_option(
+            Some(TransientOptionInput::Select),
+            Some(vec!["date"]),
+            Some("topological"),
+        )
+        .validate()
+        .is_err());
+    }
 
     #[test]
     fn overlay_border_options_round_trip_through_dynamic_config() {

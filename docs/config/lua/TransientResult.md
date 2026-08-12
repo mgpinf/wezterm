@@ -7,12 +7,11 @@ tags:
 
 {{since('nightly')}}
 
-The `TransientResult` is a lua table mapping flag names to their values. Each key
-is the `flag` string from one of the following entries and the each value can
-be a valid lua value allowed against the corresponding entry:
+The `TransientResult` is a lua table mapping flag names to their values. Each
+key is the `flag` string from one of the following entries:
+
 * [TransientSwitch](./TransientSwitch.md) - value is `true` or `false`
 * [TransientOption](./TransientOption.md) - value is the selected string, or `nil`
-* [TransientCyclicSwitch](./TransientCyclicSwitch.md) - value is the selected choice string, or nil
 
 Example of `TransientResult` object:
 ```lua

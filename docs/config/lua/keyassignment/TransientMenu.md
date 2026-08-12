@@ -153,13 +153,13 @@ The `type` field accepts:
 
 * `"switch"` - boolean toggle, see [TransientSwitch](../TransientSwitch.md)
 * `"option"` - value input, see [TransientOption](../TransientOption.md)
-* `"cyclic"` - cycle through choices, see [TransientCyclicSwitch](../TransientCyclicSwitch.md)
 * `"action"` - trigger an action, see [TransientAction](../TransientAction.md)
 
-## Cyclic switch
+## Cycling through option values
 
-A cyclic switch advances to the next choice each time its key is pressed. If
-`allow_nil` is `true`, advancing past the last choice unsets the switch.
+An option with `input = 'cycle'` advances to the next choice each time its key
+is pressed. If `allow_nil` is `true`, advancing past the last choice unsets the
+option.
 
 ```lua
 local wezterm = require 'wezterm'
@@ -169,11 +169,12 @@ act.TransientMenu {
   description = 'Select an ordering',
   entries = {
     {
-      type = 'cyclic',
+      type = 'option',
       key = 'o',
       description = 'Order',
       flag = '--order=',
       choices = { 'topological', 'date', 'author-date' },
+      input = 'cycle',
       allow_nil = true,
     },
     {
