@@ -206,6 +206,23 @@ impl crate::TermWindow {
             .first()
             .map(|(idx, _)| *idx)
             .unwrap_or(panes.len());
+        let full_size_borders = panes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, pos)| {
+                if self.bounded_pane_zindex(pos).is_some() {
+                    return None;
+                }
+                let border_color = if pos.is_overlay {
+                    self.get_active_tab_overlay_border_color()
+                } else if pos.is_floating {
+                    self.get_active_floating_pane_border_color()
+                } else {
+                    None
+                };
+                border_color.map(|color| (idx, color))
+            })
+            .collect::<Vec<_>>();
         let focused = self.focused.is_some();
         let window_is_transparent =
             !self.window_background.is_empty() || self.config.window_background_opacity != 1.0;
@@ -297,6 +314,12 @@ impl crate::TermWindow {
                 self.paint_split(&mut layers, split, &pane)
                     .context("paint_split")?;
             }
+        }
+
+        // Full-size overlays and floating panes render on the base layer, but
+        // their borders still need to be painted above their terminal content.
+        for (pane_idx, border_color) in full_size_borders {
+            self.paint_overlay_border(&panes[pane_idx], border_color, &mut layers)?;
         }
 
         drop(layers);
