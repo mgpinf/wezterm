@@ -15,7 +15,7 @@ It is a lua object with the following fields:
 * `key` - text to enter in order to set option
 * `default` - optional initial value. If omitted, the option is unset
 * `description` - text to describe the option
-* `flag` - text used as the key in the [TransientResult](./TransientResult.md)
+* `argument` - text used as the key in the [TransientResult](./TransientResult.md)
   table
 * `allow_unset` - optional boolean that controls whether pressing the entry key
   while the option is set can unset it. Defaults to `true`
@@ -37,7 +37,7 @@ local option = {
   key = '-t',
   default = 'choice1',
   description = 'Tail',
-  flag = '--tail=',
+  argument = '--tail=',
   allow_unset = true,
   choices = { 'choice1', 'choice2' },
   input = 'select',
@@ -50,7 +50,7 @@ To cycle through the values without opening a selector:
 local option = {
   key = 'o',
   description = 'Order',
-  flag = '--order=',
+  argument = '--order=',
   choices = { 'topological', 'date', 'author-date' },
   input = 'cycle',
 }

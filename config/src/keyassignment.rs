@@ -885,7 +885,7 @@ pub struct TransientSwitch {
     #[dynamic(default)]
     pub default: bool,
     pub description: String,
-    pub flag: String,
+    pub argument: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -937,7 +937,7 @@ pub struct TransientOption {
     #[dynamic(default)]
     pub default: Option<String>,
     pub description: String,
-    pub flag: String,
+    pub argument: String,
     #[dynamic(default = "crate::default_true")]
     pub allow_unset: bool,
     #[dynamic(default)]
@@ -1523,7 +1523,7 @@ mod test {
             key: "o".to_string(),
             default: default.map(str::to_string),
             description: "Order".to_string(),
-            flag: "--order=".to_string(),
+            argument: "--order=".to_string(),
             allow_unset: true,
             choices: choices.map(|choices| choices.into_iter().map(str::to_string).collect()),
             input,

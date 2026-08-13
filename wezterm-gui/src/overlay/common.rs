@@ -166,8 +166,8 @@ mod prefix_tests {
 /// Common colors used by transient-style overlays
 pub struct OverlayColors {
     pub key_fg: ColorAttribute,
-    pub active_flag_fg: ColorAttribute,
-    pub inactive_flag_fg: ColorAttribute,
+    pub active_argument_fg: ColorAttribute,
+    pub inactive_argument_fg: ColorAttribute,
     pub active_value_fg: ColorAttribute,
     pub non_matching_fg: ColorAttribute,
     pub description_fg: ColorAttribute,
@@ -191,12 +191,12 @@ impl OverlayColors {
                 .transient_entry_key_fg
                 .unwrap_or(AnsiColor::Purple.into())
                 .into(),
-            active_flag_fg: colors
-                .transient_entry_active_flag_fg
+            active_argument_fg: colors
+                .transient_entry_active_argument_fg
                 .unwrap_or(AnsiColor::Red.into())
                 .into(),
-            inactive_flag_fg: colors
-                .transient_entry_inactive_flag_fg
+            inactive_argument_fg: colors
+                .transient_entry_inactive_argument_fg
                 .map_or(ColorAttribute::Default, |fg_color| fg_color.into()),
             active_value_fg: colors
                 .transient_entry_active_value_fg

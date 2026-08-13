@@ -122,15 +122,15 @@ impl<'a> TransientSwitch<'a> {
                 Intensity::Bold,
             )));
             changes.push(Change::Attribute(AttributeChange::Foreground(
-                colors.active_flag_fg,
+                colors.active_argument_fg,
             )));
         } else {
             changes.push(Change::Attribute(AttributeChange::Foreground(
-                colors.inactive_flag_fg,
+                colors.inactive_argument_fg,
             )));
         }
 
-        changes.push(Change::Text(delegate.flag.clone()));
+        changes.push(Change::Text(delegate.argument.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
         changes.push(Change::Text(")".to_string()));
 
@@ -171,16 +171,16 @@ impl<'a> TransientOption<'a> {
         if let Some(val) = self.value.borrow().as_deref() {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
-                Change::Text(delegate.flag.clone()),
+                Change::Attribute(AttributeChange::Foreground(colors.active_argument_fg)),
+                Change::Text(delegate.argument.clone()),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Normal)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                 Change::Text(val.to_string()),
             ]);
         } else {
             changes.extend([
-                Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
-                Change::Text(delegate.flag.to_string()),
+                Change::Attribute(AttributeChange::Foreground(colors.inactive_argument_fg)),
+                Change::Text(delegate.argument.to_string()),
             ]);
         }
 
@@ -214,13 +214,13 @@ impl<'a> TransientOption<'a> {
         if value.is_some() {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
-                Change::Attribute(AttributeChange::Foreground(colors.active_flag_fg)),
-                Change::Text(delegate.flag.clone()),
+                Change::Attribute(AttributeChange::Foreground(colors.active_argument_fg)),
+                Change::Text(delegate.argument.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if let Some(choices) = delegate.choices.as_deref() {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
-                    colors.inactive_flag_fg,
+                    colors.inactive_argument_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in choices.iter().enumerate() {
@@ -230,7 +230,9 @@ impl<'a> TransientOption<'a> {
                             Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                             Change::Text(choice.to_string()),
                             Change::AllAttributes(CellAttributes::default()),
-                            Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
+                            Change::Attribute(AttributeChange::Foreground(
+                                colors.inactive_argument_fg,
+                            )),
                         ]);
                     } else {
                         changes.push(Change::Text(format!("{prefix}{choice}")));
@@ -244,13 +246,13 @@ impl<'a> TransientOption<'a> {
             }
         } else {
             changes.extend([
-                Change::Attribute(AttributeChange::Foreground(colors.inactive_flag_fg)),
-                Change::Text(delegate.flag.clone()),
+                Change::Attribute(AttributeChange::Foreground(colors.inactive_argument_fg)),
+                Change::Text(delegate.argument.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
             if let Some(choices) = delegate.choices.as_deref() {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
-                    colors.inactive_flag_fg,
+                    colors.inactive_argument_fg,
                 )));
                 let mut prefix = "[";
                 for (cur_idx, choice) in choices.iter().enumerate() {
@@ -960,13 +962,13 @@ impl From<&[TransientSection<'_>]> for TransientResult {
                 match entity {
                     RenderableEntity::Opt(option) => {
                         entries.insert(
-                            option.delegate.flag.clone(),
+                            option.delegate.argument.clone(),
                             option.value.borrow().to_dynamic(),
                         );
                     }
                     RenderableEntity::Switch(switch) => {
                         entries.insert(
-                            switch.delegate.flag.clone(),
+                            switch.delegate.argument.clone(),
                             switch.value.get().to_dynamic(),
                         );
                     }
