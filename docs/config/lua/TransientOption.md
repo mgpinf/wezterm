@@ -17,7 +17,7 @@ It is a lua object with the following fields:
 * `description` - text to describe the option
 * `flag` - text used as the key in the [TransientResult](./TransientResult.md)
   table
-* `allow_nil` - optional boolean that controls whether pressing the entry key
+* `allow_unset` - optional boolean that controls whether pressing the entry key
   while the option is set can unset it. Defaults to `true`
 * `choices` - optional non-empty list of allowed values
 * `input` - optional input method:
@@ -38,7 +38,7 @@ local option = {
   default = 'choice1',
   description = 'Tail',
   flag = '--tail=',
-  allow_nil = true,
+  allow_unset = true,
   choices = { 'choice1', 'choice2' },
   input = 'select',
 }

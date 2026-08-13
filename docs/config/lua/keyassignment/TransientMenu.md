@@ -158,7 +158,7 @@ The `type` field accepts:
 ## Cycling through option values
 
 An option with `input = 'cycle'` advances to the next choice each time its key
-is pressed. If `allow_nil` is `true`, advancing past the last choice unsets the
+is pressed. If `allow_unset` is `true`, advancing past the last choice unsets the
 option.
 
 ```lua
@@ -175,7 +175,7 @@ act.TransientMenu {
       flag = '--order=',
       choices = { 'topological', 'date', 'author-date' },
       input = 'cycle',
-      allow_nil = true,
+      allow_unset = true,
     },
     {
       type = 'action',

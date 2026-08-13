@@ -610,7 +610,7 @@ impl<'a> TransientState<'a> {
                                     .and_then(|value| choices.iter().position(|item| item == value))
                                 {
                                     Some(idx) if idx == choices.len() - 1 => {
-                                        if option.delegate.allow_nil {
+                                        if option.delegate.allow_unset {
                                             None
                                         } else {
                                             Some(choices[0].clone())
@@ -623,7 +623,7 @@ impl<'a> TransientState<'a> {
                             option.value.replace(next_value);
                         }
                         input => {
-                            if option.value.borrow().is_none() || !option.delegate.allow_nil {
+                            if option.value.borrow().is_none() || !option.delegate.allow_unset {
                                 self.mode = match input {
                                     KTransientOptionInput::Select => {
                                         let choices = option.delegate.choices.as_deref().ok_or_else(

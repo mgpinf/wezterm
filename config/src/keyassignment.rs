@@ -939,7 +939,7 @@ pub struct TransientOption {
     pub description: String,
     pub flag: String,
     #[dynamic(default = "crate::default_true")]
-    pub allow_nil: bool,
+    pub allow_unset: bool,
     #[dynamic(default)]
     pub choices: Option<Vec<String>>,
     #[dynamic(default)]
@@ -1524,7 +1524,7 @@ mod test {
             default: default.map(str::to_string),
             description: "Order".to_string(),
             flag: "--order=".to_string(),
-            allow_nil: true,
+            allow_unset: true,
             choices: choices.map(|choices| choices.into_iter().map(str::to_string).collect()),
             input,
         }
