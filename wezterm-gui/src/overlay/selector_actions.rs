@@ -58,6 +58,33 @@ struct SelectorState<'a> {
     separator_line: String,
 }
 
+fn selected_ids(
+    choices: &[SelectorEntry<'_>],
+    filtered_entries: &[&SelectorEntry<'_>],
+    active_idx: usize,
+    multiple_idx: Option<&[bool]>,
+) -> Vec<String> {
+    let mut ids = vec![];
+
+    if let Some(multiple_idx) = multiple_idx {
+        ids.extend(
+            choices
+                .iter()
+                .zip(multiple_idx)
+                .filter(|(_, selected)| **selected)
+                .map(|(entry, _)| entry.delegate.id.clone()),
+        );
+    }
+
+    if ids.is_empty() {
+        if let Some(entry) = filtered_entries.get(active_idx) {
+            ids.push(entry.delegate.id.clone());
+        }
+    }
+
+    ids
+}
+
 impl<'a> SelectorState<'a> {
     fn new(
         args: &'a SelectorActions,
@@ -416,26 +443,16 @@ impl<'a> SelectorState<'a> {
                     ),
                 };
 
-                let mut ids: Vec<String> = vec![];
-
-                if let Some(multiple_idx) = self.multiple_idx.as_deref() {
-                    ids.extend(
-                        multiple_idx
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, val)| **val)
-                            .map(|(idx, _)| self.choices[idx].delegate.id.clone()),
-                    );
-                }
-
-                if ids.is_empty() && self.filtered_entries.is_empty() {
-                    self.typed.clear();
-                    return Ok(LoopAction::SkipRender);
-                }
+                let ids = selected_ids(
+                    self.choices,
+                    &self.filtered_entries,
+                    self.active_idx,
+                    self.multiple_idx.as_deref(),
+                );
 
                 if ids.is_empty() {
-                    let entry = self.filtered_entries[self.active_idx];
-                    ids.push(entry.delegate.id.clone());
+                    self.typed.clear();
+                    return Ok(LoopAction::SkipRender);
                 }
 
                 let result = SelectorActionsResult { ids };
@@ -678,6 +695,75 @@ impl_lua_conversion_dynamic!(SelectorActionsResult);
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn selector_entries<'a>(choices: &'a [SelectorActionsEntry]) -> Vec<SelectorEntry<'a>> {
+        choices
+            .iter()
+            .enumerate()
+            .map(|(idx, delegate)| SelectorEntry { delegate, idx })
+            .collect()
+    }
+
+    #[test]
+    fn selected_ids_uses_the_active_filtered_entry() {
+        let choices = vec![
+            SelectorActionsEntry {
+                label: "Alpha".to_string(),
+                id: "alpha".to_string(),
+            },
+            SelectorActionsEntry {
+                label: "Beta".to_string(),
+                id: "beta".to_string(),
+            },
+            SelectorActionsEntry {
+                label: "Gamma".to_string(),
+                id: "gamma".to_string(),
+            },
+        ];
+        let entries = selector_entries(&choices);
+        let filtered = vec![&entries[1], &entries[2]];
+
+        assert_eq!(
+            selected_ids(&entries, &filtered, 1, None),
+            vec!["gamma".to_string()]
+        );
+    }
+
+    #[test]
+    fn selected_ids_prefers_multiple_markers_over_the_active_entry() {
+        let choices = vec![
+            SelectorActionsEntry {
+                label: "Alpha".to_string(),
+                id: "alpha".to_string(),
+            },
+            SelectorActionsEntry {
+                label: "Beta".to_string(),
+                id: "beta".to_string(),
+            },
+            SelectorActionsEntry {
+                label: "Gamma".to_string(),
+                id: "gamma".to_string(),
+            },
+        ];
+        let entries = selector_entries(&choices);
+        let filtered = vec![&entries[1]];
+
+        assert_eq!(
+            selected_ids(&entries, &filtered, 0, Some(&[true, false, true]),),
+            vec!["alpha".to_string(), "gamma".to_string()]
+        );
+    }
+
+    #[test]
+    fn selected_ids_is_empty_when_no_filtered_entry_is_available() {
+        let choices = vec![SelectorActionsEntry {
+            label: "Alpha".to_string(),
+            id: "alpha".to_string(),
+        }];
+        let entries = selector_entries(&choices);
+
+        assert!(selected_ids(&entries, &[], 0, Some(&[false])).is_empty());
+    }
 
     #[test]
     fn selector_actions_result_converts_to_and_from_the_ids_array() {

@@ -28,6 +28,25 @@ use window::Modifiers;
 
 const ROW_OVERHEAD: usize = 6;
 
+fn next_cycle_value(
+    current: Option<&str>,
+    choices: &[String],
+    allow_unset: bool,
+) -> Option<String> {
+    let first = choices.first()?;
+    match current.and_then(|value| choices.iter().position(|choice| choice == value)) {
+        Some(idx) if idx == choices.len() - 1 => {
+            if allow_unset {
+                None
+            } else {
+                Some(first.clone())
+            }
+        }
+        Some(idx) => Some(choices[idx + 1].clone()),
+        None => Some(first.clone()),
+    }
+}
+
 struct SelectorState<'a> {
     active_idx: usize,
     max_items: usize,
@@ -607,20 +626,11 @@ impl<'a> TransientState<'a> {
                             })?;
                             let next_value = {
                                 let value = option.value.borrow();
-                                match value
-                                    .as_deref()
-                                    .and_then(|value| choices.iter().position(|item| item == value))
-                                {
-                                    Some(idx) if idx == choices.len() - 1 => {
-                                        if option.delegate.allow_unset {
-                                            None
-                                        } else {
-                                            Some(choices[0].clone())
-                                        }
-                                    }
-                                    Some(idx) => Some(choices[idx + 1].clone()),
-                                    None => Some(choices[0].clone()),
-                                }
+                                next_cycle_value(
+                                    value.as_deref(),
+                                    choices,
+                                    option.delegate.allow_unset,
+                                )
                             };
                             option.value.replace(next_value);
                         }
@@ -945,11 +955,124 @@ mod test {
     use super::*;
 
     #[test]
+    fn cycle_option_advances_wraps_and_unsets() {
+        let choices = vec!["topological".to_string(), "date".to_string()];
+
+        assert_eq!(
+            next_cycle_value(None, &choices, true),
+            Some("topological".to_string())
+        );
+        assert_eq!(
+            next_cycle_value(Some("topological"), &choices, true),
+            Some("date".to_string())
+        );
+        assert_eq!(next_cycle_value(Some("date"), &choices, true), None);
+        assert_eq!(
+            next_cycle_value(Some("date"), &choices, false),
+            Some("topological".to_string())
+        );
+        assert_eq!(
+            next_cycle_value(Some("unknown"), &choices, true),
+            Some("topological".to_string())
+        );
+        assert_eq!(next_cycle_value(None, &[], true), None);
+    }
+
+    #[test]
+    fn option_selector_filters_choices_and_resets_position() {
+        let choices = vec![
+            "topological".to_string(),
+            "date".to_string(),
+            "author-date".to_string(),
+        ];
+        let option_spec = KTransientOption {
+            key: "o".to_string(),
+            default: None,
+            description: "Order".to_string(),
+            argument: "--order=".to_string(),
+            allow_unset: true,
+            choices: Some(choices.clone()),
+            input: Some(KTransientOptionInput::Select),
+        };
+        let option = TransientOption {
+            delegate: &option_spec,
+            value: RefCell::new(None),
+        };
+        let mut state = SelectorState {
+            active_idx: 2,
+            max_items: 1,
+            top_row: 1,
+            filter_term: "author".to_string(),
+            filtered_entries: vec![],
+            choices: &choices,
+            option: &option,
+        };
+
+        state.update_filter();
+
+        assert_eq!(state.filtered_entries, vec!["author-date"]);
+        assert_eq!(state.active_idx, 0);
+        assert_eq!(state.top_row, 0);
+
+        state.filter_term.clear();
+        state.update_filter();
+        assert_eq!(
+            state.filtered_entries,
+            vec!["topological", "date", "author-date"]
+        );
+    }
+
+    #[test]
     fn transient_result_converts_to_the_entries_map() {
         let entries = HashMap::from([("--follow".to_string(), true.to_dynamic())]);
         let expected = entries.to_dynamic();
 
         assert_eq!(TransientResult { entries }.to_dynamic(), expected);
+    }
+
+    #[test]
+    fn transient_result_contains_switch_and_option_values() {
+        let switch_spec = KTransientSwitch {
+            key: "f".to_string(),
+            default: false,
+            description: "Follow".to_string(),
+            argument: "--follow".to_string(),
+        };
+        let option_spec = KTransientOption {
+            key: "t".to_string(),
+            default: None,
+            description: "Tail".to_string(),
+            argument: "--tail=".to_string(),
+            allow_unset: true,
+            choices: None,
+            input: Some(KTransientOptionInput::Prompt),
+        };
+        let section_spec = KTransientSection {
+            header: "Arguments".to_string(),
+            entries: vec![],
+        };
+        let sections = vec![TransientSection {
+            delegate: &section_spec,
+            entries: vec![
+                RenderableEntity::Switch(TransientSwitch {
+                    delegate: &switch_spec,
+                    value: Cell::new(true),
+                }),
+                RenderableEntity::Opt(TransientOption {
+                    delegate: &option_spec,
+                    value: RefCell::new(Some("100".to_string())),
+                }),
+            ],
+            max_key_width: 1,
+        }];
+
+        let result = TransientResult::from(sections.as_slice());
+
+        assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(true)));
+        assert_eq!(
+            result.entries.get("--tail="),
+            Some(&Value::String("100".to_string()))
+        );
     }
 }
 
