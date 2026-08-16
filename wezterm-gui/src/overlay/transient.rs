@@ -341,6 +341,40 @@ impl RenderableEntity<'_> {
         }
     }
 
+    fn argument(&self) -> Option<&str> {
+        match self {
+            Self::Opt(option) => Some(&option.delegate.argument),
+            Self::Switch(switch) => Some(&switch.delegate.argument),
+            Self::Action(_) => None,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        match self {
+            Self::Opt(option) => option.value.borrow().is_some(),
+            Self::Switch(switch) => switch.value.get(),
+            Self::Action(_) => false,
+        }
+    }
+
+    fn unset(&self) {
+        match self {
+            Self::Opt(option) => {
+                option.value.replace(None);
+            }
+            Self::Switch(switch) => switch.value.set(false),
+            Self::Action(_) => {}
+        }
+    }
+
+    fn state_value(&self) -> Option<Value> {
+        match self {
+            Self::Opt(option) => Some(option.value.borrow().to_dynamic()),
+            Self::Switch(switch) => Some(switch.value.get().to_dynamic()),
+            Self::Action(_) => None,
+        }
+    }
+
     fn render(
         &self,
         colors: &OverlayColors,
@@ -613,6 +647,7 @@ impl<'a> TransientState<'a> {
 
         match self.keymap.lookup(&self.typed) {
             KeyLookup::Found(transient_entry) => {
+                let is_active = transient_entry.is_active();
                 match transient_entry {
                     RenderableEntity::Switch(switch) => {
                         switch.value.update(|val| !val);
@@ -635,7 +670,7 @@ impl<'a> TransientState<'a> {
                             option.value.replace(next_value);
                         }
                         input => {
-                            if option.value.borrow().is_none() || !option.delegate.allow_unset {
+                            if !is_active || !option.delegate.allow_unset {
                                 self.mode = match input {
                                     KTransientOptionInput::Select => {
                                         let choices = option.delegate.choices.as_deref().ok_or_else(
@@ -669,7 +704,7 @@ impl<'a> TransientState<'a> {
                                     KTransientOptionInput::Cycle => unreachable!(),
                                 };
                             } else {
-                                option.value.replace(None);
+                                transient_entry.unset();
                             }
                         }
                     },
@@ -1043,7 +1078,7 @@ mod test {
             default: None,
             description: "Tail".to_string(),
             argument: "--tail=".to_string(),
-            allow_unset: true,
+            allow_unset: false,
             choices: None,
             input: Some(KTransientOptionInput::Prompt),
         };
@@ -1066,6 +1101,11 @@ mod test {
             max_key_width: 1,
         }];
 
+        assert_eq!(sections[0].entries[0].argument(), Some("--follow"));
+        assert!(sections[0].entries[0].is_active());
+        assert_eq!(sections[0].entries[1].argument(), Some("--tail="));
+        assert!(sections[0].entries[1].is_active());
+
         let result = TransientResult::from(sections.as_slice());
 
         assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(true)));
@@ -1073,6 +1113,17 @@ mod test {
             result.entries.get("--tail="),
             Some(&Value::String("100".to_string()))
         );
+
+        sections[0].entries[0].unset();
+        sections[0].entries[1].unset();
+
+        assert!(!sections[0].entries[0].is_active());
+        assert!(!sections[0].entries[1].is_active());
+
+        let result = TransientResult::from(sections.as_slice());
+
+        assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(false)));
+        assert_eq!(result.entries.get("--tail="), Some(&Value::Null));
     }
 }
 
@@ -1082,20 +1133,10 @@ impl From<&[TransientSection<'_>]> for TransientResult {
 
         for section in value {
             for entity in &section.entries {
-                match entity {
-                    RenderableEntity::Opt(option) => {
-                        entries.insert(
-                            option.delegate.argument.clone(),
-                            option.value.borrow().to_dynamic(),
-                        );
-                    }
-                    RenderableEntity::Switch(switch) => {
-                        entries.insert(
-                            switch.delegate.argument.clone(),
-                            switch.value.get().to_dynamic(),
-                        );
-                    }
-                    _ => {}
+                if let (Some(argument), Some(state_value)) =
+                    (entity.argument(), entity.state_value())
+                {
+                    entries.insert(argument.to_string(), state_value);
                 }
             }
         }
