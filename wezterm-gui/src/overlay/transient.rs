@@ -332,6 +332,9 @@ enum RenderableEntity<'a> {
     Action(TransientAction<'a>),
 }
 
+/// Maps an argument to every state-bearing entry that uses it, in menu order.
+type ArgumentIndex<'a> = HashMap<&'a str, Vec<&'a RenderableEntity<'a>>>;
+
 impl RenderableEntity<'_> {
     fn key(&self) -> &str {
         match self {
@@ -403,6 +406,7 @@ struct TransientState<'a> {
     description: String,
     colors: OverlayColors,
     keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
+    argument_index: &'a ArgumentIndex<'a>,
     typed: String,
     sections: &'a [TransientSection<'a>],
     cancel: Option<Box<KeyAssignment>>,
@@ -420,6 +424,7 @@ impl<'a> TransientState<'a> {
         pane: MuxPane,
         sections: &'a [TransientSection<'_>],
         keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
+        argument_index: &'a ArgumentIndex<'a>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context = args.context.as_ref();
@@ -437,6 +442,7 @@ impl<'a> TransientState<'a> {
             description: args.description.clone(),
             colors: OverlayColors::new(),
             keymap,
+            argument_index,
             typed: String::new(),
             sections,
             cancel: args.cancel.clone(),
@@ -714,7 +720,7 @@ impl<'a> TransientState<'a> {
                             _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
                         };
 
-                        let result = TransientResult::from(self.sections);
+                        let result = TransientResult::from(self.argument_index);
                         self.trigger_event(name, Some(result));
                         if !action.delegate.keep_overlay {
                             return Ok(LoopAction::Break);
@@ -1106,7 +1112,12 @@ mod test {
         assert_eq!(sections[0].entries[1].argument(), Some("--tail="));
         assert!(sections[0].entries[1].is_active());
 
-        let result = TransientResult::from(sections.as_slice());
+        let argument_index = create_argument_index(&sections);
+
+        assert_eq!(argument_index["--follow"].len(), 1);
+        assert_eq!(argument_index["--tail="].len(), 1);
+
+        let result = TransientResult::from(&argument_index);
 
         assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(true)));
         assert_eq!(
@@ -1120,29 +1131,89 @@ mod test {
         assert!(!sections[0].entries[0].is_active());
         assert!(!sections[0].entries[1].is_active());
 
-        let result = TransientResult::from(sections.as_slice());
+        let result = TransientResult::from(&argument_index);
 
         assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(false)));
         assert_eq!(result.entries.get("--tail="), Some(&Value::Null));
     }
+
+    #[test]
+    fn argument_index_preserves_duplicate_arguments() {
+        let first_switch_spec = KTransientSwitch {
+            key: "f".to_string(),
+            default: false,
+            description: "First".to_string(),
+            argument: "--follow".to_string(),
+        };
+        let second_switch_spec = KTransientSwitch {
+            key: "F".to_string(),
+            default: false,
+            description: "Second".to_string(),
+            argument: "--follow".to_string(),
+        };
+        let section_spec = KTransientSection {
+            header: "Arguments".to_string(),
+            entries: vec![],
+        };
+        let sections = vec![TransientSection {
+            delegate: &section_spec,
+            entries: vec![
+                RenderableEntity::Switch(TransientSwitch {
+                    delegate: &first_switch_spec,
+                    value: Cell::new(true),
+                }),
+                RenderableEntity::Switch(TransientSwitch {
+                    delegate: &second_switch_spec,
+                    value: Cell::new(false),
+                }),
+            ],
+            max_key_width: 1,
+        }];
+
+        let argument_index = create_argument_index(&sections);
+        let indexed_entries = &argument_index["--follow"];
+
+        assert_eq!(indexed_entries.len(), 2);
+        assert_eq!(
+            indexed_entries
+                .iter()
+                .map(|entry| entry.key())
+                .collect::<Vec<_>>(),
+            vec!["f", "F"]
+        );
+
+        let result = TransientResult::from(&argument_index);
+        assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(false)));
+    }
 }
 
-impl From<&[TransientSection<'_>]> for TransientResult {
-    fn from(value: &[TransientSection<'_>]) -> Self {
+impl From<&ArgumentIndex<'_>> for TransientResult {
+    fn from(value: &ArgumentIndex<'_>) -> Self {
         let mut entries = HashMap::new();
 
-        for section in value {
-            for entity in &section.entries {
-                if let (Some(argument), Some(state_value)) =
-                    (entity.argument(), entity.state_value())
-                {
-                    entries.insert(argument.to_string(), state_value);
-                }
+        for (argument, indexed_entries) in value {
+            if let Some(state_value) = indexed_entries.last().and_then(|entry| entry.state_value())
+            {
+                entries.insert((*argument).to_string(), state_value);
             }
         }
 
         Self { entries }
     }
+}
+
+fn create_argument_index<'a>(sections: &'a [TransientSection<'a>]) -> ArgumentIndex<'a> {
+    let mut argument_index: ArgumentIndex<'a> = HashMap::new();
+
+    for section in sections {
+        for entity in &section.entries {
+            if let Some(argument) = entity.argument() {
+                argument_index.entry(argument).or_default().push(entity);
+            }
+        }
+    }
+
+    argument_index
 }
 
 fn create_keymap<'a>(
@@ -1251,7 +1322,17 @@ pub fn show_transient_menu_overlay(
     let mut keymap = KeyMap::new();
     create_keymap(&sections, &mut keymap);
 
-    let mut state = TransientState::new(&args, window, pane, &sections, &keymap, &mut buf);
+    let argument_index = create_argument_index(&sections);
+
+    let mut state = TransientState::new(
+        &args,
+        window,
+        pane,
+        &sections,
+        &keymap,
+        &argument_index,
+        &mut buf,
+    );
 
     state.render()?;
     state.run_loop()
