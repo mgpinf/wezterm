@@ -15,7 +15,7 @@ use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::lineedit::{LineEditBuffer, Movement};
@@ -335,6 +335,9 @@ enum RenderableEntity<'a> {
 /// Maps an argument to every state-bearing entry that uses it, in menu order.
 type ArgumentIndex<'a> = HashMap<&'a str, Vec<&'a RenderableEntity<'a>>>;
 
+/// Maps each argument to the other arguments that it makes inactive.
+type IncompatibleArguments<'a> = HashMap<&'a str, HashSet<&'a str>>;
+
 impl RenderableEntity<'_> {
     fn key(&self) -> &str {
         match self {
@@ -407,6 +410,7 @@ struct TransientState<'a> {
     colors: OverlayColors,
     keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
     argument_index: &'a ArgumentIndex<'a>,
+    incompatible_arguments: &'a IncompatibleArguments<'a>,
     typed: String,
     sections: &'a [TransientSection<'a>],
     cancel: Option<Box<KeyAssignment>>,
@@ -425,6 +429,7 @@ impl<'a> TransientState<'a> {
         sections: &'a [TransientSection<'_>],
         keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
         argument_index: &'a ArgumentIndex<'a>,
+        incompatible_arguments: &'a IncompatibleArguments<'a>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context = args.context.as_ref();
@@ -443,6 +448,7 @@ impl<'a> TransientState<'a> {
             colors: OverlayColors::new(),
             keymap,
             argument_index,
+            incompatible_arguments,
             typed: String::new(),
             sections,
             cancel: args.cancel.clone(),
@@ -727,6 +733,15 @@ impl<'a> TransientState<'a> {
                         }
                     }
                 }
+                if transient_entry.is_active() {
+                    if let Some(argument) = transient_entry.argument() {
+                        unset_incompatible_entries(
+                            argument,
+                            self.argument_index,
+                            self.incompatible_arguments,
+                        );
+                    }
+                }
                 self.typed.clear();
             }
             KeyLookup::Prefix => {}
@@ -895,6 +910,11 @@ impl<'a> TransientState<'a> {
                             Some(line.to_string())
                         };
                         prompt_state.option.value.replace(new_val);
+                        unset_incompatible_entries(
+                            &prompt_state.option.delegate.argument,
+                            self.argument_index,
+                            self.incompatible_arguments,
+                        );
                         self.mode = None;
                     }
                     InputEvent::Resized { cols, rows } => {
@@ -949,6 +969,11 @@ impl<'a> TransientState<'a> {
                             .cloned()
                         {
                             selector_state.option.value.replace(Some(entry.to_string()));
+                            unset_incompatible_entries(
+                                &selector_state.option.delegate.argument,
+                                self.argument_index,
+                                self.incompatible_arguments,
+                            );
                             self.mode = None;
                         }
                     }
@@ -1185,6 +1210,91 @@ mod test {
         let result = TransientResult::from(&argument_index);
         assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(false)));
     }
+
+    #[test]
+    fn incompatible_argument_groups_are_symmetric_and_merge() {
+        let groups = vec![
+            vec!["--all".to_string(), "--author=".to_string()],
+            vec!["--author=".to_string(), "--committer=".to_string()],
+            vec!["--all".to_string(), "--author=".to_string()],
+        ];
+
+        let incompatible = create_incompatible_arguments(&groups);
+
+        assert_eq!(incompatible["--all"], HashSet::from(["--author="]));
+        assert_eq!(
+            incompatible["--author="],
+            HashSet::from(["--all", "--committer="])
+        );
+        assert_eq!(incompatible["--committer="], HashSet::from(["--author="]));
+    }
+
+    #[test]
+    fn activating_argument_unsets_every_incompatible_entry() {
+        let all_spec = KTransientSwitch {
+            key: "a".to_string(),
+            default: false,
+            description: "All".to_string(),
+            argument: "--all".to_string(),
+        };
+        let author_option_spec = KTransientOption {
+            key: "u".to_string(),
+            default: None,
+            description: "Author".to_string(),
+            argument: "--author=".to_string(),
+            allow_unset: false,
+            choices: None,
+            input: Some(KTransientOptionInput::Prompt),
+        };
+        let author_switch_spec = KTransientSwitch {
+            key: "U".to_string(),
+            default: false,
+            description: "Any author".to_string(),
+            argument: "--author=".to_string(),
+        };
+        let unrelated_spec = KTransientSwitch {
+            key: "p".to_string(),
+            default: false,
+            description: "Patch".to_string(),
+            argument: "--patch".to_string(),
+        };
+        let section_spec = KTransientSection {
+            header: "Arguments".to_string(),
+            entries: vec![],
+        };
+        let sections = vec![TransientSection {
+            delegate: &section_spec,
+            entries: vec![
+                RenderableEntity::Switch(TransientSwitch {
+                    delegate: &all_spec,
+                    value: Cell::new(true),
+                }),
+                RenderableEntity::Opt(TransientOption {
+                    delegate: &author_option_spec,
+                    value: RefCell::new(Some("Ada".to_string())),
+                }),
+                RenderableEntity::Switch(TransientSwitch {
+                    delegate: &author_switch_spec,
+                    value: Cell::new(true),
+                }),
+                RenderableEntity::Switch(TransientSwitch {
+                    delegate: &unrelated_spec,
+                    value: Cell::new(true),
+                }),
+            ],
+            max_key_width: 1,
+        }];
+        let groups = vec![vec!["--all".to_string(), "--author=".to_string()]];
+        let argument_index = create_argument_index(&sections);
+        let incompatible = create_incompatible_arguments(&groups);
+
+        unset_incompatible_entries("--all", &argument_index, &incompatible);
+
+        assert!(sections[0].entries[0].is_active());
+        assert!(!sections[0].entries[1].is_active());
+        assert!(!sections[0].entries[2].is_active());
+        assert!(sections[0].entries[3].is_active());
+    }
 }
 
 impl From<&ArgumentIndex<'_>> for TransientResult {
@@ -1214,6 +1324,41 @@ fn create_argument_index<'a>(sections: &'a [TransientSection<'a>]) -> ArgumentIn
     }
 
     argument_index
+}
+
+fn create_incompatible_arguments<'a>(groups: &'a [Vec<String>]) -> IncompatibleArguments<'a> {
+    let mut incompatible_arguments = IncompatibleArguments::new();
+
+    for group in groups {
+        for argument in group {
+            let incompatible = incompatible_arguments.entry(argument.as_str()).or_default();
+            for other in group {
+                if other != argument {
+                    incompatible.insert(other.as_str());
+                }
+            }
+        }
+    }
+
+    incompatible_arguments
+}
+
+fn unset_incompatible_entries(
+    argument: &str,
+    argument_index: &ArgumentIndex<'_>,
+    incompatible_arguments: &IncompatibleArguments<'_>,
+) {
+    let Some(incompatible) = incompatible_arguments.get(argument) else {
+        return;
+    };
+
+    for incompatible_argument in incompatible {
+        if let Some(entries) = argument_index.get(*incompatible_argument) {
+            for entry in entries {
+                entry.unset();
+            }
+        }
+    }
 }
 
 fn create_keymap<'a>(
@@ -1323,6 +1468,7 @@ pub fn show_transient_menu_overlay(
     create_keymap(&sections, &mut keymap);
 
     let argument_index = create_argument_index(&sections);
+    let incompatible_arguments = create_incompatible_arguments(&args.incompatible);
 
     let mut state = TransientState::new(
         &args,
@@ -1331,6 +1477,7 @@ pub fn show_transient_menu_overlay(
         &sections,
         &keymap,
         &argument_index,
+        &incompatible_arguments,
         &mut buf,
     );
 

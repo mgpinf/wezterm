@@ -1091,6 +1091,8 @@ pub struct TransientMenu {
     pub context: Option<TransientContext>,
     pub sections: Vec<TransientSection>,
     #[dynamic(default)]
+    pub incompatible: Vec<Vec<String>>,
+    #[dynamic(default)]
     pub cancel: Option<Box<KeyAssignment>>,
     #[dynamic(default)]
     pub dimensions: OverlayDimensions,
@@ -1135,6 +1137,12 @@ impl FromDynamic for TransientMenu {
             .get_by_str("context")
             .map(|v| TransientContext::from_dynamic(v, options))
             .transpose()?;
+
+        let incompatible = obj
+            .get_by_str("incompatible")
+            .map(|v| Vec::<Vec<String>>::from_dynamic(v, options))
+            .transpose()?
+            .unwrap_or_default();
 
         let cancel = obj
             .get_by_str("cancel")
@@ -1196,6 +1204,7 @@ impl FromDynamic for TransientMenu {
             title,
             context,
             sections,
+            incompatible,
             cancel,
             dimensions,
             border,
@@ -1576,6 +1585,37 @@ mod test {
         )
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn transient_menu_parses_incompatible_argument_groups() {
+        let value = HashMap::from([
+            ("description".to_string(), "Git arguments".to_dynamic()),
+            ("entries".to_string(), Vec::<Value>::new().to_dynamic()),
+            (
+                "incompatible".to_string(),
+                vec![
+                    vec!["--all".to_string(), "--author=".to_string()],
+                    vec!["--author=".to_string(), "--committer=".to_string()],
+                ]
+                .to_dynamic(),
+            ),
+        ])
+        .to_dynamic();
+
+        let menu = TransientMenu::from_dynamic(&value, Default::default()).unwrap();
+
+        assert_eq!(
+            menu.incompatible,
+            vec![
+                vec!["--all".to_string(), "--author=".to_string()],
+                vec!["--author=".to_string(), "--committer=".to_string()],
+            ]
+        );
+
+        let round_trip =
+            TransientMenu::from_dynamic(&menu.to_dynamic(), Default::default()).unwrap();
+        assert_eq!(round_trip.incompatible, menu.incompatible);
     }
 
     #[test]

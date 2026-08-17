@@ -25,6 +25,8 @@ controls the dimmed foreground.
 * `description` - text to display at the top of the menu
 * `title` - optional, the title that will be set for the overlay pane
 * `context` - optional, accepts a [TransientContext](../TransientContext.md) object
+* `incompatible` - optional list of argument groups that are mutually exclusive;
+  see [Incompatible arguments](#incompatible-arguments)
 * `cancel` - optional event callback registered via `wezterm.action_callback`. The
   callback's function signature is `(window, pane)` where `window` and
   `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
@@ -50,7 +52,7 @@ Note: You cannot combine `sections` with `entries` or `header`.
 ## Basic example
 
 This complete configuration opens a menu with a switch, an option, and an
-action. The action callback receives a table that maps each entry's `flag` to
+action. The action callback receives a table that maps each entry's `argument` to
 its current value.
 
 ```lua
@@ -71,13 +73,13 @@ config.keys = {
           type = 'switch',
           key = 'v',
           description = 'Verbose output',
-          flag = '--verbose',
+          argument = '--verbose',
         },
         {
           type = 'option',
           key = 'f',
           description = 'Output format',
-          flag = '--format=',
+          argument = '--format=',
           default = 'text',
           choices = { 'text', 'json' },
         },
@@ -116,7 +118,7 @@ act.TransientMenu {
           type = 'switch',
           key = 'r',
           description = 'Release mode',
-          flag = '--release',
+          argument = '--release',
         },
       },
     },
@@ -155,6 +157,47 @@ The `type` field accepts:
 * `"option"` - value input, see [TransientOption](../TransientOption.md)
 * `"action"` - trigger an action, see [TransientAction](../TransientAction.md)
 
+## Incompatible arguments
+
+Use `incompatible` to define groups of arguments that cannot be active at the
+same time. Activating a switch or assigning a value to an option unsets every
+entry whose argument is another member of the same group:
+
+```lua
+act.TransientMenu {
+  description = 'Git log',
+  incompatible = {
+    { '--all', '--author=', '--committer=' },
+  },
+  entries = {
+    {
+      type = 'switch',
+      key = 'a',
+      description = 'Show all refs',
+      argument = '--all',
+    },
+    {
+      type = 'option',
+      key = 'u',
+      description = 'Limit by author',
+      argument = '--author=',
+    },
+    {
+      type = 'option',
+      key = 'c',
+      description = 'Limit by committer',
+      argument = '--committer=',
+    },
+  },
+}
+```
+
+Groups are symmetric and may overlap. If an argument occurs in multiple groups,
+its incompatible arguments are combined. If multiple entries use the same
+incompatible argument, all of those entries are unset. This forced unsetting
+also applies to options with `allow_unset = false`; `allow_unset` only controls
+whether the option's own key can clear its value.
+
 ## Cycling through option values
 
 An option with `input = 'cycle'` advances to the next choice each time its key
@@ -172,7 +215,7 @@ act.TransientMenu {
       type = 'option',
       key = 'o',
       description = 'Order',
-      flag = '--order=',
+      argument = '--order=',
       choices = { 'topological', 'date', 'author-date' },
       input = 'cycle',
       allow_unset = true,
