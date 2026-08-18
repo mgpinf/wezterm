@@ -398,6 +398,58 @@ impl RenderableEntity<'_> {
     }
 }
 
+/// Applies entry state changes and their argument-level side effects.
+struct EntryStateController<'a> {
+    argument_index: ArgumentIndex<'a>,
+    incompatible_arguments: IncompatibleArguments<'a>,
+}
+
+impl<'a> EntryStateController<'a> {
+    fn new(sections: &'a [TransientSection<'a>], incompatible: &'a [Vec<String>]) -> Self {
+        Self {
+            argument_index: create_argument_index(sections),
+            incompatible_arguments: create_incompatible_arguments(incompatible),
+        }
+    }
+
+    fn toggle_switch(&self, switch: &TransientSwitch<'_>) {
+        switch.value.update(|value| !value);
+        if switch.value.get() {
+            self.unset_incompatible(&switch.delegate.argument);
+        }
+    }
+
+    fn set_option_value(&self, option: &TransientOption<'_>, value: Option<String>) {
+        let is_active = value.is_some();
+        option.value.replace(value);
+        if is_active {
+            self.unset_incompatible(&option.delegate.argument);
+        }
+    }
+
+    fn unset(&self, entry: &RenderableEntity<'_>) {
+        entry.unset();
+    }
+
+    fn result(&self) -> TransientResult {
+        TransientResult::from(&self.argument_index)
+    }
+
+    fn unset_incompatible(&self, argument: &str) {
+        let Some(incompatible) = self.incompatible_arguments.get(argument) else {
+            return;
+        };
+
+        for incompatible_argument in incompatible {
+            if let Some(entries) = self.argument_index.get(*incompatible_argument) {
+                for entry in entries {
+                    entry.unset();
+                }
+            }
+        }
+    }
+}
+
 enum InputMode<'a> {
     Prompt(PromptState<'a>),
     Selector(SelectorState<'a>),
@@ -409,8 +461,7 @@ struct TransientState<'a> {
     description: String,
     colors: OverlayColors,
     keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
-    argument_index: &'a ArgumentIndex<'a>,
-    incompatible_arguments: &'a IncompatibleArguments<'a>,
+    entry_state: &'a EntryStateController<'a>,
     typed: String,
     sections: &'a [TransientSection<'a>],
     cancel: Option<Box<KeyAssignment>>,
@@ -428,8 +479,7 @@ impl<'a> TransientState<'a> {
         pane: MuxPane,
         sections: &'a [TransientSection<'_>],
         keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
-        argument_index: &'a ArgumentIndex<'a>,
-        incompatible_arguments: &'a IncompatibleArguments<'a>,
+        entry_state: &'a EntryStateController<'a>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let context = args.context.as_ref();
@@ -447,8 +497,7 @@ impl<'a> TransientState<'a> {
             description: args.description.clone(),
             colors: OverlayColors::new(),
             keymap,
-            argument_index,
-            incompatible_arguments,
+            entry_state,
             typed: String::new(),
             sections,
             cancel: args.cancel.clone(),
@@ -662,7 +711,7 @@ impl<'a> TransientState<'a> {
                 let is_active = transient_entry.is_active();
                 match transient_entry {
                     RenderableEntity::Switch(switch) => {
-                        switch.value.update(|val| !val);
+                        self.entry_state.toggle_switch(switch);
                     }
                     RenderableEntity::Opt(option) => match option.delegate.resolved_input() {
                         KTransientOptionInput::Cycle => {
@@ -679,7 +728,7 @@ impl<'a> TransientState<'a> {
                                     option.delegate.allow_unset,
                                 )
                             };
-                            option.value.replace(next_value);
+                            self.entry_state.set_option_value(option, next_value);
                         }
                         input => {
                             if !is_active || !option.delegate.allow_unset {
@@ -716,7 +765,7 @@ impl<'a> TransientState<'a> {
                                     KTransientOptionInput::Cycle => unreachable!(),
                                 };
                             } else {
-                                transient_entry.unset();
+                                self.entry_state.unset(transient_entry);
                             }
                         }
                     },
@@ -726,20 +775,11 @@ impl<'a> TransientState<'a> {
                             _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
                         };
 
-                        let result = TransientResult::from(self.argument_index);
+                        let result = self.entry_state.result();
                         self.trigger_event(name, Some(result));
                         if !action.delegate.keep_overlay {
                             return Ok(LoopAction::Break);
                         }
-                    }
-                }
-                if transient_entry.is_active() {
-                    if let Some(argument) = transient_entry.argument() {
-                        unset_incompatible_entries(
-                            argument,
-                            self.argument_index,
-                            self.incompatible_arguments,
-                        );
                     }
                 }
                 self.typed.clear();
@@ -909,12 +949,8 @@ impl<'a> TransientState<'a> {
                         } else {
                             Some(line.to_string())
                         };
-                        prompt_state.option.value.replace(new_val);
-                        unset_incompatible_entries(
-                            &prompt_state.option.delegate.argument,
-                            self.argument_index,
-                            self.incompatible_arguments,
-                        );
+                        self.entry_state
+                            .set_option_value(prompt_state.option, new_val);
                         self.mode = None;
                     }
                     InputEvent::Resized { cols, rows } => {
@@ -968,12 +1004,8 @@ impl<'a> TransientState<'a> {
                             .get(selector_state.active_idx)
                             .cloned()
                         {
-                            selector_state.option.value.replace(Some(entry.to_string()));
-                            unset_incompatible_entries(
-                                &selector_state.option.delegate.argument,
-                                self.argument_index,
-                                self.incompatible_arguments,
-                            );
+                            self.entry_state
+                                .set_option_value(selector_state.option, Some(entry.to_string()));
                             self.mode = None;
                         }
                     }
@@ -1230,7 +1262,7 @@ mod test {
     }
 
     #[test]
-    fn activating_argument_unsets_every_incompatible_entry() {
+    fn state_controller_applies_incompatibility_to_switches_and_options() {
         let all_spec = KTransientSwitch {
             key: "a".to_string(),
             default: false,
@@ -1267,7 +1299,7 @@ mod test {
             entries: vec![
                 RenderableEntity::Switch(TransientSwitch {
                     delegate: &all_spec,
-                    value: Cell::new(true),
+                    value: Cell::new(false),
                 }),
                 RenderableEntity::Opt(TransientOption {
                     delegate: &author_option_spec,
@@ -1285,13 +1317,25 @@ mod test {
             max_key_width: 1,
         }];
         let groups = vec![vec!["--all".to_string(), "--author=".to_string()]];
-        let argument_index = create_argument_index(&sections);
-        let incompatible = create_incompatible_arguments(&groups);
+        let entry_state = EntryStateController::new(&sections, &groups);
+        let RenderableEntity::Switch(all_switch) = &sections[0].entries[0] else {
+            panic!("first entry was not a switch");
+        };
 
-        unset_incompatible_entries("--all", &argument_index, &incompatible);
+        entry_state.toggle_switch(all_switch);
 
         assert!(sections[0].entries[0].is_active());
         assert!(!sections[0].entries[1].is_active());
+        assert!(!sections[0].entries[2].is_active());
+        assert!(sections[0].entries[3].is_active());
+
+        let RenderableEntity::Opt(author_option) = &sections[0].entries[1] else {
+            panic!("second entry was not an option");
+        };
+        entry_state.set_option_value(author_option, Some("Grace".to_string()));
+
+        assert!(!sections[0].entries[0].is_active());
+        assert!(sections[0].entries[1].is_active());
         assert!(!sections[0].entries[2].is_active());
         assert!(sections[0].entries[3].is_active());
     }
@@ -1341,24 +1385,6 @@ fn create_incompatible_arguments<'a>(groups: &'a [Vec<String>]) -> IncompatibleA
     }
 
     incompatible_arguments
-}
-
-fn unset_incompatible_entries(
-    argument: &str,
-    argument_index: &ArgumentIndex<'_>,
-    incompatible_arguments: &IncompatibleArguments<'_>,
-) {
-    let Some(incompatible) = incompatible_arguments.get(argument) else {
-        return;
-    };
-
-    for incompatible_argument in incompatible {
-        if let Some(entries) = argument_index.get(*incompatible_argument) {
-            for entry in entries {
-                entry.unset();
-            }
-        }
-    }
 }
 
 fn create_keymap<'a>(
@@ -1467,8 +1493,7 @@ pub fn show_transient_menu_overlay(
     let mut keymap = KeyMap::new();
     create_keymap(&sections, &mut keymap);
 
-    let argument_index = create_argument_index(&sections);
-    let incompatible_arguments = create_incompatible_arguments(&args.incompatible);
+    let entry_state = EntryStateController::new(&sections, &args.incompatible);
 
     let mut state = TransientState::new(
         &args,
@@ -1476,8 +1501,7 @@ pub fn show_transient_menu_overlay(
         pane,
         &sections,
         &keymap,
-        &argument_index,
-        &incompatible_arguments,
+        &entry_state,
         &mut buf,
     );
 
