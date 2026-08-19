@@ -193,10 +193,15 @@ act.TransientMenu {
 ```
 
 Groups are symmetric and may overlap. If an argument occurs in multiple groups,
-its incompatible arguments are combined. If multiple entries use the same
-incompatible argument, all of those entries are unset. This forced unsetting
-also applies to options with `allow_unset = false`; `allow_unset` only controls
-whether the option's own key can clear its value.
+its incompatible arguments are combined. Repeated strings and repeated groups
+are ignored when combining them. Each group must contain at least two distinct
+arguments, and every argument must belong to a switch or option in the menu.
+Two incompatible arguments cannot both be active by default.
+
+If multiple entries use the same incompatible argument, all of those entries
+are unset. This forced unsetting also applies to options with
+`allow_unset = false`; `allow_unset` only controls whether the option's own key
+can clear its value.
 
 ## Cycling through option values
 

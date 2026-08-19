@@ -7,7 +7,7 @@ use luahelper::impl_lua_conversion_dynamic;
 use ordered_float::NotNan;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
@@ -1102,6 +1102,78 @@ pub struct TransientMenu {
     pub border_color: Option<ColorSpec>,
 }
 
+impl TransientMenu {
+    fn validate_incompatible_arguments(
+        sections: &[TransientSection],
+        groups: &[Vec<String>],
+    ) -> Result<(), wezterm_dynamic::Error> {
+        let mut arguments = HashSet::new();
+        let mut active_defaults = HashSet::new();
+
+        for section in sections {
+            for entry in &section.entries {
+                let (argument, active_by_default) = match entry {
+                    TransientEntry::TransientSwitch(switch) => {
+                        (Some(switch.argument.as_str()), switch.default)
+                    }
+                    TransientEntry::TransientOption(option) => {
+                        (Some(option.argument.as_str()), option.default.is_some())
+                    }
+                    TransientEntry::TransientAction(_) => (None, false),
+                };
+
+                if let Some(argument) = argument {
+                    arguments.insert(argument);
+                    if active_by_default {
+                        active_defaults.insert(argument);
+                    }
+                }
+            }
+        }
+
+        for (group_idx, group) in groups.iter().enumerate() {
+            let mut seen = HashSet::new();
+            let mut distinct = vec![];
+            for argument in group {
+                let argument = argument.as_str();
+                if seen.insert(argument) {
+                    distinct.push(argument);
+                }
+            }
+
+            if distinct.len() < 2 {
+                return Err(wezterm_dynamic::Error::Message(format!(
+                    "TransientMenu incompatible group {} must contain at least two distinct arguments",
+                    group_idx + 1
+                )));
+            }
+
+            for argument in &distinct {
+                if !arguments.contains(argument) {
+                    return Err(wezterm_dynamic::Error::Message(format!(
+                        "TransientMenu incompatible group {} references unknown argument '{}'",
+                        group_idx + 1,
+                        argument
+                    )));
+                }
+            }
+
+            let active = distinct
+                .iter()
+                .filter(|argument| active_defaults.contains(*argument))
+                .collect::<Vec<_>>();
+            if active.len() > 1 {
+                return Err(wezterm_dynamic::Error::Message(format!(
+                    "TransientMenu incompatible arguments '{}' and '{}' are both active by default",
+                    active[0], active[1]
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl FromDynamic for TransientMenu {
     fn from_dynamic(
         value: &Value,
@@ -1198,6 +1270,8 @@ impl FromDynamic for TransientMenu {
                 ));
             }
         };
+
+        Self::validate_incompatible_arguments(&sections, &incompatible)?;
 
         Ok(Self {
             description,
@@ -1539,6 +1613,49 @@ mod test {
         }
     }
 
+    fn transient_switch_entry(argument: &str, default: bool) -> TransientEntry {
+        TransientEntry::TransientSwitch(TransientSwitch {
+            key: argument.to_string(),
+            default,
+            description: argument.to_string(),
+            argument: argument.to_string(),
+        })
+    }
+
+    fn transient_option_entry(argument: &str, default: Option<&str>) -> TransientEntry {
+        TransientEntry::TransientOption(TransientOption {
+            key: argument.to_string(),
+            default: default.map(str::to_string),
+            description: argument.to_string(),
+            argument: argument.to_string(),
+            allow_unset: true,
+            choices: None,
+            input: Some(TransientOptionInput::Prompt),
+        })
+    }
+
+    fn transient_section(entries: Vec<TransientEntry>) -> Vec<TransientSection> {
+        vec![TransientSection {
+            header: "Arguments".to_string(),
+            entries,
+        }]
+    }
+
+    fn transient_switch_value(key: &str, argument: &str) -> Value {
+        let mut value = TransientSwitch {
+            key: key.to_string(),
+            default: false,
+            description: argument.to_string(),
+            argument: argument.to_string(),
+        }
+        .to_dynamic();
+        let Value::Object(ref mut object) = value else {
+            panic!("transient switch did not convert to an object");
+        };
+        object.insert("type".to_dynamic(), "switch".to_dynamic());
+        value
+    }
+
     #[test]
     fn transient_option_infers_input_from_choices() {
         assert_eq!(
@@ -1591,7 +1708,15 @@ mod test {
     fn transient_menu_parses_incompatible_argument_groups() {
         let value = HashMap::from([
             ("description".to_string(), "Git arguments".to_dynamic()),
-            ("entries".to_string(), Vec::<Value>::new().to_dynamic()),
+            (
+                "entries".to_string(),
+                vec![
+                    transient_switch_value("a", "--all"),
+                    transient_switch_value("u", "--author="),
+                    transient_switch_value("c", "--committer="),
+                ]
+                .to_dynamic(),
+            ),
             (
                 "incompatible".to_string(),
                 vec![
@@ -1613,9 +1738,62 @@ mod test {
             ]
         );
 
-        let round_trip =
-            TransientMenu::from_dynamic(&menu.to_dynamic(), Default::default()).unwrap();
-        assert_eq!(round_trip.incompatible, menu.incompatible);
+        let dynamic = menu.to_dynamic();
+        let Value::Object(object) = dynamic else {
+            panic!("transient menu did not convert to an object");
+        };
+        let expected = menu.incompatible.to_dynamic();
+        assert_eq!(object.get_by_str("incompatible"), Some(&expected));
+    }
+
+    #[test]
+    fn transient_menu_accepts_repeated_and_overlapping_incompatible_groups() {
+        let sections = transient_section(vec![
+            transient_switch_entry("--all", false),
+            transient_switch_entry("--all", false),
+            transient_option_entry("--author=", None),
+            transient_option_entry("--committer=", None),
+        ]);
+        let groups = vec![
+            vec![
+                "--all".to_string(),
+                "--all".to_string(),
+                "--author=".to_string(),
+            ],
+            vec!["--author=".to_string(), "--committer=".to_string()],
+            vec!["--all".to_string(), "--author=".to_string()],
+        ];
+
+        assert!(TransientMenu::validate_incompatible_arguments(&sections, &groups).is_ok());
+    }
+
+    #[test]
+    fn transient_menu_rejects_invalid_incompatible_groups() {
+        let sections = transient_section(vec![
+            transient_switch_entry("--all", false),
+            transient_option_entry("--author=", None),
+        ]);
+
+        assert!(TransientMenu::validate_incompatible_arguments(
+            &sections,
+            &[vec!["--all".to_string(), "--all".to_string()]],
+        )
+        .is_err());
+        assert!(TransientMenu::validate_incompatible_arguments(
+            &sections,
+            &[vec!["--all".to_string(), "--missing".to_string()]],
+        )
+        .is_err());
+
+        let conflicting_defaults = transient_section(vec![
+            transient_switch_entry("--all", true),
+            transient_option_entry("--author=", Some("Ada")),
+        ]);
+        assert!(TransientMenu::validate_incompatible_arguments(
+            &conflicting_defaults,
+            &[vec!["--all".to_string(), "--author=".to_string()]],
+        )
+        .is_err());
     }
 
     #[test]

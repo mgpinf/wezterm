@@ -1332,6 +1332,19 @@ mod test {
         let RenderableEntity::Opt(author_option) = &sections[0].entries[1] else {
             panic!("second entry was not an option");
         };
+
+        author_option.value.replace(Some("Ada".to_string()));
+        entry_state.toggle_switch(all_switch);
+
+        assert!(!sections[0].entries[0].is_active());
+        assert!(sections[0].entries[1].is_active());
+
+        all_switch.value.set(true);
+        entry_state.set_option_value(author_option, None);
+
+        assert!(sections[0].entries[0].is_active());
+        assert!(!sections[0].entries[1].is_active());
+
         entry_state.set_option_value(author_option, Some("Grace".to_string()));
 
         assert!(!sections[0].entries[0].is_active());
