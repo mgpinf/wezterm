@@ -5,7 +5,7 @@ pub use self::windows::*;
 
 #[cfg(feature = "wayland")]
 pub mod wayland;
-#[cfg(feature = "wayland")]
+#[cfg(all(feature = "wayland", unix, not(target_os = "macos")))]
 #[path = "wayland/scale.rs"]
 pub(crate) mod wayland_scale;
 pub mod x11;
