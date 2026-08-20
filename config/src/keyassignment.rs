@@ -1124,7 +1124,7 @@ pub struct TransientMenu {
 impl TransientMenu {
     fn validate_entry_keys(sections: &[TransientSection]) -> Result<(), wezterm_dynamic::Error> {
         let mut seen = HashSet::new();
-        let mut keys = vec![];
+        let mut keys: Vec<&str> = vec![];
 
         for section in sections {
             for entry in &section.entries {
