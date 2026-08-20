@@ -4,7 +4,8 @@ use crate::overlay::common::{
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{
-    KeyAssignment, SelectorActions, SelectorActionsEntry, TransientAction, TransientContext,
+    KeyAssignment, SelectorActionSection, SelectorActions, SelectorActionsEntry, TransientAction,
+    TransientContext,
 };
 use config::ColorAttribute;
 use luahelper::impl_lua_conversion_dynamic;
@@ -22,36 +23,57 @@ use wezterm_term::unicode_column_width;
 use wezterm_term::{AttributeChange, CellAttributes, Intensity};
 use window::{Clipboard, Modifiers, WindowOps};
 
-#[derive(Clone)]
-struct SelectorEntry<'a> {
-    delegate: &'a SelectorActionsEntry,
-    idx: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ActionId(usize);
+
+struct SelectorModel {
+    choices: Vec<SelectorActionsEntry>,
+    actions: Vec<TransientAction>,
+    keymap: KeyMap<ActionId>,
+    context: Option<TransientContext>,
+    header: String,
+    max_key_width: usize,
 }
 
-struct ActionSection<'a> {
-    header: String,
-    actions: &'a [TransientAction],
-    max_key_width: usize,
+impl SelectorModel {
+    fn new(
+        choices: Vec<SelectorActionsEntry>,
+        section: SelectorActionSection,
+        context: Option<TransientContext>,
+    ) -> Self {
+        let actions = section.actions;
+        let max_key_width = actions
+            .iter()
+            .map(|action| unicode_column_width(display_key(&action.key), None))
+            .max()
+            .unwrap_or(0);
+
+        Self {
+            keymap: create_keymap(&actions),
+            choices,
+            actions,
+            context,
+            header: section.header.unwrap_or_else(|| "Default".to_string()),
+            max_key_width,
+        }
+    }
 }
 
 struct SelectorState<'a> {
     active_idx: usize,
     max_items: usize,
     top_row: usize,
-    choices: &'a [SelectorEntry<'a>],
     multiple_idx: Option<Vec<bool>>,
-    filtered_entries: Vec<&'a SelectorEntry<'a>>,
+    filtered_entries: Vec<usize>,
     filtering: bool,
     filter_term: String,
     description: String,
     fuzzy_description: String,
     window: GuiWin,
     pane: MuxPane,
-    keymap: &'a KeyMap<&'a TransientAction>,
     typed: String,
-    context: Option<&'a TransientContext>,
     colors: OverlayColors,
-    section: ActionSection<'a>,
+    model: SelectorModel,
     cancel: Option<Box<KeyAssignment>>,
     repeat: [u8; 2],
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
@@ -59,8 +81,8 @@ struct SelectorState<'a> {
 }
 
 fn selected_ids(
-    choices: &[SelectorEntry<'_>],
-    filtered_entries: &[&SelectorEntry<'_>],
+    choices: &[SelectorActionsEntry],
+    filtered_entries: &[usize],
     active_idx: usize,
     multiple_idx: Option<&[bool]>,
 ) -> Vec<String> {
@@ -72,13 +94,13 @@ fn selected_ids(
                 .iter()
                 .zip(multiple_idx)
                 .filter(|(_, selected)| **selected)
-                .map(|(entry, _)| entry.delegate.id.clone()),
+                .map(|(entry, _)| entry.id.clone()),
         );
     }
 
     if ids.is_empty() {
-        if let Some(entry) = filtered_entries.get(active_idx) {
-            ids.push(entry.delegate.id.clone());
+        if let Some(choice_idx) = filtered_entries.get(active_idx) {
+            ids.push(choices[*choice_idx].id.clone());
         }
     }
 
@@ -87,44 +109,35 @@ fn selected_ids(
 
 impl<'a> SelectorState<'a> {
     fn new(
-        args: &'a SelectorActions,
+        args: SelectorActions,
         window: GuiWin,
         pane: MuxPane,
-        keymap: &'a KeyMap<&'a TransientAction>,
-        choices: &'a [SelectorEntry<'_>],
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
-        let context_size = args.context.as_ref().map_or(0, |v| v.entries.len() + 2);
-        let actions_size = args.section.actions.len() + 1;
+        let SelectorActions {
+            description,
+            context,
+            choices,
+            section,
+            multiple,
+            fuzzy_description,
+            fuzzy,
+            cancel,
+            ..
+        } = args;
+
+        let model = SelectorModel::new(choices, section, context);
+        let context_size = model.context.as_ref().map_or(0, |v| v.entries.len() + 2);
+        let actions_size = model.actions.len() + 1;
         let overhead = context_size + actions_size + 3;
 
         let (_, rows) = buf.dimensions();
         let max_items = rows.saturating_sub(overhead);
 
-        let multiple_idx = args.multiple.then(|| vec![false; choices.len()]);
-        let filtered_entries = choices.iter().collect();
+        let multiple_idx = multiple.then(|| vec![false; model.choices.len()]);
+        let filtered_entries = (0..model.choices.len()).collect();
 
-        let actions = &args.section.actions;
-
-        let max_key_width = actions
-            .iter()
-            .map(|a| unicode_column_width(display_key(&a.key), None))
-            .max()
-            .unwrap_or(0);
-        let section = ActionSection {
-            header: args
-                .section
-                .header
-                .clone()
-                .unwrap_or_else(|| "Default".to_string()),
-            actions,
-            max_key_width,
-        };
-
-        let fuzzy_description = args
-            .fuzzy_description
-            .clone()
-            .unwrap_or_else(|| args.description.clone());
+        let fuzzy_description = fuzzy_description.unwrap_or_else(|| description.clone());
 
         let (cols, _) = buf.dimensions();
         let separator_line = "─".repeat(cols);
@@ -133,21 +146,18 @@ impl<'a> SelectorState<'a> {
             active_idx: 0,
             max_items,
             top_row: 0,
-            choices,
             multiple_idx,
             filtered_entries,
-            filtering: args.fuzzy,
+            filtering: fuzzy,
             filter_term: String::new(),
-            description: args.description.clone(),
+            description,
             fuzzy_description,
             window,
             pane,
-            keymap,
             typed: String::new(),
-            context: args.context.as_ref(),
             colors: OverlayColors::new(),
-            section,
-            cancel: args.cancel.clone(),
+            model,
+            cancel,
             repeat: [1, 1],
             buf,
             separator_line,
@@ -188,8 +198,8 @@ impl<'a> SelectorState<'a> {
                     )
                 };
 
-                for entry in &self.filtered_entries[start_idx..=end_idx] {
-                    multiple_idx[entry.idx] ^= true;
+                for choice_idx in &self.filtered_entries[start_idx..=end_idx] {
+                    multiple_idx[*choice_idx] ^= true;
                 }
             }
         }
@@ -197,23 +207,23 @@ impl<'a> SelectorState<'a> {
 
     fn set_filtered_entries_multiple_marker(&mut self, mark: bool) {
         if let Some(multiple_idx) = self.multiple_idx.as_mut() {
-            for entry in &self.filtered_entries {
-                multiple_idx[entry.idx] = mark;
+            for choice_idx in &self.filtered_entries {
+                multiple_idx[*choice_idx] = mark;
             }
         }
     }
 
     fn toggle_filtered_entries_multiple_marker(&mut self) {
         if let Some(multiple_idx) = self.multiple_idx.as_mut() {
-            for entry in &self.filtered_entries {
-                multiple_idx[entry.idx] ^= true;
+            for choice_idx in &self.filtered_entries {
+                multiple_idx[*choice_idx] ^= true;
             }
         }
     }
 
     fn copy_active_choice_to_clipboard(&self) {
-        if let Some(entry) = self.filtered_entries.get(self.active_idx) {
-            let text = entry.delegate.id.as_str();
+        if let Some(choice_idx) = self.filtered_entries.get(self.active_idx) {
+            let text = self.model.choices[*choice_idx].id.as_str();
             let clipboard = [Clipboard::Clipboard, Clipboard::PrimarySelection];
             for &c in &clipboard {
                 self.window.window.set_clipboard(c, text.to_string());
@@ -223,7 +233,7 @@ impl<'a> SelectorState<'a> {
 
     fn update_filter(&mut self) {
         if self.filter_term.is_empty() {
-            self.filtered_entries = self.choices.iter().collect();
+            self.filtered_entries = (0..self.model.choices.len()).collect();
             return;
         }
 
@@ -237,11 +247,12 @@ impl<'a> SelectorState<'a> {
         let pattern = matcher_pattern(&self.filter_term);
 
         let mut scores: Vec<MatchResult> = self
+            .model
             .choices
             .par_iter()
             .enumerate()
             .filter_map(|(row_idx, entry)| {
-                let score = matcher_score(&pattern, &entry.delegate.label)?;
+                let score = matcher_score(&pattern, &entry.label)?;
                 Some(MatchResult { row_idx, score })
             })
             .collect();
@@ -249,7 +260,7 @@ impl<'a> SelectorState<'a> {
         scores.sort_by(|a, b| a.score.cmp(&b.score).reverse());
 
         for result in scores {
-            self.filtered_entries.push(&self.choices[result.row_idx]);
+            self.filtered_entries.push(result.row_idx);
         }
 
         self.active_idx = 0;
@@ -259,7 +270,7 @@ impl<'a> SelectorState<'a> {
     fn render(&mut self) -> anyhow::Result<()> {
         let (cols, rows) = self.buf.dimensions();
         let max_width = cols.saturating_sub(6);
-        let selector_size = self.choices.len().min(self.max_items);
+        let selector_size = self.model.choices.len().min(self.max_items);
         let selector_start_row = rows.saturating_sub(selector_size + 3);
         let max_items = self.max_items;
 
@@ -274,7 +285,7 @@ impl<'a> SelectorState<'a> {
         changes.push(Change::CursorVisibility(CursorVisibility::Hidden));
 
         // Context section
-        if let Some(context) = self.context.as_ref() {
+        if let Some(context) = self.model.context.as_ref() {
             changes.push(Change::Attribute(AttributeChange::Intensity(
                 Intensity::Bold,
             )));
@@ -305,17 +316,17 @@ impl<'a> SelectorState<'a> {
         changes.push(Change::Attribute(AttributeChange::Foreground(
             self.colors.section_header_fg,
         )));
-        changes.push(Change::Text(self.section.header.clone()));
+        changes.push(Change::Text(self.model.header.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
 
-        for action in self.section.actions {
+        for action in &self.model.actions {
             let entry_start = changes.len();
             changes.push(Change::Text("\r\n  ".to_string()));
             let style = EntryRenderStyle::new(&action.key, &self.typed);
             style.append_key(
                 &self.colors,
                 &action.key,
-                self.section.max_key_width,
+                self.model.max_key_width,
                 &mut changes,
             );
             changes.push(Change::AllAttributes(CellAttributes::default()));
@@ -349,7 +360,7 @@ impl<'a> SelectorState<'a> {
         changes.push(Change::Text("\r\n".to_string()));
 
         // Selector entries
-        for (row_num, (entry_idx, entry)) in self
+        for (row_num, (entry_idx, choice_idx)) in self
             .filtered_entries
             .iter()
             .enumerate()
@@ -367,7 +378,7 @@ impl<'a> SelectorState<'a> {
             let mut attr = CellAttributes::blank();
 
             if let Some(multiple_idx) = self.multiple_idx.as_deref() {
-                if multiple_idx[self.filtered_entries[entry_idx].idx] {
+                if multiple_idx[*choice_idx] {
                     changes.push(Change::Attribute(AttributeChange::Background(
                         self.colors.multiple_marker_bg,
                     )));
@@ -386,7 +397,8 @@ impl<'a> SelectorState<'a> {
             }
 
             changes.push(Change::Text("    ".to_string()));
-            let mut line = crate::tabbar::parse_status_text(&entry.delegate.label, attr.clone());
+            let entry = &self.model.choices[*choice_idx];
+            let mut line = crate::tabbar::parse_status_text(&entry.label, attr.clone());
             if line.len() > max_width {
                 line.resize(max_width, termwiz::surface::SEQ_ZERO);
             }
@@ -434,8 +446,9 @@ impl<'a> SelectorState<'a> {
     fn handle_keymap_char(&mut self, c: char) -> anyhow::Result<LoopAction> {
         self.typed.push(c);
 
-        match self.keymap.lookup(&self.typed) {
-            KeyLookup::Found(action) => {
+        match self.model.keymap.lookup(&self.typed) {
+            KeyLookup::Found(action_id) => {
+                let action = &self.model.actions[action_id.0];
                 let name = match *action.action {
                     KeyAssignment::EmitEvent(ref id) => id,
                     _ => anyhow::bail!(
@@ -444,7 +457,7 @@ impl<'a> SelectorState<'a> {
                 };
 
                 let ids = selected_ids(
-                    self.choices,
+                    &self.model.choices,
                     &self.filtered_entries,
                     self.active_idx,
                     self.multiple_idx.as_deref(),
@@ -554,32 +567,32 @@ impl<'a> SelectorState<'a> {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('j'),
                     modifiers: Modifiers::NONE,
-                }) if !self.keymap.has_continuation(&self.typed, 'j') => {
+                }) if !self.model.keymap.has_continuation(&self.typed, 'j') => {
                     self.move_down();
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('k'),
                     modifiers: Modifiers::NONE,
-                }) if !self.keymap.has_continuation(&self.typed, 'k') => {
+                }) if !self.model.keymap.has_continuation(&self.typed, 'k') => {
                     self.move_up();
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('/'),
                     modifiers: Modifiers::NONE,
-                }) if !self.keymap.has_continuation(&self.typed, '/') => {
+                }) if !self.model.keymap.has_continuation(&self.typed, '/') => {
                     self.filtering = true;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('y'),
                     modifiers: Modifiers::NONE,
-                }) if !self.keymap.has_continuation(&self.typed, 'y') => {
+                }) if !self.model.keymap.has_continuation(&self.typed, 'y') => {
                     self.copy_active_choice_to_clipboard();
                     continue;
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('g'),
                     modifiers: Modifiers::NONE,
-                }) if !self.keymap.has_continuation(&self.typed, 'g') => {
+                }) if !self.model.keymap.has_continuation(&self.typed, 'g') => {
                     self.active_idx = 0;
                     self.top_row = 0;
                 }
@@ -590,14 +603,14 @@ impl<'a> SelectorState<'a> {
                 | InputEvent::Key(KeyEvent {
                     key: KeyCode::Char('G'),
                     modifiers: Modifiers::SHIFT,
-                }) if !self.keymap.has_continuation(&self.typed, 'G') => {
+                }) if !self.model.keymap.has_continuation(&self.typed, 'G') => {
                     self.active_idx = self.filtered_entries.len().saturating_sub(1);
                     self.top_row = self.active_idx.saturating_sub(self.max_items);
                 }
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Char(c),
                     modifiers: Modifiers::NONE,
-                }) if c.is_ascii_digit() && !self.keymap.has_continuation(&self.typed, c) => {
+                }) if c.is_ascii_digit() && !self.model.keymap.has_continuation(&self.typed, c) => {
                     if c >= '2' {
                         self.repeat[1] = c as u8 - b'0';
                     }
@@ -640,8 +653,12 @@ impl<'a> SelectorState<'a> {
                     }
                 }
                 InputEvent::Resized { cols, rows } => {
-                    let context_size = self.context.as_ref().map_or(0, |v| v.entries.len() + 2);
-                    let actions_size = self.section.actions.len() + 1;
+                    let context_size = self
+                        .model
+                        .context
+                        .as_ref()
+                        .map_or(0, |v| v.entries.len() + 2);
+                    let actions_size = self.model.actions.len() + 1;
                     let overhead = context_size + actions_size + 3;
                     self.max_items = rows.saturating_sub(overhead);
                     self.separator_line = "─".repeat(cols);
@@ -696,12 +713,32 @@ impl_lua_conversion_dynamic!(SelectorActionsResult);
 mod test {
     use super::*;
 
-    fn selector_entries<'a>(choices: &'a [SelectorActionsEntry]) -> Vec<SelectorEntry<'a>> {
-        choices
-            .iter()
-            .enumerate()
-            .map(|(idx, delegate)| SelectorEntry { delegate, idx })
-            .collect()
+    fn action(key: &str) -> TransientAction {
+        TransientAction {
+            key: key.to_string(),
+            description: key.to_string(),
+            action: Box::new(KeyAssignment::EmitEvent(key.to_string())),
+            keep_overlay: false,
+        }
+    }
+
+    #[test]
+    fn selector_model_indexes_actions_by_key() {
+        let model = SelectorModel::new(
+            vec![],
+            SelectorActionSection {
+                header: None,
+                actions: vec![action("a"), action("bb")],
+            },
+            None,
+        );
+
+        assert!(matches!(
+            model.keymap.lookup("bb"),
+            KeyLookup::Found(ActionId(1))
+        ));
+        assert_eq!(model.header, "Default");
+        assert_eq!(model.max_key_width, 2);
     }
 
     #[test]
@@ -720,11 +757,10 @@ mod test {
                 id: "gamma".to_string(),
             },
         ];
-        let entries = selector_entries(&choices);
-        let filtered = vec![&entries[1], &entries[2]];
+        let filtered = vec![1, 2];
 
         assert_eq!(
-            selected_ids(&entries, &filtered, 1, None),
+            selected_ids(&choices, &filtered, 1, None),
             vec!["gamma".to_string()]
         );
     }
@@ -745,11 +781,10 @@ mod test {
                 id: "gamma".to_string(),
             },
         ];
-        let entries = selector_entries(&choices);
-        let filtered = vec![&entries[1]];
+        let filtered = vec![1];
 
         assert_eq!(
-            selected_ids(&entries, &filtered, 0, Some(&[true, false, true]),),
+            selected_ids(&choices, &filtered, 0, Some(&[true, false, true]),),
             vec!["alpha".to_string(), "gamma".to_string()]
         );
     }
@@ -760,9 +795,8 @@ mod test {
             label: "Alpha".to_string(),
             id: "alpha".to_string(),
         }];
-        let entries = selector_entries(&choices);
 
-        assert!(selected_ids(&entries, &[], 0, Some(&[false])).is_empty());
+        assert!(selected_ids(&choices, &[], 0, Some(&[false])).is_empty());
     }
 
     #[test]
@@ -784,10 +818,12 @@ mod test {
     }
 }
 
-fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<&'a TransientAction>) {
-    for action in &args.section.actions {
-        keymap.insert(&action.key, action);
+fn create_keymap(actions: &[TransientAction]) -> KeyMap<ActionId> {
+    let mut keymap = KeyMap::new();
+    for (idx, action) in actions.iter().enumerate() {
+        keymap.insert(&action.key, ActionId(idx));
     }
+    keymap
 }
 
 fn trampoline(name: String, window: GuiWin, pane: MuxPane, result: Option<SelectorActionsResult>) {
@@ -830,17 +866,7 @@ pub fn show_selector_actions_overlay(
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
 
-    let choices: Vec<SelectorEntry<'_>> = args
-        .choices
-        .iter()
-        .enumerate()
-        .map(|(idx, delegate)| SelectorEntry { delegate, idx })
-        .collect();
-
-    let mut keymap = KeyMap::new();
-    create_keymap(&args, &mut keymap);
-
-    let mut state = SelectorState::new(&args, window, pane, &keymap, &choices, &mut buf);
+    let mut state = SelectorState::new(args, window, pane, &mut buf);
 
     state.render()?;
     state.run_loop()?;
