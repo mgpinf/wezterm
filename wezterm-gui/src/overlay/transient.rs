@@ -7,7 +7,7 @@ use config::keyassignment::{
     KeyAssignment, TransientAction as KTransientAction, TransientContext as KTransientContext,
     TransientEntry as KTransientEntry, TransientMenu as KTransientMenu,
     TransientOption as KTransientOption, TransientOptionInput as KTransientOptionInput,
-    TransientSwitch as KTransientSwitch,
+    TransientSection as KTransientSection, TransientSwitch as KTransientSwitch,
 };
 use config::ColorAttribute;
 use luahelper::impl_lua_conversion_dynamic;
@@ -400,33 +400,37 @@ struct MenuModel {
 }
 
 impl MenuModel {
-    fn new(args: &KTransientMenu) -> Self {
+    fn new(configured_sections: Vec<KTransientSection>, incompatible: Vec<Vec<String>>) -> Self {
         let mut entries = vec![];
         let mut sections = vec![];
         let mut keymap = KeyMap::new();
         let mut argument_index = HashMap::new();
 
-        for section in &args.sections {
+        for section in configured_sections {
+            let KTransientSection {
+                header,
+                entries: configured_entries,
+            } = section;
             let start = entries.len();
 
-            for configured_entry in &section.entries {
+            for configured_entry in configured_entries {
                 let entry = match configured_entry {
                     KTransientEntry::TransientSwitch(switch) => {
+                        let value = switch.default;
                         RenderableEntity::Switch(TransientSwitch {
-                            delegate: switch.clone(),
-                            value: switch.default,
+                            delegate: switch,
+                            value,
                         })
                     }
                     KTransientEntry::TransientOption(option) => {
+                        let value = option.default.clone();
                         RenderableEntity::Opt(TransientOption {
-                            delegate: option.clone(),
-                            value: option.default.clone(),
+                            delegate: option,
+                            value,
                         })
                     }
                     KTransientEntry::TransientAction(action) => {
-                        RenderableEntity::Action(TransientAction {
-                            delegate: action.clone(),
-                        })
+                        RenderableEntity::Action(TransientAction { delegate: action })
                     }
                 };
                 let id = EntryId(entries.len());
@@ -445,14 +449,14 @@ impl MenuModel {
                 .max()
                 .unwrap_or(0);
             sections.push(TransientSection {
-                header: section.header.clone(),
+                header,
                 entries: start..end,
                 max_key_width,
             });
         }
 
         let mut incompatible_entries = vec![HashSet::new(); entries.len()];
-        for group in &args.incompatible {
+        for group in incompatible {
             let ids = group
                 .iter()
                 .filter_map(|argument| argument_index.get(argument).copied())
@@ -558,24 +562,33 @@ impl<'a> TransientState<'a> {
         pane: MuxPane,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
+        let KTransientMenu {
+            description,
+            context,
+            sections,
+            incompatible,
+            cancel,
+            ..
+        } = args;
+
         let description_len =
-            crate::tabbar::parse_status_text(&args.description, CellAttributes::blank()).len();
+            crate::tabbar::parse_status_text(&description, CellAttributes::blank()).len();
         let description_separator = "─".repeat(description_len);
 
         let (cols, _) = buf.dimensions();
         let cols_separator = "─".repeat(cols);
-        let model = MenuModel::new(&args);
+        let model = MenuModel::new(sections, incompatible);
 
         Self {
             window,
             pane,
-            description: args.description,
+            description,
             colors: OverlayColors::new(),
             model,
             typed: String::new(),
-            cancel: args.cancel,
+            cancel,
             buf,
-            context: args.context,
+            context,
             mode: None,
             description_separator,
             cols_separator,
@@ -1170,7 +1183,6 @@ impl_lua_conversion_dynamic!(TransientResult);
 #[cfg(test)]
 mod test {
     use super::*;
-    use config::keyassignment::TransientSection as KTransientSection;
 
     fn switch(key: &str, argument: &str, default: bool) -> KTransientEntry {
         KTransientEntry::TransientSwitch(KTransientSwitch {
@@ -1194,20 +1206,13 @@ mod test {
     }
 
     fn menu_model(entries: Vec<KTransientEntry>, incompatible: Vec<Vec<String>>) -> MenuModel {
-        MenuModel::new(&KTransientMenu {
-            description: "Test menu".to_string(),
-            title: String::new(),
-            context: None,
-            sections: vec![KTransientSection {
+        MenuModel::new(
+            vec![KTransientSection {
                 header: "Arguments".to_string(),
                 entries,
             }],
             incompatible,
-            cancel: None,
-            dimensions: Default::default(),
-            border: false,
-            border_color: None,
-        })
+        )
     }
 
     #[test]
