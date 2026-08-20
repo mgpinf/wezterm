@@ -115,7 +115,7 @@ struct PromptState {
 }
 
 struct TransientSwitch {
-    delegate: KTransientSwitch,
+    spec: KTransientSwitch,
     value: bool,
 }
 
@@ -127,14 +127,14 @@ impl TransientSwitch {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        let delegate = &self.delegate;
+        let spec = &self.spec;
 
         let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(colors, &delegate.key, max_key_width, &mut changes);
+        style.append_key(colors, &spec.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {} (", delegate.description)),
+            Change::Text(format!(" {} (", spec.description)),
         ]);
 
         if self.value {
@@ -150,7 +150,7 @@ impl TransientSwitch {
             )));
         }
 
-        changes.push(Change::Text(delegate.argument.clone()));
+        changes.push(Change::Text(spec.argument.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
         changes.push(Change::Text(")".to_string()));
 
@@ -162,7 +162,7 @@ impl TransientSwitch {
 }
 
 struct TransientOption {
-    delegate: KTransientOption,
+    spec: KTransientOption,
     value: Option<String>,
 }
 
@@ -174,25 +174,25 @@ impl TransientOption {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        if self.delegate.resolved_input() == KTransientOptionInput::Cycle {
+        if self.spec.resolved_input() == KTransientOptionInput::Cycle {
             return self.render_cycle(colors, style, max_key_width, buf);
         }
 
-        let delegate = &self.delegate;
+        let spec = &self.spec;
 
         let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(colors, &delegate.key, max_key_width, &mut changes);
+        style.append_key(colors, &spec.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {} (", delegate.description)),
+            Change::Text(format!(" {} (", spec.description)),
         ]);
 
         if let Some(val) = self.value.as_deref() {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_argument_fg)),
-                Change::Text(delegate.argument.clone()),
+                Change::Text(spec.argument.clone()),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Normal)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_value_fg)),
                 Change::Text(val.to_string()),
@@ -200,7 +200,7 @@ impl TransientOption {
         } else {
             changes.extend([
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_argument_fg)),
-                Change::Text(delegate.argument.to_string()),
+                Change::Text(spec.argument.to_string()),
             ]);
         }
 
@@ -220,14 +220,14 @@ impl TransientOption {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        let delegate = &self.delegate;
+        let spec = &self.spec;
 
         let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(colors, &delegate.key, max_key_width, &mut changes);
+        style.append_key(colors, &spec.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {} (", delegate.description)),
+            Change::Text(format!(" {} (", spec.description)),
         ]);
 
         let value = &self.value;
@@ -235,10 +235,10 @@ impl TransientOption {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_argument_fg)),
-                Change::Text(delegate.argument.clone()),
+                Change::Text(spec.argument.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-            if let Some(choices) = delegate.choices.as_deref() {
+            if let Some(choices) = spec.choices.as_deref() {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_argument_fg,
                 )));
@@ -267,10 +267,10 @@ impl TransientOption {
         } else {
             changes.extend([
                 Change::Attribute(AttributeChange::Foreground(colors.inactive_argument_fg)),
-                Change::Text(delegate.argument.clone()),
+                Change::Text(spec.argument.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-            if let Some(choices) = delegate.choices.as_deref() {
+            if let Some(choices) = spec.choices.as_deref() {
                 changes.push(Change::Attribute(AttributeChange::Foreground(
                     colors.inactive_argument_fg,
                 )));
@@ -295,7 +295,7 @@ impl TransientOption {
 }
 
 struct TransientAction {
-    delegate: KTransientAction,
+    spec: KTransientAction,
 }
 
 impl TransientAction {
@@ -308,10 +308,10 @@ impl TransientAction {
     ) -> anyhow::Result<()> {
         let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
-        style.append_key(colors, &self.delegate.key, max_key_width, &mut changes);
+        style.append_key(colors, &self.spec.key, max_key_width, &mut changes);
         changes.extend([
             Change::AllAttributes(CellAttributes::default()),
-            Change::Text(format!(" {}", self.delegate.description)),
+            Change::Text(format!(" {}", self.spec.description)),
         ]);
 
         style.apply(colors, &mut changes);
@@ -336,16 +336,16 @@ enum RenderableEntity {
 impl RenderableEntity {
     fn key(&self) -> &str {
         match self {
-            Self::Opt(option) => &option.delegate.key,
-            Self::Switch(switch) => &switch.delegate.key,
-            Self::Action(action) => &action.delegate.key,
+            Self::Opt(option) => &option.spec.key,
+            Self::Switch(switch) => &switch.spec.key,
+            Self::Action(action) => &action.spec.key,
         }
     }
 
     fn argument(&self) -> Option<&str> {
         match self {
-            Self::Opt(option) => Some(&option.delegate.argument),
-            Self::Switch(switch) => Some(&switch.delegate.argument),
+            Self::Opt(option) => Some(&option.spec.argument),
+            Self::Switch(switch) => Some(&switch.spec.argument),
             Self::Action(_) => None,
         }
     }
@@ -421,19 +421,19 @@ impl MenuModel {
                     KTransientEntry::TransientSwitch(switch) => {
                         let value = switch.default;
                         RenderableEntity::Switch(TransientSwitch {
-                            delegate: switch,
+                            spec: switch,
                             value,
                         })
                     }
                     KTransientEntry::TransientOption(option) => {
                         let value = option.default.clone();
                         RenderableEntity::Opt(TransientOption {
-                            delegate: option,
+                            spec: option,
                             value,
                         })
                     }
                     KTransientEntry::TransientAction(action) => {
-                        RenderableEntity::Action(TransientAction { delegate: action })
+                        RenderableEntity::Action(TransientAction { spec: action })
                     }
                 };
                 let id = EntryId(entries.len());
@@ -677,14 +677,14 @@ impl TransientState {
                         Change::Text("\r\n".to_string()),
                         Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                         Change::Attribute(AttributeChange::Foreground(self.colors.prompt_label_fg)),
-                        Change::Text(option.delegate.description.clone()),
+                        Change::Text(option.spec.description.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
 
                     let mut cursor_x =
-                        option.delegate.description.len() + 2 + prompt_state.line.get_cursor();
+                        option.spec.description.len() + 2 + prompt_state.line.get_cursor();
 
-                    if let Some(default) = option.delegate.default.as_deref() {
+                    if let Some(default) = option.spec.default.as_deref() {
                         cursor_x += 10 + default.len() + 1;
                         self.buf.add_changes(vec![
                             Change::Text(" (default ".to_string()),
@@ -711,7 +711,7 @@ impl TransientState {
                     let max_width = cols.saturating_sub(6);
                     let option = self.model.option(selector_state.option);
                     let choices = option
-                        .delegate
+                        .spec
                         .choices
                         .as_deref()
                         .expect("selector input mode requires choices");
@@ -732,7 +732,7 @@ impl TransientState {
                         Change::Attribute(AttributeChange::Foreground(
                             self.colors.selector_label_fg,
                         )),
-                        Change::Text(option.delegate.description.clone()),
+                        Change::Text(option.spec.description.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text(format!(": {}", selector_state.filter_term)),
                     ]);
@@ -775,7 +775,7 @@ impl TransientState {
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
                             x: Position::Absolute(
-                                2 + option.delegate.description.len()
+                                2 + option.spec.description.len()
                                     + selector_state.filter_term.len(),
                             ),
                             y: Position::Absolute(rows.saturating_sub(selector_size + 2)),
@@ -816,8 +816,8 @@ impl TransientState {
                     let (input, allow_unset, is_active) = {
                         let option = self.model.option(id);
                         (
-                            option.delegate.resolved_input(),
-                            option.delegate.allow_unset,
+                            option.spec.resolved_input(),
+                            option.spec.allow_unset,
                             option.value.is_some(),
                         )
                     };
@@ -826,16 +826,15 @@ impl TransientState {
                         KTransientOptionInput::Cycle => {
                             let next_value = {
                                 let option = self.model.option(id);
-                                let choices =
-                                    option.delegate.choices.as_deref().ok_or_else(|| {
-                                        anyhow::anyhow!(
-                                            "TransientOption with input='cycle' requires choices"
-                                        )
-                                    })?;
+                                let choices = option.spec.choices.as_deref().ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "TransientOption with input='cycle' requires choices"
+                                    )
+                                })?;
                                 next_cycle_value(
                                     option.value.as_deref(),
                                     choices,
-                                    option.delegate.allow_unset,
+                                    option.spec.allow_unset,
                                 )
                             };
                             self.model.set_option_value(id, next_value);
@@ -847,7 +846,7 @@ impl TransientState {
                                         let choice_count = self
                                             .model
                                             .option(id)
-                                            .delegate
+                                            .spec
                                             .choices
                                             .as_ref()
                                             .ok_or_else(|| {
@@ -886,13 +885,13 @@ impl TransientState {
                         let RenderableEntity::Action(action) = self.model.entry(id) else {
                             unreachable!("keymap entry must reference a renderable entity");
                         };
-                        let name = match *action.delegate.action {
+                        let name = match *action.spec.action {
                             KeyAssignment::EmitEvent(ref id) => id.clone(),
                             _ => anyhow::bail!(
                                 "TransientMenu requires action to be defined by wezterm.action_callback"
                             ),
                         };
-                        (name, action.delegate.keep_overlay)
+                        (name, action.spec.keep_overlay)
                     };
 
                     let result = self.model.result();
@@ -1060,7 +1059,7 @@ impl TransientState {
                             Some(
                                 self.model
                                     .option(prompt_state.option)
-                                    .delegate
+                                    .spec
                                     .default
                                     .clone()
                                     .unwrap_or_default(),
@@ -1097,7 +1096,7 @@ impl TransientState {
                         let choices = self
                             .model
                             .option(selector_state.option)
-                            .delegate
+                            .spec
                             .choices
                             .as_deref()
                             .expect("selector input mode requires choices");
@@ -1121,7 +1120,7 @@ impl TransientState {
                         let choices = self
                             .model
                             .option(selector_state.option)
-                            .delegate
+                            .spec
                             .choices
                             .as_deref()
                             .expect("selector input mode requires choices");
@@ -1139,7 +1138,7 @@ impl TransientState {
                             let value = self
                                 .model
                                 .option(selector_state.option)
-                                .delegate
+                                .spec
                                 .choices
                                 .as_ref()
                                 .expect("selector input mode requires choices")[choice_idx]
