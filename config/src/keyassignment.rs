@@ -1011,6 +1011,16 @@ pub enum TransientEntry {
     TransientAction(TransientAction),
 }
 
+impl TransientEntry {
+    fn key(&self) -> &str {
+        match self {
+            Self::TransientSwitch(switch) => &switch.key,
+            Self::TransientOption(option) => &option.key,
+            Self::TransientAction(action) => &action.key,
+        }
+    }
+}
+
 impl FromDynamic for TransientEntry {
     fn from_dynamic(
         value: &Value,
@@ -1103,6 +1113,47 @@ pub struct TransientMenu {
 }
 
 impl TransientMenu {
+    fn validate_entry_keys(sections: &[TransientSection]) -> Result<(), wezterm_dynamic::Error> {
+        let mut seen = HashSet::new();
+        let mut keys = vec![];
+
+        for section in sections {
+            for entry in &section.entries {
+                let key = entry.key();
+
+                if key.is_empty() {
+                    return Err(wezterm_dynamic::Error::Message(
+                        "TransientMenu entry keys must not be empty".to_string(),
+                    ));
+                }
+
+                if !seen.insert(key) {
+                    return Err(wezterm_dynamic::Error::Message(format!(
+                        "TransientMenu entry key {key:?} is used more than once"
+                    )));
+                }
+
+                for other in &keys {
+                    let (prefix, longer) = if key.starts_with(*other) {
+                        (*other, key)
+                    } else if other.starts_with(key) {
+                        (key, *other)
+                    } else {
+                        continue;
+                    };
+
+                    return Err(wezterm_dynamic::Error::Message(format!(
+                        "TransientMenu entry key {prefix:?} is a prefix of {longer:?}, making the longer key unreachable"
+                    )));
+                }
+
+                keys.push(key);
+            }
+        }
+
+        Ok(())
+    }
+
     fn validate_incompatible_arguments(
         sections: &[TransientSection],
         groups: &[Vec<String>],
@@ -1271,6 +1322,7 @@ impl FromDynamic for TransientMenu {
             }
         };
 
+        Self::validate_entry_keys(&sections)?;
         Self::validate_incompatible_arguments(&sections, &incompatible)?;
 
         Ok(Self {
@@ -1614,8 +1666,12 @@ mod test {
     }
 
     fn transient_switch_entry(argument: &str, default: bool) -> TransientEntry {
+        transient_switch_entry_with_key(argument, argument, default)
+    }
+
+    fn transient_switch_entry_with_key(key: &str, argument: &str, default: bool) -> TransientEntry {
         TransientEntry::TransientSwitch(TransientSwitch {
-            key: argument.to_string(),
+            key: key.to_string(),
             default,
             description: argument.to_string(),
             argument: argument.to_string(),
@@ -1702,6 +1758,56 @@ mod test {
         )
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn transient_menu_accepts_distinct_non_overlapping_entry_keys() {
+        let sections = transient_section(vec![
+            transient_switch_entry_with_key("ga", "--all", false),
+            transient_switch_entry_with_key("gb", "--branches", false),
+            transient_switch_entry_with_key(" ", "--space", false),
+            transient_switch_entry_with_key("\n", "--enter", false),
+        ]);
+
+        assert!(TransientMenu::validate_entry_keys(&sections).is_ok());
+    }
+
+    #[test]
+    fn transient_menu_rejects_invalid_entry_keys() {
+        let assert_error = |entries: Vec<TransientEntry>, expected: &str| {
+            let sections = transient_section(entries);
+            let error = TransientMenu::validate_entry_keys(&sections).unwrap_err();
+            match error {
+                wezterm_dynamic::Error::Message(message) => assert_eq!(message, expected),
+                error => panic!("unexpected validation error: {error:?}"),
+            }
+        };
+
+        assert_error(
+            vec![transient_switch_entry_with_key("", "--all", false)],
+            "TransientMenu entry keys must not be empty",
+        );
+        assert_error(
+            vec![
+                transient_switch_entry_with_key("g", "--all", false),
+                transient_switch_entry_with_key("g", "--branches", false),
+            ],
+            "TransientMenu entry key \"g\" is used more than once",
+        );
+        assert_error(
+            vec![
+                transient_switch_entry_with_key("g", "--all", false),
+                transient_switch_entry_with_key("gg", "--branches", false),
+            ],
+            "TransientMenu entry key \"g\" is a prefix of \"gg\", making the longer key unreachable",
+        );
+        assert_error(
+            vec![
+                transient_switch_entry_with_key("gg", "--all", false),
+                transient_switch_entry_with_key("g", "--branches", false),
+            ],
+            "TransientMenu entry key \"g\" is a prefix of \"gg\", making the longer key unreachable",
+        );
     }
 
     #[test]

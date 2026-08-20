@@ -20,6 +20,10 @@ portion retains the normal key color. The
 `transient_entry_non_matching_fg` [color setting](../../appearance.md#defining-your-own-colors)
 controls the dimmed foreground.
 
+Entry keys must be non-empty and unique across the menu. One key cannot be a
+prefix of another: for example, `g` and `gg` cannot both be used because `g`
+would trigger immediately and make `gg` unreachable.
+
 `TransientMenu` accepts the following fields:
 
 * `description` - text to display at the top of the menu
