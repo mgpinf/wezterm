@@ -350,14 +350,6 @@ impl RenderableEntity {
         }
     }
 
-    fn is_active(&self) -> bool {
-        match self {
-            Self::Opt(option) => option.value.is_some(),
-            Self::Switch(switch) => switch.value,
-            Self::Action(_) => false,
-        }
-    }
-
     fn unset(&mut self) {
         match self {
             Self::Opt(option) => option.value = None,
@@ -387,6 +379,17 @@ impl RenderableEntity {
             Self::Opt(option) => option.render(colors, style, max_key_width, buf),
             Self::Switch(switch) => switch.render(colors, style, max_key_width, buf),
             Self::Action(action) => action.render(colors, style, max_key_width, buf),
+        }
+    }
+}
+
+#[cfg(test)]
+impl RenderableEntity {
+    fn is_active(&self) -> bool {
+        match self {
+            Self::Opt(option) => option.value.is_some(),
+            Self::Switch(switch) => switch.value,
+            Self::Action(_) => false,
         }
     }
 }
