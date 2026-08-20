@@ -59,7 +59,7 @@ impl SelectorModel {
     }
 }
 
-struct SelectorState<'a> {
+struct SelectorState {
     active_idx: usize,
     max_items: usize,
     top_row: usize,
@@ -76,7 +76,7 @@ struct SelectorState<'a> {
     model: SelectorModel,
     cancel: Option<Box<KeyAssignment>>,
     repeat: [u8; 2],
-    buf: &'a mut BufferedTerminal<TermWizTerminal>,
+    buf: BufferedTerminal<TermWizTerminal>,
     separator_line: String,
 }
 
@@ -107,12 +107,12 @@ fn selected_ids(
     ids
 }
 
-impl<'a> SelectorState<'a> {
+impl SelectorState {
     fn new(
         args: SelectorActions,
         window: GuiWin,
         pane: MuxPane,
-        buf: &'a mut BufferedTerminal<TermWizTerminal>,
+        buf: BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let SelectorActions {
             description,
@@ -866,7 +866,7 @@ pub fn show_selector_actions_overlay(
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
 
-    let mut state = SelectorState::new(args, window, pane, &mut buf);
+    let mut state = SelectorState::new(args, window, pane, buf);
 
     state.render()?;
     state.run_loop()?;

@@ -540,7 +540,7 @@ enum InputMode {
     Selector(SelectorState),
 }
 
-struct TransientState<'a> {
+struct TransientState {
     window: GuiWin,
     pane: MuxPane,
     description: String,
@@ -548,19 +548,19 @@ struct TransientState<'a> {
     model: MenuModel,
     typed: String,
     cancel: Option<Box<KeyAssignment>>,
-    buf: &'a mut BufferedTerminal<TermWizTerminal>,
+    buf: BufferedTerminal<TermWizTerminal>,
     context: Option<KTransientContext>,
     mode: Option<InputMode>,
     description_separator: String,
     cols_separator: String,
 }
 
-impl<'a> TransientState<'a> {
+impl TransientState {
     fn new(
         args: KTransientMenu,
         window: GuiWin,
         pane: MuxPane,
-        buf: &'a mut BufferedTerminal<TermWizTerminal>,
+        buf: BufferedTerminal<TermWizTerminal>,
     ) -> Self {
         let KTransientMenu {
             description,
@@ -647,7 +647,12 @@ impl<'a> TransientState<'a> {
             for entry_idx in section.entries.clone() {
                 self.buf.add_change(Change::Text("\r\n".to_string()));
                 let entity = &self.model.entries[entry_idx];
-                entity.render(&self.colors, &self.typed, section.max_key_width, self.buf)?;
+                entity.render(
+                    &self.colors,
+                    &self.typed,
+                    section.max_key_width,
+                    &mut self.buf,
+                )?;
             }
         }
 
@@ -1421,7 +1426,7 @@ pub fn show_transient_menu_overlay(
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
 
-    let mut state = TransientState::new(args, window, pane, &mut buf);
+    let mut state = TransientState::new(args, window, pane, buf);
 
     state.render()?;
     state.run_loop()
