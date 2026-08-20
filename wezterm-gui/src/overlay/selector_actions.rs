@@ -47,7 +47,7 @@ struct SelectorState<'a> {
     fuzzy_description: String,
     window: GuiWin,
     pane: MuxPane,
-    keymap: &'a KeyMap<'a, TransientAction>,
+    keymap: &'a KeyMap<&'a TransientAction>,
     typed: String,
     context: Option<&'a TransientContext>,
     colors: OverlayColors,
@@ -90,7 +90,7 @@ impl<'a> SelectorState<'a> {
         args: &'a SelectorActions,
         window: GuiWin,
         pane: MuxPane,
-        keymap: &'a KeyMap<'a, TransientAction>,
+        keymap: &'a KeyMap<&'a TransientAction>,
         choices: &'a [SelectorEntry<'_>],
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
@@ -784,7 +784,7 @@ mod test {
     }
 }
 
-fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<'a, TransientAction>) {
+fn create_keymap<'a>(args: &'a SelectorActions, keymap: &mut KeyMap<&'a TransientAction>) {
     for action in &args.section.actions {
         keymap.insert(&action.key, action);
     }

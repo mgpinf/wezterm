@@ -7,15 +7,15 @@ use config::keyassignment::{
     KeyAssignment, TransientAction as KTransientAction, TransientContext as KTransientContext,
     TransientEntry as KTransientEntry, TransientMenu as KTransientMenu,
     TransientOption as KTransientOption, TransientOptionInput as KTransientOptionInput,
-    TransientSection as KTransientSection, TransientSwitch as KTransientSwitch,
+    TransientSwitch as KTransientSwitch,
 };
 use config::ColorAttribute;
 use luahelper::impl_lua_conversion_dynamic;
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
-use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::lineedit::{LineEditBuffer, Movement};
@@ -47,20 +47,22 @@ fn next_cycle_value(
     }
 }
 
-struct SelectorState<'a> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct EntryId(usize);
+
+struct SelectorState {
     active_idx: usize,
     max_items: usize,
     top_row: usize,
     filter_term: String,
-    filtered_entries: Vec<&'a str>,
-    choices: &'a [String],
-    option: &'a TransientOption<'a>,
+    filtered_entries: Vec<usize>,
+    option: EntryId,
 }
 
-impl SelectorState<'_> {
-    fn update_filter(&mut self) {
+impl SelectorState {
+    fn update_filter(&mut self, choices: &[String]) {
         if self.filter_term.is_empty() {
-            self.filtered_entries = self.choices.iter().map(|choice| choice.as_str()).collect();
+            self.filtered_entries = (0..choices.len()).collect();
             return;
         }
 
@@ -73,8 +75,7 @@ impl SelectorState<'_> {
 
         let pattern = matcher_pattern(&self.filter_term);
 
-        let mut scores: Vec<MatchResult> = self
-            .choices
+        let mut scores: Vec<MatchResult> = choices
             .par_iter()
             .enumerate()
             .filter_map(|(row_idx, entry)| {
@@ -86,7 +87,7 @@ impl SelectorState<'_> {
         scores.sort_by(|a, b| a.score.cmp(&b.score).reverse());
 
         for result in scores {
-            self.filtered_entries.push(&self.choices[result.row_idx]);
+            self.filtered_entries.push(result.row_idx);
         }
 
         self.active_idx = 0;
@@ -108,17 +109,17 @@ impl SelectorState<'_> {
     }
 }
 
-struct PromptState<'a> {
+struct PromptState {
     line: LineEditBuffer,
-    option: &'a TransientOption<'a>,
+    option: EntryId,
 }
 
-struct TransientSwitch<'a> {
-    delegate: &'a KTransientSwitch,
-    value: Cell<bool>,
+struct TransientSwitch {
+    delegate: KTransientSwitch,
+    value: bool,
 }
 
-impl<'a> TransientSwitch<'a> {
+impl TransientSwitch {
     fn render(
         &self,
         colors: &OverlayColors,
@@ -126,7 +127,7 @@ impl<'a> TransientSwitch<'a> {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        let delegate = self.delegate;
+        let delegate = &self.delegate;
 
         let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
@@ -136,7 +137,7 @@ impl<'a> TransientSwitch<'a> {
             Change::Text(format!(" {} (", delegate.description)),
         ]);
 
-        if self.value.get() {
+        if self.value {
             changes.push(Change::Attribute(AttributeChange::Intensity(
                 Intensity::Bold,
             )));
@@ -160,12 +161,12 @@ impl<'a> TransientSwitch<'a> {
     }
 }
 
-struct TransientOption<'a> {
-    delegate: &'a KTransientOption,
-    value: RefCell<Option<String>>,
+struct TransientOption {
+    delegate: KTransientOption,
+    value: Option<String>,
 }
 
-impl<'a> TransientOption<'a> {
+impl TransientOption {
     fn render(
         &self,
         colors: &OverlayColors,
@@ -177,7 +178,7 @@ impl<'a> TransientOption<'a> {
             return self.render_cycle(colors, style, max_key_width, buf);
         }
 
-        let delegate = self.delegate;
+        let delegate = &self.delegate;
 
         let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
@@ -187,7 +188,7 @@ impl<'a> TransientOption<'a> {
             Change::Text(format!(" {} (", delegate.description)),
         ]);
 
-        if let Some(val) = self.value.borrow().as_deref() {
+        if let Some(val) = self.value.as_deref() {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(colors.active_argument_fg)),
@@ -219,7 +220,7 @@ impl<'a> TransientOption<'a> {
         max_key_width: usize,
         buf: &mut BufferedTerminal<TermWizTerminal>,
     ) -> anyhow::Result<()> {
-        let delegate = self.delegate;
+        let delegate = &self.delegate;
 
         let mut changes = vec![];
         changes.push(Change::Text("  ".to_string()));
@@ -229,7 +230,7 @@ impl<'a> TransientOption<'a> {
             Change::Text(format!(" {} (", delegate.description)),
         ]);
 
-        let value = self.value.borrow();
+        let value = &self.value;
         if value.is_some() {
             changes.extend([
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
@@ -293,11 +294,11 @@ impl<'a> TransientOption<'a> {
     }
 }
 
-struct TransientAction<'a> {
-    delegate: &'a KTransientAction,
+struct TransientAction {
+    delegate: KTransientAction,
 }
 
-impl<'a> TransientAction<'a> {
+impl TransientAction {
     fn render(
         &self,
         colors: &OverlayColors,
@@ -320,25 +321,19 @@ impl<'a> TransientAction<'a> {
     }
 }
 
-struct TransientSection<'a> {
-    delegate: &'a KTransientSection,
-    entries: Vec<RenderableEntity<'a>>,
+struct TransientSection {
+    header: String,
+    entries: Range<usize>,
     max_key_width: usize,
 }
 
-enum RenderableEntity<'a> {
-    Opt(TransientOption<'a>),
-    Switch(TransientSwitch<'a>),
-    Action(TransientAction<'a>),
+enum RenderableEntity {
+    Opt(TransientOption),
+    Switch(TransientSwitch),
+    Action(TransientAction),
 }
 
-/// Maps each unique argument to its state-bearing entry.
-type ArgumentIndex<'a> = HashMap<&'a str, &'a RenderableEntity<'a>>;
-
-/// Maps each argument to the other arguments that it makes inactive.
-type IncompatibleArguments<'a> = HashMap<&'a str, HashSet<&'a str>>;
-
-impl RenderableEntity<'_> {
+impl RenderableEntity {
     fn key(&self) -> &str {
         match self {
             Self::Opt(option) => &option.delegate.key,
@@ -357,26 +352,24 @@ impl RenderableEntity<'_> {
 
     fn is_active(&self) -> bool {
         match self {
-            Self::Opt(option) => option.value.borrow().is_some(),
-            Self::Switch(switch) => switch.value.get(),
+            Self::Opt(option) => option.value.is_some(),
+            Self::Switch(switch) => switch.value,
             Self::Action(_) => false,
         }
     }
 
-    fn unset(&self) {
+    fn unset(&mut self) {
         match self {
-            Self::Opt(option) => {
-                option.value.replace(None);
-            }
-            Self::Switch(switch) => switch.value.set(false),
+            Self::Opt(option) => option.value = None,
+            Self::Switch(switch) => switch.value = false,
             Self::Action(_) => {}
         }
     }
 
     fn state_value(&self) -> Option<Value> {
         match self {
-            Self::Opt(option) => Some(option.value.borrow().to_dynamic()),
-            Self::Switch(switch) => Some(switch.value.get().to_dynamic()),
+            Self::Opt(option) => Some(option.value.to_dynamic()),
+            Self::Switch(switch) => Some(switch.value.to_dynamic()),
             Self::Action(_) => None,
         }
     }
@@ -398,59 +391,149 @@ impl RenderableEntity<'_> {
     }
 }
 
-/// Applies entry state changes and their argument-level side effects.
-struct EntryStateController<'a> {
-    argument_index: ArgumentIndex<'a>,
-    incompatible_arguments: IncompatibleArguments<'a>,
+struct MenuModel {
+    entries: Vec<RenderableEntity>,
+    sections: Vec<TransientSection>,
+    keymap: KeyMap<EntryId>,
+    argument_index: HashMap<String, EntryId>,
+    incompatible_entries: Vec<HashSet<EntryId>>,
 }
 
-impl<'a> EntryStateController<'a> {
-    fn new(sections: &'a [TransientSection<'a>], incompatible: &'a [Vec<String>]) -> Self {
+impl MenuModel {
+    fn new(args: &KTransientMenu) -> Self {
+        let mut entries = vec![];
+        let mut sections = vec![];
+        let mut keymap = KeyMap::new();
+        let mut argument_index = HashMap::new();
+
+        for section in &args.sections {
+            let start = entries.len();
+
+            for configured_entry in &section.entries {
+                let entry = match configured_entry {
+                    KTransientEntry::TransientSwitch(switch) => {
+                        RenderableEntity::Switch(TransientSwitch {
+                            delegate: switch.clone(),
+                            value: switch.default,
+                        })
+                    }
+                    KTransientEntry::TransientOption(option) => {
+                        RenderableEntity::Opt(TransientOption {
+                            delegate: option.clone(),
+                            value: option.default.clone(),
+                        })
+                    }
+                    KTransientEntry::TransientAction(action) => {
+                        RenderableEntity::Action(TransientAction {
+                            delegate: action.clone(),
+                        })
+                    }
+                };
+                let id = EntryId(entries.len());
+                keymap.insert(entry.key(), id);
+                if let Some(argument) = entry.argument() {
+                    let previous = argument_index.insert(argument.to_string(), id);
+                    debug_assert!(previous.is_none(), "arguments are validated as unique");
+                }
+                entries.push(entry);
+            }
+
+            let end = entries.len();
+            let max_key_width = entries[start..end]
+                .iter()
+                .map(|entry| unicode_column_width(display_key(entry.key()), None))
+                .max()
+                .unwrap_or(0);
+            sections.push(TransientSection {
+                header: section.header.clone(),
+                entries: start..end,
+                max_key_width,
+            });
+        }
+
+        let mut incompatible_entries = vec![HashSet::new(); entries.len()];
+        for group in &args.incompatible {
+            let ids = group
+                .iter()
+                .filter_map(|argument| argument_index.get(argument).copied())
+                .collect::<Vec<_>>();
+            for id in &ids {
+                for other in &ids {
+                    if id != other {
+                        incompatible_entries[id.0].insert(*other);
+                    }
+                }
+            }
+        }
+
         Self {
-            argument_index: create_argument_index(sections),
-            incompatible_arguments: create_incompatible_arguments(incompatible),
+            entries,
+            sections,
+            keymap,
+            argument_index,
+            incompatible_entries,
         }
     }
 
-    fn toggle_switch(&self, switch: &TransientSwitch<'_>) {
-        switch.value.update(|value| !value);
-        if switch.value.get() {
-            self.unset_incompatible(&switch.delegate.argument);
+    fn entry(&self, id: EntryId) -> &RenderableEntity {
+        &self.entries[id.0]
+    }
+
+    fn option(&self, id: EntryId) -> &TransientOption {
+        let RenderableEntity::Opt(option) = self.entry(id) else {
+            unreachable!("option input mode must reference an option entry");
+        };
+        option
+    }
+
+    fn toggle_switch(&mut self, id: EntryId) {
+        let RenderableEntity::Switch(switch) = &mut self.entries[id.0] else {
+            unreachable!("toggle_switch must reference a switch entry");
+        };
+        switch.value = !switch.value;
+        if switch.value {
+            self.unset_incompatible(id);
         }
     }
 
-    fn set_option_value(&self, option: &TransientOption<'_>, value: Option<String>) {
+    fn set_option_value(&mut self, id: EntryId, value: Option<String>) {
         let is_active = value.is_some();
-        option.value.replace(value);
+        let RenderableEntity::Opt(option) = &mut self.entries[id.0] else {
+            unreachable!("set_option_value must reference an option entry");
+        };
+        option.value = value;
         if is_active {
-            self.unset_incompatible(&option.delegate.argument);
+            self.unset_incompatible(id);
         }
     }
 
-    fn unset(&self, entry: &RenderableEntity<'_>) {
-        entry.unset();
+    fn unset(&mut self, id: EntryId) {
+        self.entries[id.0].unset();
     }
 
     fn result(&self) -> TransientResult {
-        TransientResult::from(&self.argument_index)
+        let mut result = HashMap::new();
+
+        for (argument, id) in &self.argument_index {
+            if let Some(state_value) = self.entry(*id).state_value() {
+                result.insert(argument.clone(), state_value);
+            }
+        }
+
+        TransientResult { entries: result }
     }
 
-    fn unset_incompatible(&self, argument: &str) {
-        let Some(incompatible) = self.incompatible_arguments.get(argument) else {
-            return;
-        };
-
-        for incompatible_argument in incompatible {
-            if let Some(entry) = self.argument_index.get(*incompatible_argument) {
-                entry.unset();
-            }
+    fn unset_incompatible(&mut self, id: EntryId) {
+        let entries = &mut self.entries;
+        for incompatible in &self.incompatible_entries[id.0] {
+            entries[incompatible.0].unset();
         }
     }
 }
 
-enum InputMode<'a> {
-    Prompt(PromptState<'a>),
-    Selector(SelectorState<'a>),
+enum InputMode {
+    Prompt(PromptState),
+    Selector(SelectorState),
 }
 
 struct TransientState<'a> {
@@ -458,49 +541,41 @@ struct TransientState<'a> {
     pane: MuxPane,
     description: String,
     colors: OverlayColors,
-    keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
-    entry_state: &'a EntryStateController<'a>,
+    model: MenuModel,
     typed: String,
-    sections: &'a [TransientSection<'a>],
     cancel: Option<Box<KeyAssignment>>,
     buf: &'a mut BufferedTerminal<TermWizTerminal>,
-    context: Option<&'a KTransientContext>,
-    mode: Option<InputMode<'a>>,
+    context: Option<KTransientContext>,
+    mode: Option<InputMode>,
     description_separator: String,
     cols_separator: String,
 }
 
 impl<'a> TransientState<'a> {
     fn new(
-        args: &'a KTransientMenu,
+        args: KTransientMenu,
         window: GuiWin,
         pane: MuxPane,
-        sections: &'a [TransientSection<'_>],
-        keymap: &'a KeyMap<'a, RenderableEntity<'a>>,
-        entry_state: &'a EntryStateController<'a>,
         buf: &'a mut BufferedTerminal<TermWizTerminal>,
     ) -> Self {
-        let context = args.context.as_ref();
-
         let description_len =
             crate::tabbar::parse_status_text(&args.description, CellAttributes::blank()).len();
         let description_separator = "─".repeat(description_len);
 
         let (cols, _) = buf.dimensions();
         let cols_separator = "─".repeat(cols);
+        let model = MenuModel::new(&args);
 
         Self {
             window,
             pane,
-            description: args.description.clone(),
+            description: args.description,
             colors: OverlayColors::new(),
-            keymap,
-            entry_state,
+            model,
             typed: String::new(),
-            sections,
-            cancel: args.cancel.clone(),
+            cancel: args.cancel,
             buf,
-            context,
+            context: args.context,
             mode: None,
             description_separator,
             cols_separator,
@@ -525,7 +600,7 @@ impl<'a> TransientState<'a> {
             Change::AllAttributes(CellAttributes::default()),
         ]);
 
-        if let Some(context) = self.context {
+        if let Some(context) = self.context.as_ref() {
             let mut changes = vec![];
             changes.extend([
                 Change::Text("\r\n\r\n".to_string()),
@@ -548,16 +623,17 @@ impl<'a> TransientState<'a> {
             self.buf.add_changes(changes);
         }
 
-        for section in self.sections {
+        for section in &self.model.sections {
             self.buf.add_changes(vec![
                 Change::Text("\r\n\r\n".to_string()),
                 Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                 Change::Attribute(AttributeChange::Foreground(self.colors.section_header_fg)),
-                Change::Text(section.delegate.header.clone()),
+                Change::Text(section.header.clone()),
                 Change::AllAttributes(CellAttributes::default()),
             ]);
-            for entity in &section.entries {
+            for entry_idx in section.entries.clone() {
                 self.buf.add_change(Change::Text("\r\n".to_string()));
+                let entity = &self.model.entries[entry_idx];
                 entity.render(&self.colors, &self.typed, section.max_key_width, self.buf)?;
             }
         }
@@ -566,6 +642,7 @@ impl<'a> TransientState<'a> {
             match input_mode {
                 InputMode::Prompt(prompt_state) => {
                     let (_, rows) = self.buf.dimensions();
+                    let option = self.model.option(prompt_state.option);
 
                     self.buf.add_changes(vec![
                         Change::CursorPosition {
@@ -579,15 +656,14 @@ impl<'a> TransientState<'a> {
                         Change::Text("\r\n".to_string()),
                         Change::Attribute(AttributeChange::Intensity(Intensity::Bold)),
                         Change::Attribute(AttributeChange::Foreground(self.colors.prompt_label_fg)),
-                        Change::Text(prompt_state.option.delegate.description.clone()),
+                        Change::Text(option.delegate.description.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                     ]);
 
-                    let mut cursor_x = prompt_state.option.delegate.description.len()
-                        + 2
-                        + prompt_state.line.get_cursor();
+                    let mut cursor_x =
+                        option.delegate.description.len() + 2 + prompt_state.line.get_cursor();
 
-                    if let Some(default) = prompt_state.option.delegate.default.as_deref() {
+                    if let Some(default) = option.delegate.default.as_deref() {
                         cursor_x += 10 + default.len() + 1;
                         self.buf.add_changes(vec![
                             Change::Text(" (default ".to_string()),
@@ -612,8 +688,14 @@ impl<'a> TransientState<'a> {
                 InputMode::Selector(selector_state) => {
                     let (cols, rows) = self.buf.dimensions();
                     let max_width = cols.saturating_sub(6);
+                    let option = self.model.option(selector_state.option);
+                    let choices = option
+                        .delegate
+                        .choices
+                        .as_deref()
+                        .expect("selector input mode requires choices");
 
-                    let selector_size = selector_state.choices.len().min(selector_state.max_items);
+                    let selector_size = choices.len().min(selector_state.max_items);
                     let mut changes = vec![];
                     changes.extend([
                         Change::CursorPosition {
@@ -629,12 +711,12 @@ impl<'a> TransientState<'a> {
                         Change::Attribute(AttributeChange::Foreground(
                             self.colors.selector_label_fg,
                         )),
-                        Change::Text(selector_state.option.delegate.description.clone()),
+                        Change::Text(option.delegate.description.clone()),
                         Change::AllAttributes(CellAttributes::default()),
                         Change::Text(format!(": {}", selector_state.filter_term)),
                     ]);
 
-                    for (row_num, (entry_idx, entry)) in selector_state
+                    for (row_num, (entry_idx, choice_idx)) in selector_state
                         .filtered_entries
                         .iter()
                         .enumerate()
@@ -655,6 +737,7 @@ impl<'a> TransientState<'a> {
                         }
 
                         changes.push(Change::Text("    ".to_string()));
+                        let entry = &choices[*choice_idx];
                         let mut line = crate::tabbar::parse_status_text(entry, attr.clone());
                         if line.len() > max_width {
                             line.resize(max_width, termwiz::surface::SEQ_ZERO);
@@ -671,7 +754,7 @@ impl<'a> TransientState<'a> {
                         Change::CursorVisibility(CursorVisibility::Visible),
                         Change::CursorPosition {
                             x: Position::Absolute(
-                                2 + selector_state.option.delegate.description.len()
+                                2 + option.delegate.description.len()
                                     + selector_state.filter_term.len(),
                             ),
                             y: Position::Absolute(rows.saturating_sub(selector_size + 2)),
@@ -704,80 +787,97 @@ impl<'a> TransientState<'a> {
     fn handle_keymap_char(&mut self, c: char) -> anyhow::Result<LoopAction> {
         self.typed.push(c);
 
-        match self.keymap.lookup(&self.typed) {
-            KeyLookup::Found(transient_entry) => {
-                let is_active = transient_entry.is_active();
-                match transient_entry {
-                    RenderableEntity::Switch(switch) => {
-                        self.entry_state.toggle_switch(switch);
-                    }
-                    RenderableEntity::Opt(option) => match option.delegate.resolved_input() {
+        match self.model.keymap.lookup(&self.typed) {
+            KeyLookup::Found(id) => {
+                if matches!(self.model.entry(id), RenderableEntity::Switch(_)) {
+                    self.model.toggle_switch(id);
+                } else if matches!(self.model.entry(id), RenderableEntity::Opt(_)) {
+                    let (input, allow_unset, is_active) = {
+                        let option = self.model.option(id);
+                        (
+                            option.delegate.resolved_input(),
+                            option.delegate.allow_unset,
+                            option.value.is_some(),
+                        )
+                    };
+
+                    match input {
                         KTransientOptionInput::Cycle => {
-                            let choices = option.delegate.choices.as_deref().ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "TransientOption with input='cycle' requires choices"
-                                )
-                            })?;
                             let next_value = {
-                                let value = option.value.borrow();
+                                let option = self.model.option(id);
+                                let choices =
+                                    option.delegate.choices.as_deref().ok_or_else(|| {
+                                        anyhow::anyhow!(
+                                            "TransientOption with input='cycle' requires choices"
+                                        )
+                                    })?;
                                 next_cycle_value(
-                                    value.as_deref(),
+                                    option.value.as_deref(),
                                     choices,
                                     option.delegate.allow_unset,
                                 )
                             };
-                            self.entry_state.set_option_value(option, next_value);
+                            self.model.set_option_value(id, next_value);
                         }
                         input => {
-                            if !is_active || !option.delegate.allow_unset {
+                            if !is_active || !allow_unset {
                                 self.mode = match input {
                                     KTransientOptionInput::Select => {
-                                        let choices = option.delegate.choices.as_deref().ok_or_else(
-                                            || {
+                                        let choice_count = self
+                                            .model
+                                            .option(id)
+                                            .delegate
+                                            .choices
+                                            .as_ref()
+                                            .ok_or_else(|| {
                                                 anyhow::anyhow!(
                                                     "TransientOption with input='select' requires choices"
                                                 )
-                                            },
-                                        )?;
+                                            })?
+                                            .len();
                                         let (_, rows) = self.buf.dimensions();
                                         let max_items = rows.saturating_sub(ROW_OVERHEAD);
-                                        let filtered_entries =
-                                            choices.iter().map(|choice| choice.as_str()).collect();
 
                                         Some(InputMode::Selector(SelectorState {
                                             active_idx: 0,
                                             max_items,
                                             top_row: 0,
                                             filter_term: String::new(),
-                                            filtered_entries,
-                                            choices,
-                                            option,
+                                            filtered_entries: (0..choice_count).collect(),
+                                            option: id,
                                         }))
                                     }
                                     KTransientOptionInput::Prompt => {
                                         Some(InputMode::Prompt(PromptState {
                                             line: LineEditBuffer::default(),
-                                            option,
+                                            option: id,
                                         }))
                                     }
                                     KTransientOptionInput::Cycle => unreachable!(),
                                 };
                             } else {
-                                self.entry_state.unset(transient_entry);
+                                self.model.unset(id);
                             }
                         }
-                    },
-                    RenderableEntity::Action(action) => {
-                        let name = match *action.delegate.action {
-                            KeyAssignment::EmitEvent(ref id) => id,
-                            _ => anyhow::bail!("TransientMenu requires action to be defined by wezterm.action_callback")
+                    }
+                } else {
+                    let (name, keep_overlay) = {
+                        let RenderableEntity::Action(action) = self.model.entry(id) else {
+                            unreachable!("keymap entry must reference a renderable entity");
                         };
+                        let name = match *action.delegate.action {
+                            KeyAssignment::EmitEvent(ref id) => id.clone(),
+                            _ => anyhow::bail!(
+                                "TransientMenu requires action to be defined by wezterm.action_callback"
+                            ),
+                        };
+                        (name, action.delegate.keep_overlay)
+                    };
 
-                        let result = self.entry_state.result();
-                        self.trigger_event(name, Some(result));
-                        if !action.delegate.keep_overlay {
-                            return Ok(LoopAction::Break);
-                        }
+                    let result = self.model.result();
+                    self.trigger_event(&name, Some(result));
+                    if !keep_overlay {
+                        return Ok(LoopAction::Break);
                     }
                 }
                 self.typed.clear();
@@ -937,8 +1037,8 @@ impl<'a> TransientState<'a> {
                         let line = prompt_state.line.get_line();
                         let new_val = if line.is_empty() {
                             Some(
-                                prompt_state
-                                    .option
+                                self.model
+                                    .option(prompt_state.option)
                                     .delegate
                                     .default
                                     .clone()
@@ -947,8 +1047,7 @@ impl<'a> TransientState<'a> {
                         } else {
                             Some(line.to_string())
                         };
-                        self.entry_state
-                            .set_option_value(prompt_state.option, new_val);
+                        self.model.set_option_value(prompt_state.option, new_val);
                         self.mode = None;
                     }
                     InputEvent::Resized { cols, rows } => {
@@ -974,7 +1073,14 @@ impl<'a> TransientState<'a> {
                         key: KeyCode::Backspace,
                         ..
                     }) if selector_state.filter_term.pop().is_some() => {
-                        selector_state.update_filter();
+                        let choices = self
+                            .model
+                            .option(selector_state.option)
+                            .delegate
+                            .choices
+                            .as_deref()
+                            .expect("selector input mode requires choices");
+                        selector_state.update_filter(choices);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Char('G' | 'C'),
@@ -991,19 +1097,34 @@ impl<'a> TransientState<'a> {
                         ..
                     }) => {
                         selector_state.filter_term.push(c);
-                        selector_state.update_filter();
+                        let choices = self
+                            .model
+                            .option(selector_state.option)
+                            .delegate
+                            .choices
+                            .as_deref()
+                            .expect("selector input mode requires choices");
+                        selector_state.update_filter(choices);
                     }
                     InputEvent::Key(KeyEvent {
                         key: KeyCode::Enter,
                         ..
                     }) => {
-                        if let Some(entry) = selector_state
+                        if let Some(choice_idx) = selector_state
                             .filtered_entries
                             .get(selector_state.active_idx)
-                            .cloned()
+                            .copied()
                         {
-                            self.entry_state
-                                .set_option_value(selector_state.option, Some(entry.to_string()));
+                            let value = self
+                                .model
+                                .option(selector_state.option)
+                                .delegate
+                                .choices
+                                .as_ref()
+                                .expect("selector input mode requires choices")[choice_idx]
+                                .clone();
+                            self.model
+                                .set_option_value(selector_state.option, Some(value));
                             self.mode = None;
                         }
                     }
@@ -1049,6 +1170,45 @@ impl_lua_conversion_dynamic!(TransientResult);
 #[cfg(test)]
 mod test {
     use super::*;
+    use config::keyassignment::TransientSection as KTransientSection;
+
+    fn switch(key: &str, argument: &str, default: bool) -> KTransientEntry {
+        KTransientEntry::TransientSwitch(KTransientSwitch {
+            key: key.to_string(),
+            default,
+            description: argument.to_string(),
+            argument: argument.to_string(),
+        })
+    }
+
+    fn option(key: &str, argument: &str, default: Option<&str>) -> KTransientEntry {
+        KTransientEntry::TransientOption(KTransientOption {
+            key: key.to_string(),
+            default: default.map(str::to_string),
+            description: argument.to_string(),
+            argument: argument.to_string(),
+            allow_unset: false,
+            choices: None,
+            input: Some(KTransientOptionInput::Prompt),
+        })
+    }
+
+    fn menu_model(entries: Vec<KTransientEntry>, incompatible: Vec<Vec<String>>) -> MenuModel {
+        MenuModel::new(&KTransientMenu {
+            description: "Test menu".to_string(),
+            title: String::new(),
+            context: None,
+            sections: vec![KTransientSection {
+                header: "Arguments".to_string(),
+                entries,
+            }],
+            incompatible,
+            cancel: None,
+            dimensions: Default::default(),
+            border: false,
+            border_color: None,
+        })
+    }
 
     #[test]
     fn cycle_option_advances_wraps_and_unsets() {
@@ -1081,41 +1241,24 @@ mod test {
             "date".to_string(),
             "author-date".to_string(),
         ];
-        let option_spec = KTransientOption {
-            key: "o".to_string(),
-            default: None,
-            description: "Order".to_string(),
-            argument: "--order=".to_string(),
-            allow_unset: true,
-            choices: Some(choices.clone()),
-            input: Some(KTransientOptionInput::Select),
-        };
-        let option = TransientOption {
-            delegate: &option_spec,
-            value: RefCell::new(None),
-        };
         let mut state = SelectorState {
             active_idx: 2,
             max_items: 1,
             top_row: 1,
             filter_term: "author".to_string(),
             filtered_entries: vec![],
-            choices: &choices,
-            option: &option,
+            option: EntryId(0),
         };
 
-        state.update_filter();
+        state.update_filter(&choices);
 
-        assert_eq!(state.filtered_entries, vec!["author-date"]);
+        assert_eq!(state.filtered_entries, vec![2]);
         assert_eq!(state.active_idx, 0);
         assert_eq!(state.top_row, 0);
 
         state.filter_term.clear();
-        state.update_filter();
-        assert_eq!(
-            state.filtered_entries,
-            vec!["topological", "date", "author-date"]
-        );
+        state.update_filter(&choices);
+        assert_eq!(state.filtered_entries, vec![0, 1, 2]);
     }
 
     #[test]
@@ -1128,51 +1271,25 @@ mod test {
 
     #[test]
     fn transient_result_contains_switch_and_option_values() {
-        let switch_spec = KTransientSwitch {
-            key: "f".to_string(),
-            default: false,
-            description: "Follow".to_string(),
-            argument: "--follow".to_string(),
-        };
-        let option_spec = KTransientOption {
-            key: "t".to_string(),
-            default: None,
-            description: "Tail".to_string(),
-            argument: "--tail=".to_string(),
-            allow_unset: false,
-            choices: None,
-            input: Some(KTransientOptionInput::Prompt),
-        };
-        let section_spec = KTransientSection {
-            header: "Arguments".to_string(),
-            entries: vec![],
-        };
-        let sections = vec![TransientSection {
-            delegate: &section_spec,
-            entries: vec![
-                RenderableEntity::Switch(TransientSwitch {
-                    delegate: &switch_spec,
-                    value: Cell::new(true),
-                }),
-                RenderableEntity::Opt(TransientOption {
-                    delegate: &option_spec,
-                    value: RefCell::new(Some("100".to_string())),
-                }),
+        let mut model = menu_model(
+            vec![
+                switch("f", "--follow", true),
+                option("t", "--tail=", Some("100")),
             ],
-            max_key_width: 1,
-        }];
+            vec![],
+        );
 
-        assert_eq!(sections[0].entries[0].argument(), Some("--follow"));
-        assert!(sections[0].entries[0].is_active());
-        assert_eq!(sections[0].entries[1].argument(), Some("--tail="));
-        assert!(sections[0].entries[1].is_active());
+        assert_eq!(model.sections[0].entries, 0..2);
+        assert!(matches!(
+            model.keymap.lookup("f"),
+            KeyLookup::Found(EntryId(0))
+        ));
+        assert_eq!(model.argument_index["--follow"], EntryId(0));
+        assert_eq!(model.argument_index["--tail="], EntryId(1));
+        assert!(model.entry(EntryId(0)).is_active());
+        assert!(model.entry(EntryId(1)).is_active());
 
-        let argument_index = create_argument_index(&sections);
-
-        assert_eq!(argument_index["--follow"].key(), "f");
-        assert_eq!(argument_index["--tail="].key(), "t");
-
-        let result = TransientResult::from(&argument_index);
+        let result = model.result();
 
         assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(true)));
         assert_eq!(
@@ -1180,13 +1297,13 @@ mod test {
             Some(&Value::String("100".to_string()))
         );
 
-        sections[0].entries[0].unset();
-        sections[0].entries[1].unset();
+        model.unset(EntryId(0));
+        model.unset(EntryId(1));
 
-        assert!(!sections[0].entries[0].is_active());
-        assert!(!sections[0].entries[1].is_active());
+        assert!(!model.entry(EntryId(0)).is_active());
+        assert!(!model.entry(EntryId(1)).is_active());
 
-        let result = TransientResult::from(&argument_index);
+        let result = model.result();
 
         assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(false)));
         assert_eq!(result.entries.get("--tail="), Some(&Value::Null));
@@ -1199,200 +1316,63 @@ mod test {
             vec!["--author=".to_string(), "--committer=".to_string()],
             vec!["--all".to_string(), "--author=".to_string()],
         ];
-
-        let incompatible = create_incompatible_arguments(&groups);
-
-        assert_eq!(incompatible["--all"], HashSet::from(["--author="]));
-        assert_eq!(
-            incompatible["--author="],
-            HashSet::from(["--all", "--committer="])
+        let model = menu_model(
+            vec![
+                switch("a", "--all", false),
+                option("u", "--author=", None),
+                option("c", "--committer=", None),
+            ],
+            groups,
         );
-        assert_eq!(incompatible["--committer="], HashSet::from(["--author="]));
+
+        assert_eq!(model.incompatible_entries[0], HashSet::from([EntryId(1)]));
+        assert_eq!(
+            model.incompatible_entries[1],
+            HashSet::from([EntryId(0), EntryId(2)])
+        );
+        assert_eq!(model.incompatible_entries[2], HashSet::from([EntryId(1)]));
     }
 
     #[test]
-    fn state_controller_applies_incompatibility_to_switches_and_options() {
-        let all_spec = KTransientSwitch {
-            key: "a".to_string(),
-            default: false,
-            description: "All".to_string(),
-            argument: "--all".to_string(),
-        };
-        let author_option_spec = KTransientOption {
-            key: "u".to_string(),
-            default: None,
-            description: "Author".to_string(),
-            argument: "--author=".to_string(),
-            allow_unset: false,
-            choices: None,
-            input: Some(KTransientOptionInput::Prompt),
-        };
-        let unrelated_spec = KTransientSwitch {
-            key: "p".to_string(),
-            default: false,
-            description: "Patch".to_string(),
-            argument: "--patch".to_string(),
-        };
-        let section_spec = KTransientSection {
-            header: "Arguments".to_string(),
-            entries: vec![],
-        };
-        let sections = vec![TransientSection {
-            delegate: &section_spec,
-            entries: vec![
-                RenderableEntity::Switch(TransientSwitch {
-                    delegate: &all_spec,
-                    value: Cell::new(false),
-                }),
-                RenderableEntity::Opt(TransientOption {
-                    delegate: &author_option_spec,
-                    value: RefCell::new(Some("Ada".to_string())),
-                }),
-                RenderableEntity::Switch(TransientSwitch {
-                    delegate: &unrelated_spec,
-                    value: Cell::new(true),
-                }),
-            ],
-            max_key_width: 1,
-        }];
+    fn menu_model_applies_incompatibility_to_switches_and_options() {
         let groups = vec![vec!["--all".to_string(), "--author=".to_string()]];
-        let entry_state = EntryStateController::new(&sections, &groups);
-        let RenderableEntity::Switch(all_switch) = &sections[0].entries[0] else {
-            panic!("first entry was not a switch");
-        };
+        let mut model = menu_model(
+            vec![
+                switch("a", "--all", false),
+                option("u", "--author=", Some("Ada")),
+                switch("p", "--patch", true),
+            ],
+            groups,
+        );
 
-        entry_state.toggle_switch(all_switch);
+        model.toggle_switch(EntryId(0));
 
-        assert!(sections[0].entries[0].is_active());
-        assert!(!sections[0].entries[1].is_active());
-        assert!(sections[0].entries[2].is_active());
+        assert!(model.entry(EntryId(0)).is_active());
+        assert!(!model.entry(EntryId(1)).is_active());
+        assert!(model.entry(EntryId(2)).is_active());
 
-        let RenderableEntity::Opt(author_option) = &sections[0].entries[1] else {
-            panic!("second entry was not an option");
-        };
+        model.toggle_switch(EntryId(0));
 
-        author_option.value.replace(Some("Ada".to_string()));
-        entry_state.toggle_switch(all_switch);
+        assert!(!model.entry(EntryId(0)).is_active());
+        assert!(!model.entry(EntryId(1)).is_active());
 
-        assert!(!sections[0].entries[0].is_active());
-        assert!(sections[0].entries[1].is_active());
+        model.set_option_value(EntryId(1), Some("Ada".to_string()));
 
-        all_switch.value.set(true);
-        entry_state.set_option_value(author_option, None);
+        assert!(!model.entry(EntryId(0)).is_active());
+        assert!(model.entry(EntryId(1)).is_active());
 
-        assert!(sections[0].entries[0].is_active());
-        assert!(!sections[0].entries[1].is_active());
+        model.set_option_value(EntryId(1), None);
 
-        entry_state.set_option_value(author_option, Some("Grace".to_string()));
+        assert!(!model.entry(EntryId(0)).is_active());
+        assert!(!model.entry(EntryId(1)).is_active());
 
-        assert!(!sections[0].entries[0].is_active());
-        assert!(sections[0].entries[1].is_active());
-        assert!(sections[0].entries[2].is_active());
-    }
-}
+        model.toggle_switch(EntryId(0));
 
-impl From<&ArgumentIndex<'_>> for TransientResult {
-    fn from(value: &ArgumentIndex<'_>) -> Self {
-        let mut entries = HashMap::new();
+        model.set_option_value(EntryId(1), Some("Grace".to_string()));
 
-        for (argument, entry) in value {
-            if let Some(state_value) = entry.state_value() {
-                entries.insert((*argument).to_string(), state_value);
-            }
-        }
-
-        Self { entries }
-    }
-}
-
-fn create_argument_index<'a>(sections: &'a [TransientSection<'a>]) -> ArgumentIndex<'a> {
-    let mut argument_index: ArgumentIndex<'a> = HashMap::new();
-
-    for section in sections {
-        for entity in &section.entries {
-            if let Some(argument) = entity.argument() {
-                argument_index.insert(argument, entity);
-            }
-        }
-    }
-
-    argument_index
-}
-
-fn create_incompatible_arguments<'a>(groups: &'a [Vec<String>]) -> IncompatibleArguments<'a> {
-    let mut incompatible_arguments = IncompatibleArguments::new();
-
-    for group in groups {
-        for argument in group {
-            let incompatible = incompatible_arguments.entry(argument.as_str()).or_default();
-            for other in group {
-                if other != argument {
-                    incompatible.insert(other.as_str());
-                }
-            }
-        }
-    }
-
-    incompatible_arguments
-}
-
-fn create_keymap<'a>(
-    sections: &'a [TransientSection<'a>],
-    keymap: &mut KeyMap<'a, RenderableEntity<'a>>,
-) {
-    for section in sections {
-        for entity in &section.entries {
-            match entity {
-                RenderableEntity::Switch(switch) => {
-                    keymap.insert(&switch.delegate.key, entity);
-                }
-                RenderableEntity::Opt(option) => {
-                    keymap.insert(&option.delegate.key, entity);
-                }
-                RenderableEntity::Action(action) => {
-                    keymap.insert(&action.delegate.key, entity);
-                }
-            }
-        }
-    }
-}
-
-fn create_sections<'a>(args: &'a KTransientMenu, sections: &mut Vec<TransientSection<'a>>) {
-    for k_section in &args.sections {
-        let mut entries = vec![];
-
-        for k_transient_entry in &k_section.entries {
-            let transient_entry = match k_transient_entry {
-                KTransientEntry::TransientSwitch(switch) => {
-                    RenderableEntity::Switch(TransientSwitch {
-                        delegate: switch,
-                        value: Cell::new(switch.default),
-                    })
-                }
-                KTransientEntry::TransientOption(option) => {
-                    RenderableEntity::Opt(TransientOption {
-                        delegate: option,
-                        value: RefCell::new(option.default.clone()),
-                    })
-                }
-                KTransientEntry::TransientAction(action) => {
-                    RenderableEntity::Action(TransientAction { delegate: action })
-                }
-            };
-            entries.push(transient_entry);
-        }
-
-        let max_key_width = entries
-            .iter()
-            .map(|entry| unicode_column_width(display_key(entry.key()), None))
-            .max()
-            .unwrap_or(0);
-
-        sections.push(TransientSection {
-            delegate: k_section,
-            entries,
-            max_key_width,
-        });
+        assert!(!model.entry(EntryId(0)).is_active());
+        assert!(model.entry(EntryId(1)).is_active());
+        assert!(model.entry(EntryId(2)).is_active());
     }
 }
 
@@ -1436,23 +1416,7 @@ pub fn show_transient_menu_overlay(
     let mut buf = BufferedTerminal::new(term)?;
     buf.terminal().no_grab_mouse_in_raw_mode();
 
-    let mut sections = vec![];
-    create_sections(&args, &mut sections);
-
-    let mut keymap = KeyMap::new();
-    create_keymap(&sections, &mut keymap);
-
-    let entry_state = EntryStateController::new(&sections, &args.incompatible);
-
-    let mut state = TransientState::new(
-        &args,
-        window,
-        pane,
-        &sections,
-        &keymap,
-        &entry_state,
-        &mut buf,
-    );
+    let mut state = TransientState::new(args, window, pane, &mut buf);
 
     state.render()?;
     state.run_loop()

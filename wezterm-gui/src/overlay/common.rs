@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use termwiz::surface::Change;
 use wezterm_term::{AttributeChange, Intensity};
 
-pub struct KeyMap<'a, T> {
-    entries: HashMap<&'a str, &'a T>,
+pub struct KeyMap<T> {
+    entries: HashMap<String, T>,
 }
 
-pub enum KeyLookup<'a, T> {
-    Found(&'a T),
+pub enum KeyLookup<T> {
+    Found(T),
     Prefix,
     NotFound,
 }
@@ -23,27 +23,15 @@ pub enum LoopAction {
     SkipRender,
 }
 
-impl<'a, T> KeyMap<'a, T> {
+impl<T> KeyMap<T> {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
         }
     }
 
-    pub fn insert(&mut self, key: &'a str, value: &'a T) {
-        self.entries.insert(key, value);
-    }
-
-    pub fn lookup(&self, typed: &str) -> KeyLookup<'_, T> {
-        if let Some(entry) = self.entries.get(typed) {
-            return KeyLookup::Found(entry);
-        }
-
-        if self.entries.keys().any(|k| k.starts_with(typed)) {
-            return KeyLookup::Prefix;
-        }
-
-        KeyLookup::NotFound
+    pub fn insert(&mut self, key: &str, value: T) {
+        self.entries.insert(key.to_string(), value);
     }
 
     pub fn has_continuation(&self, typed: &str, c: char) -> bool {
@@ -53,7 +41,21 @@ impl<'a, T> KeyMap<'a, T> {
     }
 }
 
-impl<'a, T> Default for KeyMap<'a, T> {
+impl<T: Copy> KeyMap<T> {
+    pub fn lookup(&self, typed: &str) -> KeyLookup<T> {
+        if let Some(entry) = self.entries.get(typed) {
+            return KeyLookup::Found(*entry);
+        }
+
+        if self.entries.keys().any(|k| k.starts_with(typed)) {
+            return KeyLookup::Prefix;
+        }
+
+        KeyLookup::NotFound
+    }
+}
+
+impl<T> Default for KeyMap<T> {
     fn default() -> Self {
         Self::new()
     }
