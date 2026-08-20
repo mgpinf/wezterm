@@ -979,6 +979,15 @@ impl TransientOption {
                     )));
                 };
 
+                let mut seen = HashSet::new();
+                for choice in choices {
+                    if !seen.insert(choice.as_str()) {
+                        return Err(wezterm_dynamic::Error::Message(format!(
+                            "TransientOption choices must not contain duplicate value {choice:?}"
+                        )));
+                    }
+                }
+
                 if let Some(default) = self.default.as_ref() {
                     if !choices.contains(default) {
                         return Err(wezterm_dynamic::Error::Message(format!(
@@ -1758,6 +1767,26 @@ mod test {
         )
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn transient_option_rejects_duplicate_choices() {
+        for input in [
+            None,
+            Some(TransientOptionInput::Select),
+            Some(TransientOptionInput::Cycle),
+        ] {
+            let error = transient_option(input, Some(vec!["date", "date"]), None)
+                .validate()
+                .unwrap_err();
+            match error {
+                wezterm_dynamic::Error::Message(message) => assert_eq!(
+                    message,
+                    "TransientOption choices must not contain duplicate value \"date\""
+                ),
+                error => panic!("unexpected validation error: {error:?}"),
+            }
+        }
     }
 
     #[test]

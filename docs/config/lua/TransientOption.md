@@ -19,7 +19,7 @@ It is a lua object with the following fields:
   table
 * `allow_unset` - optional boolean that controls whether pressing the entry key
   while the option is set can unset it. Defaults to `true`
-* `choices` - optional non-empty list of allowed values
+* `choices` - optional non-empty list of unique allowed values
 * `input` - optional input method:
   * `"prompt"` reads an arbitrary value using a line editor and cannot be used
     with `choices`
