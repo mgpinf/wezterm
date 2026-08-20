@@ -302,7 +302,7 @@ impl SelectorState {
                 )));
                 changes.push(Change::Text(entry.label.clone()));
                 changes.push(Change::AllAttributes(CellAttributes::default()));
-                changes.push(Change::Text(format!(": {}", entry.id)));
+                changes.push(Change::Text(format!(": {}", entry.value)));
                 changes.push(Change::AllAttributes(CellAttributes::default()));
             }
 

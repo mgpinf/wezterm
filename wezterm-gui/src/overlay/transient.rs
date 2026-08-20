@@ -632,7 +632,7 @@ impl TransientState {
                     Change::Attribute(AttributeChange::Foreground(self.colors.context_label_fg)),
                     Change::Text(entry.label.clone()),
                     Change::AllAttributes(CellAttributes::default()),
-                    Change::Text(format!(": {}", entry.id)),
+                    Change::Text(format!(": {}", entry.value)),
                 ]);
             }
 

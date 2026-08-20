@@ -16,7 +16,7 @@ The `TransientContext` struct is a lua object with the following fields:
 
 `TransientContextEntry` struct is a lua object with the following fields:
 * `label` - key for the entry
-* `id` - value for the entry
+* `value` - value for the entry
 
 
 Example of `TransientContext` object:
@@ -25,8 +25,8 @@ Example of `TransientContext` object:
 local context = {
   header = 'Context header',
   entries = {
-    { label = 'context1', id = 'val1' },
-    { label = 'context2', id = 'val2' },
+    { label = 'context1', value = 'val1' },
+    { label = 'context2', value = 'val2' },
   },
 }
 ```

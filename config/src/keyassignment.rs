@@ -1100,7 +1100,7 @@ pub struct TransientSection {
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct TransientContextEntry {
     pub label: String,
-    pub id: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
