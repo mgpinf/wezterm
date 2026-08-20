@@ -13,8 +13,7 @@ key is the `argument` string from one of the following entries:
 * [TransientSwitch](./TransientSwitch.md) - value is `true` or `false`
 * [TransientOption](./TransientOption.md) - value is the selected string, or `nil`
 
-If multiple entries use the same `argument`, the value from the last matching
-entry in menu order is returned.
+Each switch and option in a menu must use a unique `argument`.
 
 Example of `TransientResult` object:
 ```lua

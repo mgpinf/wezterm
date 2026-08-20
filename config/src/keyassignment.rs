@@ -1028,6 +1028,14 @@ impl TransientEntry {
             Self::TransientAction(action) => &action.key,
         }
     }
+
+    fn argument(&self) -> Option<&str> {
+        match self {
+            Self::TransientSwitch(switch) => Some(&switch.argument),
+            Self::TransientOption(option) => Some(&option.argument),
+            Self::TransientAction(_) => None,
+        }
+    }
 }
 
 impl FromDynamic for TransientEntry {
@@ -1157,6 +1165,28 @@ impl TransientMenu {
                 }
 
                 keys.push(key);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_entry_arguments(
+        sections: &[TransientSection],
+    ) -> Result<(), wezterm_dynamic::Error> {
+        let mut arguments = HashSet::new();
+
+        for section in sections {
+            for entry in &section.entries {
+                let Some(argument) = entry.argument() else {
+                    continue;
+                };
+
+                if !arguments.insert(argument) {
+                    return Err(wezterm_dynamic::Error::Message(format!(
+                        "TransientMenu argument {argument:?} is used by more than one entry"
+                    )));
+                }
             }
         }
 
@@ -1332,6 +1362,7 @@ impl FromDynamic for TransientMenu {
         };
 
         Self::validate_entry_keys(&sections)?;
+        Self::validate_entry_arguments(&sections)?;
         Self::validate_incompatible_arguments(&sections, &incompatible)?;
 
         Ok(Self {
@@ -1688,8 +1719,16 @@ mod test {
     }
 
     fn transient_option_entry(argument: &str, default: Option<&str>) -> TransientEntry {
+        transient_option_entry_with_key(argument, argument, default)
+    }
+
+    fn transient_option_entry_with_key(
+        key: &str,
+        argument: &str,
+        default: Option<&str>,
+    ) -> TransientEntry {
         TransientEntry::TransientOption(TransientOption {
-            key: argument.to_string(),
+            key: key.to_string(),
             default: default.map(str::to_string),
             description: argument.to_string(),
             argument: argument.to_string(),
@@ -1885,7 +1924,6 @@ mod test {
     fn transient_menu_accepts_repeated_and_overlapping_incompatible_groups() {
         let sections = transient_section(vec![
             transient_switch_entry("--all", false),
-            transient_switch_entry("--all", false),
             transient_option_entry("--author=", None),
             transient_option_entry("--committer=", None),
         ]);
@@ -1900,6 +1938,29 @@ mod test {
         ];
 
         assert!(TransientMenu::validate_incompatible_arguments(&sections, &groups).is_ok());
+    }
+
+    #[test]
+    fn transient_menu_rejects_duplicate_arguments() {
+        let sections = vec![
+            TransientSection {
+                header: "Switches".to_string(),
+                entries: vec![transient_switch_entry_with_key("a", "--author=", false)],
+            },
+            TransientSection {
+                header: "Options".to_string(),
+                entries: vec![transient_option_entry_with_key("u", "--author=", None)],
+            },
+        ];
+
+        let error = TransientMenu::validate_entry_arguments(&sections).unwrap_err();
+        match error {
+            wezterm_dynamic::Error::Message(message) => assert_eq!(
+                message,
+                "TransientMenu argument \"--author=\" is used by more than one entry"
+            ),
+            error => panic!("unexpected validation error: {error:?}"),
+        }
     }
 
     #[test]

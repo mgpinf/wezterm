@@ -332,8 +332,8 @@ enum RenderableEntity<'a> {
     Action(TransientAction<'a>),
 }
 
-/// Maps an argument to every state-bearing entry that uses it, in menu order.
-type ArgumentIndex<'a> = HashMap<&'a str, Vec<&'a RenderableEntity<'a>>>;
+/// Maps each unique argument to its state-bearing entry.
+type ArgumentIndex<'a> = HashMap<&'a str, &'a RenderableEntity<'a>>;
 
 /// Maps each argument to the other arguments that it makes inactive.
 type IncompatibleArguments<'a> = HashMap<&'a str, HashSet<&'a str>>;
@@ -441,10 +441,8 @@ impl<'a> EntryStateController<'a> {
         };
 
         for incompatible_argument in incompatible {
-            if let Some(entries) = self.argument_index.get(*incompatible_argument) {
-                for entry in entries {
-                    entry.unset();
-                }
+            if let Some(entry) = self.argument_index.get(*incompatible_argument) {
+                entry.unset();
             }
         }
     }
@@ -1171,8 +1169,8 @@ mod test {
 
         let argument_index = create_argument_index(&sections);
 
-        assert_eq!(argument_index["--follow"].len(), 1);
-        assert_eq!(argument_index["--tail="].len(), 1);
+        assert_eq!(argument_index["--follow"].key(), "f");
+        assert_eq!(argument_index["--tail="].key(), "t");
 
         let result = TransientResult::from(&argument_index);
 
@@ -1192,55 +1190,6 @@ mod test {
 
         assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(false)));
         assert_eq!(result.entries.get("--tail="), Some(&Value::Null));
-    }
-
-    #[test]
-    fn argument_index_preserves_duplicate_arguments() {
-        let first_switch_spec = KTransientSwitch {
-            key: "f".to_string(),
-            default: false,
-            description: "First".to_string(),
-            argument: "--follow".to_string(),
-        };
-        let second_switch_spec = KTransientSwitch {
-            key: "F".to_string(),
-            default: false,
-            description: "Second".to_string(),
-            argument: "--follow".to_string(),
-        };
-        let section_spec = KTransientSection {
-            header: "Arguments".to_string(),
-            entries: vec![],
-        };
-        let sections = vec![TransientSection {
-            delegate: &section_spec,
-            entries: vec![
-                RenderableEntity::Switch(TransientSwitch {
-                    delegate: &first_switch_spec,
-                    value: Cell::new(true),
-                }),
-                RenderableEntity::Switch(TransientSwitch {
-                    delegate: &second_switch_spec,
-                    value: Cell::new(false),
-                }),
-            ],
-            max_key_width: 1,
-        }];
-
-        let argument_index = create_argument_index(&sections);
-        let indexed_entries = &argument_index["--follow"];
-
-        assert_eq!(indexed_entries.len(), 2);
-        assert_eq!(
-            indexed_entries
-                .iter()
-                .map(|entry| entry.key())
-                .collect::<Vec<_>>(),
-            vec!["f", "F"]
-        );
-
-        let result = TransientResult::from(&argument_index);
-        assert_eq!(result.entries.get("--follow"), Some(&Value::Bool(false)));
     }
 
     #[test]
@@ -1278,12 +1227,6 @@ mod test {
             choices: None,
             input: Some(KTransientOptionInput::Prompt),
         };
-        let author_switch_spec = KTransientSwitch {
-            key: "U".to_string(),
-            default: false,
-            description: "Any author".to_string(),
-            argument: "--author=".to_string(),
-        };
         let unrelated_spec = KTransientSwitch {
             key: "p".to_string(),
             default: false,
@@ -1306,10 +1249,6 @@ mod test {
                     value: RefCell::new(Some("Ada".to_string())),
                 }),
                 RenderableEntity::Switch(TransientSwitch {
-                    delegate: &author_switch_spec,
-                    value: Cell::new(true),
-                }),
-                RenderableEntity::Switch(TransientSwitch {
                     delegate: &unrelated_spec,
                     value: Cell::new(true),
                 }),
@@ -1326,8 +1265,7 @@ mod test {
 
         assert!(sections[0].entries[0].is_active());
         assert!(!sections[0].entries[1].is_active());
-        assert!(!sections[0].entries[2].is_active());
-        assert!(sections[0].entries[3].is_active());
+        assert!(sections[0].entries[2].is_active());
 
         let RenderableEntity::Opt(author_option) = &sections[0].entries[1] else {
             panic!("second entry was not an option");
@@ -1349,8 +1287,7 @@ mod test {
 
         assert!(!sections[0].entries[0].is_active());
         assert!(sections[0].entries[1].is_active());
-        assert!(!sections[0].entries[2].is_active());
-        assert!(sections[0].entries[3].is_active());
+        assert!(sections[0].entries[2].is_active());
     }
 }
 
@@ -1358,9 +1295,8 @@ impl From<&ArgumentIndex<'_>> for TransientResult {
     fn from(value: &ArgumentIndex<'_>) -> Self {
         let mut entries = HashMap::new();
 
-        for (argument, indexed_entries) in value {
-            if let Some(state_value) = indexed_entries.last().and_then(|entry| entry.state_value())
-            {
+        for (argument, entry) in value {
+            if let Some(state_value) = entry.state_value() {
                 entries.insert((*argument).to_string(), state_value);
             }
         }
@@ -1375,7 +1311,7 @@ fn create_argument_index<'a>(sections: &'a [TransientSection<'a>]) -> ArgumentIn
     for section in sections {
         for entity in &section.entries {
             if let Some(argument) = entity.argument() {
-                argument_index.entry(argument).or_default().push(entity);
+                argument_index.insert(argument, entity);
             }
         }
     }

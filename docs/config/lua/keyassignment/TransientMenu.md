@@ -24,6 +24,8 @@ Entry keys must be non-empty and unique across the menu. One key cannot be a
 prefix of another: for example, `g` and `gg` cannot both be used because `g`
 would trigger immediately and make `gg` unreachable.
 
+Each switch and option in the menu must use a unique `argument`.
+
 `TransientMenu` accepts the following fields:
 
 * `description` - text to display at the top of the menu
@@ -202,10 +204,8 @@ are ignored when combining them. Each group must contain at least two distinct
 arguments, and every argument must belong to a switch or option in the menu.
 Two incompatible arguments cannot both be active by default.
 
-If multiple entries use the same incompatible argument, all of those entries
-are unset. This forced unsetting also applies to options with
-`allow_unset = false`; `allow_unset` only controls whether the option's own key
-can clear its value.
+Forced unsetting applies to options with `allow_unset = false`; `allow_unset`
+only controls whether the option's own key can clear its value.
 
 ## Cycling through option values
 
