@@ -2747,6 +2747,7 @@ mod test {
         let panes = tab.iter_panes();
         assert_eq!(1, panes.len());
         assert_eq!(false, panes[0].is_floating);
+        assert!(!tab.has_floating_pane());
 
         let floating_pane = FakePane::new(2, size);
         tab.assign_floating_pane(&floating_pane, OverlayDimensions::default(), false, None);
@@ -2755,12 +2756,14 @@ mod test {
         assert_eq!(1, panes.len());
         assert_eq!(true, panes[0].is_floating);
         assert_eq!(2, panes[0].pane.pane_id());
+        assert!(tab.has_floating_pane());
 
         tab.remove_pane(2);
         let panes = tab.iter_panes();
         assert_eq!(1, panes.len());
         assert_eq!(false, panes[0].is_floating);
         assert_eq!(1, panes[0].pane.pane_id());
+        assert!(!tab.has_floating_pane());
     }
 
     #[test]

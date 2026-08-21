@@ -1,17 +1,22 @@
 ---
 tags:
-  - overlay
+  - float
 ---
 
 # `CommandRunner`
 
 {{since('nightly')}}
 
-Runs a list of non-interactive commands in a dedicated overlay with a list
+Runs a list of non-interactive commands in a dedicated floating pane with a list
 view and a per-command output view. This is intended for batch-style commands
 and viewing streaming logs, rather than interactive programs. Each command is
-started once when the overlay opens, and you can rerun or kill individual
+started once when the floating pane opens, and you can rerun or kill individual
 commands from the UI.
+
+A tab can have only one floating pane. If the active tab already has one,
+`CommandRunner` does nothing. Modal overlays can be opened above the command
+runner without stopping it; the command runner is visible again when the modal
+overlay closes.
 
 ```lua
 local wezterm = require 'wezterm'
@@ -58,11 +63,11 @@ return {
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `commands` | list | n/a | List of `CommandRunnerCommand` entries |
-| `auto_close_on_success` | boolean | `false` | Close the overlay when all commands finish successfully |
+| `auto_close_on_success` | boolean | `false` | Close the floating pane when all commands finish successfully |
 | `alphabet` | string | `"1234567890abcdefhilmnopstuvwxyz"` | Characters used to build quick-select labels in the list view |
-| `dimensions` | [OverlayDimensions](../OverlayDimensions.md) | full tab | Size of the command runner overlay |
-| `border` | boolean | `false` | Draw a single renderer-owned border around a bounded overlay |
-| `border_color` | `ColorSpec` | overlay foreground color | Color of the renderer-owned border; for example, `{ AnsiColor = 'Blue' }` or `{ Color = '#7aa2f7' }` |
+| `dimensions` | [OverlayDimensions](../OverlayDimensions.md) | full tab | Size of the command runner floating pane |
+| `border` | boolean | `false` | Draw a single renderer-owned border around a bounded floating pane |
+| `border_color` | `ColorSpec` | floating pane foreground color | Color of the renderer-owned border; for example, `{ AnsiColor = 'Blue' }` or `{ Color = '#7aa2f7' }` |
 
 ## CommandRunnerCommand
 
@@ -100,7 +105,7 @@ local cmd = {
 
 ## Keys
 
-The overlay is modal with a list view, output view, and filter input.
+The command runner has a list view, output view, and filter input.
 
 List view:
 * <kbd>j</kbd>/<kbd>k</kbd> or arrows: move selection

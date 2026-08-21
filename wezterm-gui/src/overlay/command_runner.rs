@@ -707,7 +707,7 @@ impl SearchMode {
     }
 }
 
-/// View mode for the overlay
+/// View mode for the command runner
 #[derive(Debug, Clone)]
 enum ViewMode {
     List,
@@ -759,7 +759,7 @@ struct WrappedRowsCache {
     rows: Rc<Vec<WrappedSegment>>,
 }
 
-/// Main state for the command runner overlay
+/// Main state for the command runner applet
 struct CommandRunnerState {
     commands: Vec<CommandState>,
     view_mode: ViewMode,
@@ -2776,6 +2776,18 @@ enum OutputMessage {
     Started { idx: usize },
 }
 
+/// Ensures that closing the applet also terminates commands that are still
+/// running, including when terminal I/O returns an error.
+struct ChildProcesses(Vec<Option<Child>>);
+
+impl Drop for ChildProcesses {
+    fn drop(&mut self) {
+        for child in self.0.iter_mut().flatten() {
+            let _ = child.kill();
+        }
+    }
+}
+
 /// Spawn a command and return channels for output
 async fn spawn_command(
     idx: usize,
@@ -2850,8 +2862,8 @@ async fn spawn_command(
     Ok(child)
 }
 
-/// Main entry point for the command runner overlay
-pub fn show_command_runner_overlay(
+/// Main entry point for the command runner applet
+pub fn run_command_runner(
     mut term: TermWizTerminal,
     args: CommandRunner,
     window: Window,
@@ -2868,7 +2880,7 @@ pub fn show_command_runner_overlay(
         smol::channel::bounded(256);
 
     // Store child processes
-    let mut children: Vec<Option<Child>> = (0..state.commands.len()).map(|_| None).collect();
+    let mut children = ChildProcesses((0..state.commands.len()).map(|_| None).collect());
 
     // Spawn all commands initially
     for (idx, cmd) in state.commands.iter_mut().enumerate() {
@@ -2881,7 +2893,7 @@ pub fn show_command_runner_overlay(
         let child_result = smol::block_on(spawn_command(idx, &config, tx));
         match child_result {
             Ok(child) => {
-                children[idx] = Some(child);
+                children.0[idx] = Some(child);
             }
             Err(e) => {
                 cmd.status = CommandStatus::Failed(-1);
@@ -2932,7 +2944,7 @@ pub fn show_command_runner_overlay(
         }
 
         // Check for finished processes
-        for (idx, child_opt) in children.iter_mut().enumerate() {
+        for (idx, child_opt) in children.0.iter_mut().enumerate() {
             if let Some(child) = child_opt {
                 match child.try_status() {
                     Ok(Some(status)) => {
@@ -2973,7 +2985,7 @@ pub fn show_command_runner_overlay(
         while let Ok(msg) = process_rx.try_recv() {
             match msg {
                 ProcessMessage::Kill(idx) => {
-                    if let Some(Some(child)) = children.get_mut(idx) {
+                    if let Some(Some(child)) = children.0.get_mut(idx) {
                         let _ = child.kill();
                         if let Some(cmd) = state.commands.get_mut(idx) {
                             cmd.status = CommandStatus::Killed;
@@ -2984,7 +2996,7 @@ pub fn show_command_runner_overlay(
                 }
                 ProcessMessage::Rerun(idx) => {
                     // Kill existing if running
-                    if let Some(Some(child)) = children.get_mut(idx) {
+                    if let Some(Some(child)) = children.0.get_mut(idx) {
                         let _ = child.kill();
                     }
 
@@ -3000,7 +3012,7 @@ pub fn show_command_runner_overlay(
                         let child_result = smol::block_on(spawn_command(idx, &config, tx));
                         match child_result {
                             Ok(child) => {
-                                children[idx] = Some(child);
+                                children.0[idx] = Some(child);
                             }
                             Err(e) => {
                                 cmd.status = CommandStatus::Failed(-1);
@@ -3037,11 +3049,6 @@ pub fn show_command_runner_overlay(
                 // Timeout, continue
             }
         }
-    }
-
-    // Kill all running processes
-    for child in children.iter_mut().flatten() {
-        let _ = child.kill();
     }
 
     Ok(())

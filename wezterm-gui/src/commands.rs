@@ -826,8 +826,9 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             icon: None,
         },
         CommandRunner(_) => CommandDef {
-            brief: "Run multiple commands in overlay".into(),
-            doc: "Opens an overlay to run and monitor multiple non-interactive commands".into(),
+            brief: "Run multiple commands in a floating pane".into(),
+            doc: "Opens a floating pane to run and monitor multiple non-interactive commands"
+                .into(),
             keys: vec![],
             args: &[ArgType::ActiveWindow],
             menubar: &[],

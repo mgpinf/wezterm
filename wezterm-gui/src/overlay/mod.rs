@@ -126,6 +126,42 @@ where
     (tw_tab, Box::pin(future))
 }
 
+/// Start an in-process terminal applet that will be hosted in a floating pane.
+///
+/// Unlike a tab overlay, a floating applet remains alive when a modal overlay
+/// is activated above it. The caller is responsible for assigning the returned
+/// pane to the tab's floating slot.
+pub fn start_floating_applet<T, F>(
+    term_window: &TermWindow,
+    tab: &Arc<Tab>,
+    dimensions: OverlayDimensions,
+    func: F,
+) -> (
+    Arc<dyn Pane>,
+    Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>>>>,
+)
+where
+    T: Send + 'static,
+    F: Send + 'static + FnOnce(TabId, TermWizTerminal) -> anyhow::Result<T>,
+{
+    let tab_id = tab.tab_id();
+    let applet_size = resolve_overlay_dimensions(tab.get_size(), dimensions).size;
+    let term_config: Arc<dyn TerminalConfiguration + Send + Sync> =
+        Arc::new(config::TermConfig::with_config(term_window.config.clone()));
+    let (tw_term, tw_tab) = allocate(applet_size, term_config);
+
+    let window = term_window.window.clone().unwrap();
+    let pane_id = tw_tab.pane_id();
+
+    let future = promise::spawn::spawn_into_new_thread(move || {
+        let res = func(tab_id, tw_term);
+        TermWindow::schedule_remove_floating_pane(window, pane_id);
+        res
+    });
+
+    (tw_tab, Box::pin(future))
+}
+
 pub fn start_overlay_pane<T, F>(
     term_window: &TermWindow,
     pane: &Arc<dyn Pane>,

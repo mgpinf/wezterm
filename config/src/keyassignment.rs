@@ -784,7 +784,7 @@ fn default_message() -> String {
     "🛑 Really continue?".to_string()
 }
 
-/// A single command to run in the CommandRunner overlay.
+/// A single command to run in the CommandRunner floating pane.
 /// Uses similar syntax to `wezterm.run_child_process` where `args` contains
 /// the command as the first element followed by its arguments.
 #[derive(Debug, Clone, PartialEq, ToDynamic)]
@@ -863,7 +863,7 @@ impl FromDynamic for CommandRunnerCommand {
     }
 }
 
-/// Configuration for the CommandRunner overlay
+/// Configuration for the CommandRunner floating pane
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct CommandRunner {
     pub commands: Vec<CommandRunnerCommand>,

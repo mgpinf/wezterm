@@ -6,9 +6,9 @@ use crate::frontend::{front_end, try_front_end};
 use crate::inputmap::InputMap;
 use crate::overlay::{
     confirm_close_pane, confirm_close_tab, confirm_close_window, confirm_quit_program, launcher,
-    resolve_overlay_dimensions, start_overlay, start_overlay_pane, start_overlay_with_dimensions,
-    ActivateMatchPosition, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
-    QuickSelectOverlay,
+    resolve_overlay_dimensions, start_floating_applet, start_overlay, start_overlay_pane,
+    start_overlay_with_dimensions, ActivateMatchPosition, CopyModeParams, CopyOverlay,
+    LauncherArgs, LauncherFlags, QuickSelectOverlay,
 };
 use crate::resize_increment_calculator::ResizeIncrementCalculator;
 use crate::scripting::guiwin::GuiWin;
@@ -146,6 +146,7 @@ pub enum TermWindowNotif {
         tab_id: TabId,
         pane_id: Option<PaneId>,
     },
+    RemoveFloatingPane(PaneId),
     MuxNotification(MuxNotification),
     EmitStatusUpdate,
     Apply(Box<dyn FnOnce(&mut TermWindow) + Send + Sync>),
@@ -1203,6 +1204,9 @@ impl TermWindow {
             }
             TermWindowNotif::CancelOverlayForTab { tab_id, pane_id } => {
                 self.cancel_overlay_for_tab(tab_id, pane_id);
+            }
+            TermWindowNotif::RemoveFloatingPane(pane_id) => {
+                Mux::get().remove_pane(pane_id);
             }
             TermWindowNotif::MuxNotification(n) => match n {
                 MuxNotification::Alert {
@@ -2381,25 +2385,26 @@ impl TermWindow {
             None => return,
         };
 
+        if tab.has_floating_pane() {
+            log::debug!(
+                "tab {} already has a floating pane, not starting CommandRunner",
+                tab.tab_id()
+            );
+            return;
+        }
+
         let dimensions = args.dimensions;
         let border = args.border;
         let border_color = args.border_color;
         let args = args.clone();
 
-        let args = args.clone();
         let window = self.window.clone().unwrap();
 
-        let (overlay, future) =
-            start_overlay_with_dimensions(self, &tab, dimensions, move |_tab_id, term| {
-                crate::overlay::command_runner::show_command_runner_overlay(term, args, window)
+        let (runner, future) =
+            start_floating_applet(self, &tab, dimensions, move |_tab_id, term| {
+                crate::overlay::command_runner::run_command_runner(term, args, window)
             });
-        self.assign_overlay_with_dimensions_and_border(
-            tab.tab_id(),
-            overlay,
-            dimensions,
-            border,
-            border_color,
-        );
+        tab.assign_floating_pane(&runner, dimensions, border, border_color);
         promise::spawn::spawn(future).detach();
     }
 
@@ -3857,6 +3862,10 @@ impl TermWindow {
 
     pub fn schedule_cancel_overlay(window: Window, tab_id: TabId, pane_id: Option<PaneId>) {
         window.notify(TermWindowNotif::CancelOverlayForTab { tab_id, pane_id });
+    }
+
+    pub fn schedule_remove_floating_pane(window: Window, pane_id: PaneId) {
+        window.notify(TermWindowNotif::RemoveFloatingPane(pane_id));
     }
 
     fn cancel_overlay_for_pane(&mut self, pane_id: PaneId) {
