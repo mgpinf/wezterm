@@ -29,6 +29,8 @@ const OUTPUT_DRAIN_TIME_BUDGET: Duration = Duration::from_millis(4);
 
 /// Cap expensive wrapping and terminal rendering while logs are streaming.
 const RENDER_INTERVAL: Duration = Duration::from_millis(33);
+/// Active filters rescan the retained buffer, so update them at a lower cadence.
+const FILTER_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const ELAPSED_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_INPUT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -242,6 +244,28 @@ fn match_ranges_in_cells(
     highlights
 }
 
+fn filtered_line_indices(lines: &VecDeque<String>, regex: &Regex, context: usize) -> Vec<usize> {
+    let mut include = vec![false; lines.len()];
+    for (line_idx, line) in lines.iter().enumerate() {
+        if regex.is_match(line) {
+            let start = line_idx.saturating_sub(context);
+            let end = line_idx
+                .saturating_add(context)
+                .saturating_add(1)
+                .min(lines.len());
+            for included in &mut include[start..end] {
+                *included = true;
+            }
+        }
+    }
+
+    include
+        .into_iter()
+        .enumerate()
+        .filter_map(|(line_idx, included)| included.then_some(line_idx))
+        .collect()
+}
+
 fn wrap_line_with_highlights(
     line: &str,
     highlights: &[HighlightRange],
@@ -408,26 +432,6 @@ fn push_text_with_highlights(
     }
 }
 
-fn wrapped_row_count(line: &str, max_width: usize) -> usize {
-    if max_width == 0 {
-        return 1;
-    }
-
-    let mut count = 1;
-    let mut current_width = 0;
-
-    for ch in line.chars() {
-        let ch_width = char_column_width(ch);
-        if current_width + ch_width > max_width && current_width > 0 {
-            count += 1;
-            current_width = 0;
-        }
-        current_width += ch_width;
-    }
-
-    count
-}
-
 /// Helper for rendering segments with optional colors and width limiting.
 /// This avoids duplicating the push_segment closure pattern across render methods.
 struct SegmentWriter<'a> {
@@ -524,6 +528,8 @@ struct CommandState {
     pending_line: Vec<u8>,
     output_size: usize,
     output_generation: u64,
+    first_line_sequence: u64,
+    next_line_sequence: u64,
     start_time: Option<Instant>,
     end_time: Option<Instant>,
 }
@@ -538,6 +544,8 @@ impl CommandState {
             pending_line: Vec::new(),
             output_size: 0,
             output_generation: 0,
+            first_line_sequence: 0,
+            next_line_sequence: 0,
             start_time: None,
             end_time: None,
         }
@@ -581,6 +589,7 @@ impl CommandState {
         self.pending_line.clear();
         self.output_size = 0;
         self.output_generation = self.output_generation.wrapping_add(1);
+        self.first_line_sequence = self.next_line_sequence;
     }
 
     fn append_output(&mut self, data: &[u8]) {
@@ -618,6 +627,7 @@ impl CommandState {
             self.line_byte_lengths.clear();
             self.output_lines.push_back(Self::decode_line(first));
             self.line_byte_lengths.push_back(first.len());
+            self.next_line_sequence = self.next_line_sequence.wrapping_add(1);
         } else {
             if let Some(last) = self.output_lines.back_mut() {
                 *last = Self::decode_line(first);
@@ -635,6 +645,7 @@ impl CommandState {
             saw_newline = true;
             self.output_lines.push_back(Self::decode_line(seg));
             self.line_byte_lengths.push_back(seg.len());
+            self.next_line_sequence = self.next_line_sequence.wrapping_add(1);
             last_seg = seg;
         }
 
@@ -654,6 +665,7 @@ impl CommandState {
             self.output_lines.pop_front();
             self.line_byte_lengths.pop_front();
             self.output_size = self.output_size.saturating_sub(line_with_newline);
+            self.first_line_sequence = self.first_line_sequence.wrapping_add(1);
         }
 
         if self.output_size <= MAX_OUTPUT_SIZE {
@@ -767,7 +779,84 @@ struct WrappedRowsCache {
     output_generation: u64,
     filtered_generation: u64,
     regex_pattern: Option<String>,
+    first_line_sequence: Option<u64>,
+    line_row_counts: Vec<usize>,
     rows: Rc<Vec<WrappedSegment>>,
+}
+
+fn update_unfiltered_wrapped_cache(
+    command: &CommandState,
+    cache: &mut WrappedRowsCache,
+    command_idx: usize,
+    max_width: usize,
+    output_generation: u64,
+) -> Option<Rc<Vec<WrappedSegment>>> {
+    if cache.command_idx != command_idx
+        || cache.max_width != max_width
+        || cache.filter_active
+        || cache.regex_pattern.is_some()
+    {
+        return None;
+    }
+
+    let cached_first_sequence = cache.first_line_sequence?;
+    let removed_line_count = command
+        .first_line_sequence
+        .checked_sub(cached_first_sequence)?;
+    if removed_line_count > cache.line_row_counts.len() as u64 {
+        return None;
+    }
+    let removed_line_count = removed_line_count as usize;
+    let retained_cached_line_count = cache
+        .line_row_counts
+        .len()
+        .saturating_sub(removed_line_count);
+    if retained_cached_line_count > command.output_lines.len() {
+        return None;
+    }
+
+    let removed_row_count = cache
+        .line_row_counts
+        .iter()
+        .take(removed_line_count)
+        .copied()
+        .sum::<usize>();
+    cache.line_row_counts.drain(..removed_line_count);
+
+    let rows = Rc::make_mut(&mut cache.rows);
+    rows.drain(..removed_row_count);
+
+    // The last retained line is mutable until another newline arrives.
+    // Re-wrap it together with lines appended since the previous frame.
+    if let Some(last_row_count) = cache.line_row_counts.pop() {
+        rows.truncate(rows.len().saturating_sub(last_row_count));
+    }
+
+    let reused_line_count = cache.line_row_counts.len();
+    for (line_idx, line) in command
+        .output_lines
+        .iter()
+        .enumerate()
+        .skip(reused_line_count)
+    {
+        let segments = wrap_line_with_highlights(line, &[], max_width, Some(line_idx + 1));
+        cache.line_row_counts.push(segments.len());
+        rows.extend(segments);
+    }
+
+    // Retained line numbers are relative to the current buffer, so a front
+    // trim only requires updating the first segment of each line.
+    let mut row_idx = 0;
+    for (line_idx, row_count) in cache.line_row_counts.iter().copied().enumerate() {
+        if let Some(segment) = rows.get_mut(row_idx) {
+            segment.line_number = Some(line_idx + 1);
+        }
+        row_idx = row_idx.saturating_add(row_count);
+    }
+
+    cache.output_generation = output_generation;
+    cache.first_line_sequence = Some(command.first_line_sequence);
+    Some(Rc::clone(&cache.rows))
 }
 
 /// Main state for the command runner applet
@@ -776,8 +865,8 @@ struct CommandRunnerState {
     view_mode: ViewMode,
     list_selection: usize,
     scroll_offset: usize,
-    filtered_lines: Vec<(usize, String)>, // (original_line_idx, line)
-    active_filter: Option<ActiveFilter>,  // Persists filter params for streaming updates
+    filtered_lines: Vec<usize>, // Original indexes into the current command's retained lines
+    active_filter: Option<ActiveFilter>, // Persists filter params for streaming updates
     filtered_generation: u64,
     wrapped_rows_cache: Option<WrappedRowsCache>,
     regex_cache: Option<RegexCache>,
@@ -879,7 +968,7 @@ impl CommandRunnerState {
 // ============================================================================
 
 impl CommandRunnerState {
-    fn output_line_count(&self) -> usize {
+    fn output_line_count(&mut self) -> usize {
         match self.current_command_idx() {
             Some(idx) => self.output_wrapped_row_count(idx),
             None => 0,
@@ -918,10 +1007,7 @@ impl CommandRunnerState {
 
     fn line_number_width_for(&self, command_idx: usize) -> usize {
         let max_line_idx = if !self.filtered_lines.is_empty() {
-            self.filtered_lines
-                .iter()
-                .map(|(line_idx, _)| *line_idx)
-                .max()
+            self.filtered_lines.iter().copied().max()
         } else {
             self.commands
                 .get(command_idx)
@@ -1021,28 +1107,51 @@ impl CommandRunnerState {
             if cache.command_idx == command_idx
                 && cache.max_width == max_width
                 && cache.filter_active == filter_active
-                && cache.output_generation == output_generation
-                && cache.filtered_generation == self.filtered_generation
+                && (filter_active || cache.output_generation == output_generation)
+                && (!filter_active || cache.filtered_generation == self.filtered_generation)
                 && cache.regex_pattern.as_deref() == regex_pattern.as_deref()
             {
                 return Rc::clone(&cache.rows);
             }
         }
 
+        if !filter_active && regex_pattern.is_none() {
+            if let (Some(command), Some(cache)) = (
+                self.commands.get(command_idx),
+                self.wrapped_rows_cache.as_mut(),
+            ) {
+                if let Some(rows) = update_unfiltered_wrapped_cache(
+                    command,
+                    cache,
+                    command_idx,
+                    max_width,
+                    output_generation,
+                ) {
+                    return rows;
+                }
+            }
+        }
+
         let mut rows = Vec::new();
+        let mut line_row_counts = Vec::new();
         let mut next_match_id = 0;
         if filter_active {
-            for (line_idx, line) in &self.filtered_lines {
-                let line_number = Some(*line_idx + 1);
-                let highlights = regex
-                    .map(|regex| match_ranges_in_cells(line, regex, &mut next_match_id))
-                    .unwrap_or_default();
-                rows.extend(wrap_line_with_highlights(
-                    line,
-                    &highlights,
-                    max_width,
-                    line_number,
-                ));
+            if let Some(cmd) = self.commands.get(command_idx) {
+                for line_idx in &self.filtered_lines {
+                    let Some(line) = cmd.output_lines.get(*line_idx) else {
+                        continue;
+                    };
+                    let line_number = Some(*line_idx + 1);
+                    let highlights = regex
+                        .map(|regex| match_ranges_in_cells(line, regex, &mut next_match_id))
+                        .unwrap_or_default();
+                    rows.extend(wrap_line_with_highlights(
+                        line,
+                        &highlights,
+                        max_width,
+                        line_number,
+                    ));
+                }
             }
         } else if let Some(cmd) = self.commands.get(command_idx) {
             for (line_idx, line) in cmd.output_lines.iter().enumerate() {
@@ -1050,15 +1159,19 @@ impl CommandRunnerState {
                 let highlights = regex
                     .map(|regex| match_ranges_in_cells(line, regex, &mut next_match_id))
                     .unwrap_or_default();
-                rows.extend(wrap_line_with_highlights(
-                    line,
-                    &highlights,
-                    max_width,
-                    line_number,
-                ));
+                let segments = wrap_line_with_highlights(line, &highlights, max_width, line_number);
+                line_row_counts.push(segments.len());
+                rows.extend(segments);
             }
         }
 
+        let first_line_sequence = if filter_active {
+            None
+        } else {
+            self.commands
+                .get(command_idx)
+                .map(|cmd| cmd.first_line_sequence)
+        };
         let rows = Rc::new(rows);
         self.wrapped_rows_cache = Some(WrappedRowsCache {
             command_idx,
@@ -1067,30 +1180,16 @@ impl CommandRunnerState {
             output_generation,
             filtered_generation: self.filtered_generation,
             regex_pattern,
+            first_line_sequence,
+            line_row_counts,
             rows: Rc::clone(&rows),
         });
         rows
     }
 
-    fn output_wrapped_row_count(&self, command_idx: usize) -> usize {
-        let max_width = self.output_content_width_for(command_idx);
-        let mut count = 0;
-        let filter_active = self.filter_active_for(command_idx);
-
-        if filter_active {
-            if self.filtered_lines.is_empty() {
-                return 0;
-            }
-            for (_, line) in &self.filtered_lines {
-                count += wrapped_row_count(line, max_width);
-            }
-        } else if let Some(cmd) = self.commands.get(command_idx) {
-            for line in &cmd.output_lines {
-                count += wrapped_row_count(line, max_width);
-            }
-        }
-
-        count
+    fn output_wrapped_row_count(&mut self, command_idx: usize) -> usize {
+        let regex = self.active_search_regex_for(command_idx);
+        self.output_wrapped_rows(command_idx, regex.as_ref()).len()
     }
 }
 
@@ -1363,15 +1462,16 @@ impl CommandRunnerState {
         let text = if let Some(line_number) = line_number {
             let line_idx = line_number.saturating_sub(1);
             if self.filter_active_for(command_idx) && !self.filtered_lines.is_empty() {
-                let start = self
-                    .filtered_lines
-                    .iter()
-                    .position(|(idx, _)| *idx == line_idx);
+                let start = self.filtered_lines.iter().position(|idx| *idx == line_idx);
                 if let Some(start) = start {
                     let end = (start + count).min(self.filtered_lines.len());
                     let mut lines = Vec::with_capacity(end - start);
-                    for (_, line) in &self.filtered_lines[start..end] {
-                        lines.push(line.as_str());
+                    if let Some(command) = self.commands.get(command_idx) {
+                        for filtered_idx in &self.filtered_lines[start..end] {
+                            if let Some(line) = command.output_lines.get(*filtered_idx) {
+                                lines.push(line.as_str());
+                            }
+                        }
                     }
                     Some(lines.join("\n"))
                 } else {
@@ -1466,20 +1566,7 @@ impl CommandRunnerState {
             return;
         }
 
-        let has_active_filter = self
-            .active_filter
-            .as_ref()
-            .map(|filter| filter.command_idx == command_idx)
-            .unwrap_or(false)
-            || matches!(
-                &self.view_mode,
-                ViewMode::Filter {
-                    command_idx: filter_idx,
-                    ..
-                } if *filter_idx == command_idx
-            );
-
-        if has_active_filter {
+        if self.filter_active_for(command_idx) {
             self.reapply_filter();
         } else {
             self.scroll_to_bottom();
@@ -1568,25 +1655,7 @@ impl CommandRunnerState {
         };
 
         let filtered_lines = if let Some(cmd) = self.current_command() {
-            let mut include = vec![false; cmd.output_lines.len()];
-            for (line_idx, line) in cmd.output_lines.iter().enumerate() {
-                if regex.is_match(line) {
-                    let start = line_idx.saturating_sub(context);
-                    let end = (line_idx + context + 1).min(cmd.output_lines.len());
-                    for i in start..end {
-                        include[i] = true;
-                    }
-                }
-            }
-
-            let included_count = include.iter().filter(|flag| **flag).count();
-            let mut filtered_lines = Vec::with_capacity(included_count);
-            for (line_idx, line) in cmd.output_lines.iter().enumerate() {
-                if include[line_idx] {
-                    filtered_lines.push((line_idx, line.clone()));
-                }
-            }
-            filtered_lines
+            filtered_line_indices(&cmd.output_lines, &regex, context)
         } else {
             return;
         };
@@ -2989,7 +3058,9 @@ pub fn run_command_runner(
     let mut force_render = true;
     let mut last_render = Instant::now();
     let mut last_elapsed_refresh = Instant::now();
+    let mut last_filter_refresh = Instant::now();
     let mut pending_streaming_refresh = None;
+    let mut force_streaming_refresh = false;
     loop {
         // Drain only a bounded amount of output so that a command producing an
         // endless stream cannot starve input, process control, or rendering.
@@ -3016,11 +3087,14 @@ pub fn run_command_runner(
                 continue;
             };
             let is_current_command = state.current_command_idx() == Some(idx);
+            let filter_active = is_current_command && state.filter_active_for(idx);
             if let Some(cmd) = state.commands.get_mut(idx) {
                 cmd.append_output(&data);
                 if is_current_command {
-                    dirty = true;
                     pending_streaming_refresh = Some(idx);
+                    if !filter_active {
+                        dirty = true;
+                    }
                 }
             }
         }
@@ -3091,6 +3165,7 @@ pub fn run_command_runner(
                         dirty = true;
                         if is_current_command {
                             pending_streaming_refresh = Some(idx);
+                            force_streaming_refresh = true;
                         }
 
                         let config = cmd.config.clone();
@@ -3124,12 +3199,32 @@ pub fn run_command_runner(
             last_elapsed_refresh = Instant::now();
         }
 
+        if let Some(command_idx) = pending_streaming_refresh {
+            if force_streaming_refresh
+                || !state.filter_active_for(command_idx)
+                || last_filter_refresh.elapsed() >= FILTER_REFRESH_INTERVAL
+            {
+                dirty = true;
+            }
+        }
+
         // Refresh wrapping/filter state and render no more than once per frame.
         // Output continues to be ingested between frames.
         let render_due = force_render || (dirty && last_render.elapsed() >= RENDER_INTERVAL);
         if render_due {
-            if let Some(command_idx) = pending_streaming_refresh.take() {
-                state.refresh_streaming_view(command_idx);
+            if let Some(command_idx) = pending_streaming_refresh {
+                let filter_active = state.filter_active_for(command_idx);
+                if force_streaming_refresh
+                    || !filter_active
+                    || last_filter_refresh.elapsed() >= FILTER_REFRESH_INTERVAL
+                {
+                    pending_streaming_refresh = None;
+                    force_streaming_refresh = false;
+                    state.refresh_streaming_view(command_idx);
+                    if filter_active {
+                        last_filter_refresh = Instant::now();
+                    }
+                }
             }
             state.render(&mut term)?;
             dirty = false;
@@ -3153,7 +3248,12 @@ pub fn run_command_runner(
         match term.poll_input(Some(poll_timeout))? {
             Some(event) => {
                 if let Some(command_idx) = pending_streaming_refresh.take() {
+                    let filter_active = state.filter_active_for(command_idx);
+                    force_streaming_refresh = false;
                     state.refresh_streaming_view(command_idx);
+                    if filter_active {
+                        last_filter_refresh = Instant::now();
+                    }
                 }
 
                 match state.handle_input(event, &process_tx) {
@@ -3173,6 +3273,37 @@ pub fn run_command_runner(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn command_state() -> CommandState {
+        CommandState::new(CommandRunnerCommand {
+            title: None,
+            args: vec!["test".to_string()],
+            cwd: None,
+            set_environment_variables: Default::default(),
+        })
+    }
+
+    fn wrapped_cache(command: &CommandState, max_width: usize) -> WrappedRowsCache {
+        let mut rows = Vec::new();
+        let mut line_row_counts = Vec::new();
+        for (line_idx, line) in command.output_lines.iter().enumerate() {
+            let segments = wrap_line_with_highlights(line, &[], max_width, Some(line_idx + 1));
+            line_row_counts.push(segments.len());
+            rows.extend(segments);
+        }
+
+        WrappedRowsCache {
+            command_idx: 0,
+            max_width,
+            filter_active: false,
+            output_generation: command.output_generation,
+            filtered_generation: 0,
+            regex_pattern: None,
+            first_line_sequence: Some(command.first_line_sequence),
+            line_row_counts,
+            rows: Rc::new(rows),
+        }
+    }
 
     #[test]
     fn output_batch_coalesces_chunks_per_command_in_arrival_order() {
@@ -3198,5 +3329,89 @@ mod test {
         let mut bytes = OutputBatch::new(1);
         bytes.push(0, vec![0; MAX_OUTPUT_BYTES_PER_TICK]);
         assert!(bytes.reached_size_limit());
+    }
+
+    #[test]
+    fn command_line_sequences_survive_clear_and_front_trimming() {
+        let mut command = command_state();
+        command.append_output(b"one\ntwo");
+        assert_eq!(command.first_line_sequence, 0);
+        assert_eq!(command.next_line_sequence, 2);
+
+        command.clear_output();
+        assert_eq!(command.first_line_sequence, 2);
+        command.append_output(b"three");
+        assert_eq!(command.first_line_sequence, 2);
+        assert_eq!(command.next_line_sequence, 3);
+
+        let oversized = format!("{}\ntail", "x".repeat(MAX_OUTPUT_SIZE));
+        command.clear_output();
+        command.append_output(oversized.as_bytes());
+        assert_eq!(
+            command.output_lines.front().map(String::as_str),
+            Some("tail")
+        );
+        assert_eq!(command.first_line_sequence, 4);
+        assert_eq!(command.next_line_sequence, 5);
+    }
+
+    #[test]
+    fn incremental_wrapping_reuses_completed_lines() {
+        let mut command = command_state();
+        command.append_output(b"one\ntwo");
+        let mut cache = wrapped_cache(&command, 3);
+        let first_line_ptr = cache.rows[0].text.as_ptr();
+
+        command.append_output(b"-continued\nthree");
+        let rows =
+            update_unfiltered_wrapped_cache(&command, &mut cache, 0, 3, command.output_generation)
+                .unwrap();
+
+        assert_eq!(rows[0].text, "one");
+        assert_eq!(rows[0].text.as_ptr(), first_line_ptr);
+        assert_eq!(cache.line_row_counts, vec![1, 5, 2]);
+        assert_eq!(rows[1].line_number, Some(2));
+        assert_eq!(rows[6].line_number, Some(3));
+    }
+
+    #[test]
+    fn incremental_wrapping_discards_trimmed_prefix_and_renumbers_lines() {
+        let mut command = command_state();
+        command.append_output(b"one\ntwo\nthree");
+        let mut cache = wrapped_cache(&command, 10);
+        let second_line_ptr = cache.rows[1].text.as_ptr();
+
+        command.output_lines.pop_front();
+        command.line_byte_lengths.pop_front();
+        command.first_line_sequence += 1;
+        command.output_generation += 1;
+        let rows =
+            update_unfiltered_wrapped_cache(&command, &mut cache, 0, 10, command.output_generation)
+                .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].text, "two");
+        assert_eq!(rows[0].text.as_ptr(), second_line_ptr);
+        assert_eq!(rows[0].line_number, Some(1));
+        assert_eq!(rows[1].text, "three");
+        assert_eq!(rows[1].line_number, Some(2));
+    }
+
+    #[test]
+    fn filtering_keeps_only_indexes_for_matches_and_context() {
+        let lines = VecDeque::from([
+            "before".to_string(),
+            "first match".to_string(),
+            "between".to_string(),
+            "second match".to_string(),
+            "after".to_string(),
+            "excluded".to_string(),
+        ]);
+        let regex = Regex::new("match").unwrap();
+
+        assert_eq!(
+            filtered_line_indices(&lines, &regex, 1),
+            vec![0, 1, 2, 3, 4]
+        );
     }
 }
