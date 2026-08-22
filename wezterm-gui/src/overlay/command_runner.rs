@@ -31,6 +31,8 @@ const OUTPUT_DRAIN_TIME_BUDGET: Duration = Duration::from_millis(4);
 const RENDER_INTERVAL: Duration = Duration::from_millis(33);
 /// Active filters rescan the retained buffer, so update them at a lower cadence.
 const FILTER_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+const FILTER_INPUT_DEBOUNCE: Duration = Duration::from_millis(100);
+const ASYNC_FILTER_OUTPUT_THRESHOLD: usize = 128 * 1024;
 const ELAPSED_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_INPUT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -849,6 +851,68 @@ struct FilterMatchCache {
     line_matches: Vec<bool>,
 }
 
+struct PendingFilterRequest {
+    request_generation: u64,
+    command_idx: usize,
+    pattern: String,
+    mode: SearchMode,
+    context: usize,
+    requested_at: Instant,
+    immediate: bool,
+}
+
+impl PendingFilterRequest {
+    fn is_due(&self, now: Instant) -> bool {
+        self.immediate || now.saturating_duration_since(self.requested_at) >= FILTER_INPUT_DEBOUNCE
+    }
+}
+
+struct FilterWork {
+    request_generation: u64,
+    command_idx: usize,
+    command_run_generation: u64,
+    output_generation: u64,
+    first_line_sequence: u64,
+    pattern: String,
+    mode: SearchMode,
+    context: usize,
+    lines: Vec<String>,
+}
+
+struct FilterJobResult {
+    request_generation: u64,
+    command_idx: usize,
+    command_run_generation: u64,
+    output_generation: u64,
+    first_line_sequence: u64,
+    pattern: String,
+    mode: SearchMode,
+    context: usize,
+    regex: Option<Regex>,
+    line_matches: Vec<bool>,
+}
+
+fn compute_filter_job(work: FilterWork) -> FilterJobResult {
+    let regex = compile_search_regex(&work.pattern, work.mode);
+    let line_matches = regex
+        .as_ref()
+        .map(|regex| work.lines.iter().map(|line| regex.is_match(line)).collect())
+        .unwrap_or_else(|| vec![false; work.lines.len()]);
+
+    FilterJobResult {
+        request_generation: work.request_generation,
+        command_idx: work.command_idx,
+        command_run_generation: work.command_run_generation,
+        output_generation: work.output_generation,
+        first_line_sequence: work.first_line_sequence,
+        pattern: work.pattern,
+        mode: work.mode,
+        context: work.context,
+        regex,
+        line_matches,
+    }
+}
+
 fn update_filter_match_cache(
     command: &CommandState,
     cache: &mut FilterMatchCache,
@@ -1080,6 +1144,11 @@ struct CommandRunnerState {
     scroll_offset: usize,
     filtered_lines: Vec<usize>, // Original indexes into the current command's retained lines
     active_filter: Option<ActiveFilter>, // Persists filter params for streaming updates
+    displayed_filter: Option<ActiveFilter>,
+    filter_edit_original_lines: Option<Vec<usize>>,
+    pending_filter_request: Option<PendingFilterRequest>,
+    filter_request_generation: u64,
+    filter_job_in_flight: Option<(u64, usize)>,
     filtered_generation: u64,
     wrapped_rows_cache: Option<WrappedRowsCache>,
     wrapped_row_count_cache: Option<WrappedRowCountCache>,
@@ -1115,6 +1184,11 @@ impl CommandRunnerState {
             scroll_offset: 0,
             filtered_lines: Vec::new(),
             active_filter: None,
+            displayed_filter: None,
+            filter_edit_original_lines: None,
+            pending_filter_request: None,
+            filter_request_generation: 0,
+            filter_job_in_flight: None,
             filtered_generation: 0,
             wrapped_rows_cache: None,
             wrapped_row_count_cache: None,
@@ -1210,18 +1284,31 @@ impl CommandRunnerState {
     }
 
     fn filter_active_for(&self, command_idx: usize) -> bool {
-        match &self.view_mode {
-            ViewMode::Filter {
-                command_idx: filter_idx,
-                pattern,
-                ..
-            } if *filter_idx == command_idx => !pattern.is_empty(),
-            _ => self
-                .active_filter
-                .as_ref()
-                .filter(|af| af.command_idx == command_idx && !af.pattern.is_empty())
-                .is_some(),
-        }
+        self.displayed_filter
+            .as_ref()
+            .filter(|filter| filter.command_idx == command_idx && !filter.pattern.is_empty())
+            .is_some()
+    }
+
+    fn filter_refresh_active_for(&self, command_idx: usize) -> bool {
+        let (pattern, _, _) = self.get_filter_params(command_idx);
+        !pattern.is_empty() || self.filter_active_for(command_idx)
+    }
+
+    fn filter_update_pending_for(&self, command_idx: usize) -> bool {
+        self.pending_filter_request
+            .as_ref()
+            .filter(|request| {
+                request.command_idx == command_idx
+                    && request.request_generation == self.filter_request_generation
+            })
+            .is_some()
+            || self
+                .filter_job_in_flight
+                .filter(|(generation, idx)| {
+                    *idx == command_idx && *generation == self.filter_request_generation
+                })
+                .is_some()
     }
 
     fn line_number_width_for(&self, command_idx: usize) -> usize {
@@ -1296,10 +1383,11 @@ impl CommandRunnerState {
     }
 
     fn active_search_regex_for(&mut self, command_idx: usize) -> Option<Regex> {
-        let (pattern, mode, _) = self.get_filter_params(command_idx);
-        if pattern.is_empty() {
-            return None;
-        }
+        let (pattern, mode) = self
+            .displayed_filter
+            .as_ref()
+            .filter(|filter| filter.command_idx == command_idx && !filter.pattern.is_empty())
+            .map(|filter| (filter.pattern.clone(), filter.mode))?;
         self.cached_regex(&pattern, mode)
     }
 }
@@ -1889,37 +1977,248 @@ impl CommandRunnerState {
             return;
         }
 
-        if self.filter_active_for(command_idx) {
-            self.reapply_filter();
+        if self.filter_update_pending_for(command_idx) {
+            return;
+        }
+
+        if self.filter_refresh_active_for(command_idx) {
+            let (pattern, mode, context) = self.get_filter_params(command_idx);
+            self.request_filter_update(command_idx, pattern, mode, context, true);
         } else {
             self.scroll_to_bottom();
         }
     }
 
     fn reapply_filter(&mut self) {
-        // Use active_filter if set (for streaming updates after Enter)
-        // or get from current Filter view mode
-        let filter_params = if let ViewMode::Filter {
+        if let Some(command_idx) = self.current_command_idx() {
+            let (pattern, mode, context) = self.get_filter_params(command_idx);
+            self.request_filter_update(command_idx, pattern, mode, context, true);
+        }
+    }
+
+    fn begin_filter_edit(&mut self, command_idx: usize) {
+        self.cancel_filter_update();
+        self.filter_edit_original_lines = Some(self.filtered_lines.clone());
+        self.displayed_filter = self
+            .active_filter
+            .as_ref()
+            .filter(|filter| filter.command_idx == command_idx)
+            .cloned();
+    }
+
+    fn cancel_filter_update(&mut self) {
+        self.filter_request_generation = self.filter_request_generation.wrapping_add(1);
+        self.pending_filter_request = None;
+        self.filter_job_in_flight = None;
+    }
+
+    fn filter_query_is_current(
+        &self,
+        command_idx: usize,
+        pattern: &str,
+        mode: SearchMode,
+        context: usize,
+    ) -> bool {
+        match &self.view_mode {
+            ViewMode::Filter {
+                command_idx: current_idx,
+                pattern: current_pattern,
+                mode: current_mode,
+                context: current_context,
+            } => {
+                *current_idx == command_idx
+                    && current_pattern == pattern
+                    && *current_mode == mode
+                    && *current_context == context
+            }
+            ViewMode::Output {
+                command_idx: current_idx,
+            } => {
+                *current_idx == command_idx
+                    && self
+                        .active_filter
+                        .as_ref()
+                        .filter(|filter| filter.command_idx == command_idx)
+                        .map(|filter| {
+                            filter.pattern == pattern
+                                && filter.mode == mode
+                                && filter.context == context
+                        })
+                        .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
+    fn request_filter_update(
+        &mut self,
+        command_idx: usize,
+        pattern: String,
+        mode: SearchMode,
+        context: usize,
+        immediate: bool,
+    ) {
+        self.cancel_filter_update();
+
+        if pattern.is_empty() {
+            self.displayed_filter = None;
+            self.filter_match_cache = None;
+            self.scroll_offset = 0;
+            self.clear_current_match();
+            self.clear_filtered_lines();
+            self.reset_current_line_to_scroll_offset();
+            return;
+        }
+
+        let Some(command) = self.commands.get(command_idx) else {
+            return;
+        };
+        if command.output_size < ASYNC_FILTER_OUTPUT_THRESHOLD {
+            self.apply_filter(&pattern, mode, context);
+            return;
+        }
+
+        self.pending_filter_request = Some(PendingFilterRequest {
+            request_generation: self.filter_request_generation,
+            command_idx,
             pattern,
             mode,
             context,
-            ..
-        } = &self.view_mode
-        {
-            Some((pattern.clone(), *mode, *context))
-        } else {
-            self.active_filter
-                .as_ref()
-                .map(|af| (af.pattern.clone(), af.mode, af.context))
-        };
+            requested_at: Instant::now(),
+            immediate,
+        });
+    }
 
-        if let Some((pattern, mode, context)) = filter_params {
-            if pattern.is_empty() {
-                self.clear_filtered_lines();
-            } else {
-                self.apply_filter(&pattern, mode, context);
-            }
+    fn take_due_filter_work(&mut self) -> Option<FilterWork> {
+        if !self
+            .pending_filter_request
+            .as_ref()
+            .map(|request| request.is_due(Instant::now()))
+            .unwrap_or(false)
+        {
+            return None;
         }
+
+        let request = self.pending_filter_request.take()?;
+        if request.request_generation != self.filter_request_generation
+            || !self.filter_query_is_current(
+                request.command_idx,
+                &request.pattern,
+                request.mode,
+                request.context,
+            )
+        {
+            return None;
+        }
+
+        let command = self.commands.get(request.command_idx)?;
+        let work = FilterWork {
+            request_generation: request.request_generation,
+            command_idx: request.command_idx,
+            command_run_generation: command.run_generation,
+            output_generation: command.output_generation,
+            first_line_sequence: command.first_line_sequence,
+            pattern: request.pattern,
+            mode: request.mode,
+            context: request.context,
+            lines: command.output_lines.iter().cloned().collect(),
+        };
+        self.filter_job_in_flight = Some((work.request_generation, work.command_idx));
+        Some(work)
+    }
+
+    fn apply_filter_job_result(&mut self, result: FilterJobResult) -> bool {
+        if self.filter_job_in_flight == Some((result.request_generation, result.command_idx)) {
+            self.filter_job_in_flight = None;
+        }
+        if result.request_generation != self.filter_request_generation
+            || !self.filter_query_is_current(
+                result.command_idx,
+                &result.pattern,
+                result.mode,
+                result.context,
+            )
+        {
+            return false;
+        }
+
+        let Some(command) = self.commands.get(result.command_idx) else {
+            return false;
+        };
+        if command.run_generation != result.command_run_generation {
+            self.request_filter_update(
+                result.command_idx,
+                result.pattern,
+                result.mode,
+                result.context,
+                true,
+            );
+            return false;
+        }
+
+        let mut cache = FilterMatchCache {
+            command_idx: result.command_idx,
+            pattern: result.pattern.clone(),
+            mode: result.mode,
+            output_generation: result.output_generation,
+            first_line_sequence: result.first_line_sequence,
+            line_matches: result.line_matches,
+        };
+        let cache_is_current = if let Some(regex) = result.regex.as_ref() {
+            update_filter_match_cache(
+                command,
+                &mut cache,
+                result.command_idx,
+                &result.pattern,
+                result.mode,
+                regex,
+            )
+        } else {
+            cache.output_generation = command.output_generation;
+            cache.first_line_sequence = command.first_line_sequence;
+            cache.line_matches = vec![false; command.output_lines.len()];
+            true
+        };
+        if !cache_is_current {
+            self.request_filter_update(
+                result.command_idx,
+                result.pattern,
+                result.mode,
+                result.context,
+                true,
+            );
+            return false;
+        }
+
+        self.filtered_lines = contextual_line_indices(&cache.line_matches, result.context);
+        self.filter_match_cache = Some(cache);
+        self.displayed_filter = Some(ActiveFilter {
+            command_idx: result.command_idx,
+            pattern: result.pattern.clone(),
+            mode: result.mode,
+            context: result.context,
+        });
+        self.bump_filtered_generation();
+        self.scroll_offset = 0;
+
+        if let Some(regex) = result.regex {
+            self.regex_cache = Some(RegexCache {
+                pattern: result.pattern,
+                mode: result.mode,
+                regex: regex.clone(),
+            });
+            if let Some(current_match) = self.ensure_current_match(result.command_idx, &regex) {
+                self.current_line_command = Some(result.command_idx);
+                self.current_line_idx = Some(current_match.row_idx);
+                self.reveal_current_line(current_match.row_idx);
+            } else {
+                self.reset_current_line_to_scroll_offset();
+            }
+        } else {
+            self.clear_current_match();
+            self.reset_current_line_to_scroll_offset();
+        }
+        true
     }
 
     fn set_active_filter(
@@ -1947,13 +2246,18 @@ impl CommandRunnerState {
     }
 
     fn clear_active_filter(&mut self) {
+        self.cancel_filter_update();
         self.active_filter = None;
+        self.displayed_filter = None;
+        self.filter_edit_original_lines = None;
+        self.filter_match_cache = None;
         self.clear_filtered_lines();
         self.clear_current_match();
     }
 
     fn apply_filter(&mut self, pattern: &str, mode: SearchMode, context: usize) {
         if pattern.is_empty() {
+            self.displayed_filter = None;
             self.scroll_offset = 0;
             self.clear_current_match();
             self.clear_filtered_lines();
@@ -1972,6 +2276,13 @@ impl CommandRunnerState {
         let regex = match self.cached_regex(pattern, mode) {
             Some(regex) => regex,
             None => {
+                self.displayed_filter = Some(ActiveFilter {
+                    command_idx,
+                    pattern: pattern.to_string(),
+                    mode,
+                    context,
+                });
+                self.filter_match_cache = None;
                 self.clear_filtered_lines();
                 return;
             }
@@ -2008,6 +2319,12 @@ impl CommandRunnerState {
             .unwrap_or_default();
 
         self.filtered_lines = filtered_lines;
+        self.displayed_filter = Some(ActiveFilter {
+            command_idx,
+            pattern: pattern.to_string(),
+            mode,
+            context,
+        });
         self.bump_filtered_generation();
 
         self.scroll_offset = 0;
@@ -2351,6 +2668,7 @@ impl CommandRunnerState {
         }
 
         let (search_pattern, mode, context) = self.get_filter_params(cmd_idx);
+        let filter_update_pending = self.filter_update_pending_for(cmd_idx);
         let search_line = if search_pattern.is_empty() {
             "Search: ".to_string()
         } else {
@@ -2381,6 +2699,9 @@ impl CommandRunnerState {
             writer.push(":", None);
             writer.push(" ", None);
             writer.push(&search_pattern, None);
+            if filter_update_pending {
+                writer.push("  Filtering…", Some(context_value_fg));
+            }
             writer.fill_remaining();
         }
         changes.push(Change::CursorPosition {
@@ -2921,7 +3242,7 @@ impl CommandRunnerState {
                 };
                 self.reset_current_match(command_idx);
                 if !pattern.is_empty() {
-                    self.apply_filter(&pattern, mode, context);
+                    self.request_filter_update(command_idx, pattern, mode, context, true);
                 }
             }
             InputEvent::Key(KeyEvent {
@@ -2930,6 +3251,7 @@ impl CommandRunnerState {
             }) => {
                 self.reset_count();
                 let (pattern, mode, context) = self.get_filter_params(command_idx);
+                self.begin_filter_edit(command_idx);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
                     pattern,
@@ -3080,13 +3402,13 @@ impl CommandRunnerState {
             }) => {
                 mode = mode.next();
                 self.reset_current_match(command_idx);
-                self.apply_filter(&pattern, mode, context);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
-                    pattern,
+                    pattern: pattern.clone(),
                     mode,
                     context,
                 };
+                self.request_filter_update(command_idx, pattern, mode, context, false);
             }
             // Tab increases context, Shift-Tab decreases
             InputEvent::Key(KeyEvent {
@@ -3094,13 +3416,13 @@ impl CommandRunnerState {
                 modifiers: Modifiers::NONE,
             }) => {
                 context += 1;
-                self.apply_filter(&pattern, mode, context);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
-                    pattern,
+                    pattern: pattern.clone(),
                     mode,
                     context,
                 };
+                self.request_filter_update(command_idx, pattern, mode, context, false);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Tab,
@@ -3108,13 +3430,13 @@ impl CommandRunnerState {
             }) => {
                 if context > 0 {
                     context -= 1;
-                    self.apply_filter(&pattern, mode, context);
                     self.view_mode = ViewMode::Filter {
                         command_idx,
-                        pattern,
+                        pattern: pattern.clone(),
                         mode,
                         context,
                     };
+                    self.request_filter_update(command_idx, pattern, mode, context, false);
                 }
             }
             InputEvent::Key(KeyEvent {
@@ -3123,13 +3445,13 @@ impl CommandRunnerState {
             }) => {
                 pattern.pop();
                 self.reset_current_match(command_idx);
-                self.apply_filter(&pattern, mode, context);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
-                    pattern,
+                    pattern: pattern.clone(),
                     mode,
                     context,
                 };
+                self.request_filter_update(command_idx, pattern, mode, context, false);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('U'),
@@ -3137,22 +3459,13 @@ impl CommandRunnerState {
             }) => {
                 pattern.clear();
                 self.reset_current_match(command_idx);
-                if self
-                    .active_filter
-                    .as_ref()
-                    .filter(|af| af.command_idx == command_idx)
-                    .is_some()
-                {
-                    self.clear_active_filter();
-                } else {
-                    self.clear_filtered_lines();
-                }
                 self.view_mode = ViewMode::Filter {
                     command_idx,
-                    pattern,
+                    pattern: pattern.clone(),
                     mode,
                     context,
                 };
+                self.request_filter_update(command_idx, pattern, mode, context, false);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('L'),
@@ -3161,26 +3474,38 @@ impl CommandRunnerState {
                 self.clear_command_output(command_idx);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
-                    pattern,
+                    pattern: pattern.clone(),
                     mode,
                     context,
                 };
+                self.request_filter_update(command_idx, pattern, mode, context, true);
             }
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Escape,
                 ..
             }) => {
-                if let Some((pattern, mode, context)) = self
+                self.cancel_filter_update();
+                self.filtered_lines = self.filter_edit_original_lines.take().unwrap_or_default();
+                let committed_filter = self
                     .active_filter
                     .as_ref()
                     .filter(|af| af.command_idx == command_idx)
-                    .map(|af| (af.pattern.clone(), af.mode, af.context))
-                {
-                    self.view_mode = ViewMode::Output { command_idx };
-                    self.apply_filter(&pattern, mode, context);
+                    .cloned();
+                self.displayed_filter = committed_filter.clone();
+                self.bump_filtered_generation();
+                self.scroll_offset = 0;
+                self.clear_current_match();
+                self.view_mode = ViewMode::Output { command_idx };
+                if let Some(filter) = committed_filter {
+                    self.request_filter_update(
+                        command_idx,
+                        filter.pattern,
+                        filter.mode,
+                        filter.context,
+                        true,
+                    );
                 } else {
                     self.clear_filtered_lines();
-                    self.view_mode = ViewMode::Output { command_idx };
                     self.reset_current_line_to_scroll_offset();
                 }
             }
@@ -3189,26 +3514,15 @@ impl CommandRunnerState {
                 key: KeyCode::Enter,
                 ..
             }) => {
-                let had_pattern = !pattern.is_empty();
+                self.filter_edit_original_lines = None;
                 if pattern.is_empty() {
-                    self.clear_current_match();
-                    if self
-                        .active_filter
-                        .as_ref()
-                        .filter(|af| af.command_idx == command_idx)
-                        .is_some()
-                    {
-                        self.clear_active_filter();
-                    } else {
-                        self.clear_filtered_lines();
-                    }
-                } else {
-                    // Save filter params for streaming updates
-                    self.set_active_filter(command_idx, pattern, mode, context);
-                }
-                self.view_mode = ViewMode::Output { command_idx };
-                if !had_pattern {
+                    self.clear_active_filter();
+                    self.view_mode = ViewMode::Output { command_idx };
                     self.reset_current_line_to_scroll_offset();
+                } else {
+                    self.set_active_filter(command_idx, pattern.clone(), mode, context);
+                    self.view_mode = ViewMode::Output { command_idx };
+                    self.request_filter_update(command_idx, pattern, mode, context, true);
                 }
             }
             // Character input for pattern
@@ -3218,13 +3532,13 @@ impl CommandRunnerState {
             }) => {
                 pattern.push(c);
                 self.reset_current_match(command_idx);
-                self.apply_filter(&pattern, mode, context);
                 self.view_mode = ViewMode::Filter {
                     command_idx,
-                    pattern,
+                    pattern: pattern.clone(),
                     mode,
                     context,
                 };
+                self.request_filter_update(command_idx, pattern, mode, context, false);
             }
             _ => {}
         }
@@ -3422,6 +3736,8 @@ pub fn run_command_runner(
         smol::channel::bounded(16);
     let (output_tx, output_rx): (Sender<OutputMessage>, Receiver<OutputMessage>) =
         smol::channel::bounded(256);
+    let (filter_result_tx, filter_result_rx): (Sender<FilterJobResult>, Receiver<FilterJobResult>) =
+        smol::channel::bounded(16);
 
     // Store child processes
     let mut children = ChildProcesses((0..state.commands.len()).map(|_| None).collect());
@@ -3457,6 +3773,22 @@ pub fn run_command_runner(
     let mut pending_streaming_refresh = None;
     let mut force_streaming_refresh = false;
     loop {
+        while let Ok(result) = filter_result_rx.try_recv() {
+            if state.apply_filter_job_result(result) {
+                dirty = true;
+            }
+        }
+
+        if let Some(work) = state.take_due_filter_work() {
+            let result_tx = filter_result_tx.clone();
+            smol::spawn(async move {
+                let result = smol::unblock(move || compute_filter_job(work)).await;
+                let _ = result_tx.send(result).await;
+            })
+            .detach();
+            dirty = true;
+        }
+
         // Drain only a bounded amount of output so that a command producing an
         // endless stream cannot starve input, process control, or rendering.
         // Chunks are coalesced per command and applied once below.
@@ -3495,7 +3827,7 @@ pub fn run_command_runner(
                 continue;
             };
             let is_current_command = state.current_command_idx() == Some(idx);
-            let filter_active = is_current_command && state.filter_active_for(idx);
+            let filter_active = is_current_command && state.filter_refresh_active_for(idx);
             if let Some(cmd) = state.commands.get_mut(idx) {
                 cmd.append_output(&data);
                 if is_current_command {
@@ -3608,7 +3940,7 @@ pub fn run_command_runner(
 
         if let Some(command_idx) = pending_streaming_refresh {
             if force_streaming_refresh
-                || !state.filter_active_for(command_idx)
+                || !state.filter_refresh_active_for(command_idx)
                 || last_filter_refresh.elapsed() >= FILTER_REFRESH_INTERVAL
             {
                 dirty = true;
@@ -3620,7 +3952,7 @@ pub fn run_command_runner(
         let render_due = force_render || (dirty && last_render.elapsed() >= RENDER_INTERVAL);
         if render_due {
             if let Some(command_idx) = pending_streaming_refresh {
-                let filter_active = state.filter_active_for(command_idx);
+                let filter_active = state.filter_refresh_active_for(command_idx);
                 if force_streaming_refresh
                     || !filter_active
                     || last_filter_refresh.elapsed() >= FILTER_REFRESH_INTERVAL
@@ -3655,7 +3987,7 @@ pub fn run_command_runner(
         match term.poll_input(Some(poll_timeout))? {
             Some(event) => {
                 if let Some(command_idx) = pending_streaming_refresh.take() {
-                    let filter_active = state.filter_active_for(command_idx);
+                    let filter_active = state.filter_refresh_active_for(command_idx);
                     force_streaming_refresh = false;
                     state.refresh_streaming_view(command_idx);
                     if filter_active {
@@ -3822,6 +4154,53 @@ mod test {
             contextual_line_indices(&line_matches, 1),
             vec![0, 1, 2, 3, 4]
         );
+    }
+
+    #[test]
+    fn large_filter_job_computes_matches_from_its_snapshot() {
+        let result = compute_filter_job(FilterWork {
+            request_generation: 7,
+            command_idx: 2,
+            command_run_generation: 3,
+            output_generation: 11,
+            first_line_sequence: 5,
+            pattern: "error".to_string(),
+            mode: SearchMode::CaseInsensitive,
+            context: 1,
+            lines: vec![
+                "ok".to_string(),
+                "ERROR: failed".to_string(),
+                "done".to_string(),
+            ],
+        });
+
+        assert_eq!(result.request_generation, 7);
+        assert_eq!(result.command_idx, 2);
+        assert_eq!(result.line_matches, vec![false, true, false]);
+        assert!(result.regex.is_some());
+    }
+
+    #[test]
+    fn filter_requests_wait_for_debounce_unless_marked_immediate() {
+        let requested_at = Instant::now();
+        let request = PendingFilterRequest {
+            request_generation: 1,
+            command_idx: 0,
+            pattern: "needle".to_string(),
+            mode: SearchMode::CaseSensitive,
+            context: 0,
+            requested_at,
+            immediate: false,
+        };
+
+        assert!(!request.is_due(requested_at));
+        assert!(request.is_due(requested_at + FILTER_INPUT_DEBOUNCE));
+
+        let immediate_request = PendingFilterRequest {
+            immediate: true,
+            ..request
+        };
+        assert!(immediate_request.is_due(requested_at));
     }
 
     #[test]
