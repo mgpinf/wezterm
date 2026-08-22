@@ -246,15 +246,19 @@ fn match_ranges_in_cells(
     highlights
 }
 
-fn contextual_line_indices(line_matches: &[bool], context: usize) -> Vec<usize> {
-    let mut include = vec![false; line_matches.len()];
-    for (line_idx, is_match) in line_matches.iter().copied().enumerate() {
+fn contextual_line_indices(
+    line_matches: impl ExactSizeIterator<Item = bool>,
+    context: usize,
+) -> Vec<usize> {
+    let line_count = line_matches.len();
+    let mut include = vec![false; line_count];
+    for (line_idx, is_match) in line_matches.enumerate() {
         if is_match {
             let start = line_idx.saturating_sub(context);
             let end = line_idx
                 .saturating_add(context)
                 .saturating_add(1)
-                .min(line_matches.len());
+                .min(line_count);
             for included in &mut include[start..end] {
                 *included = true;
             }
@@ -848,7 +852,7 @@ struct FilterMatchCache {
     mode: SearchMode,
     output_generation: u64,
     first_line_sequence: u64,
-    line_matches: Vec<bool>,
+    line_matches: VecDeque<bool>,
 }
 
 struct PendingFilterRequest {
@@ -944,7 +948,7 @@ fn update_filter_match_cache(
     }
 
     // The current tail can change until it is terminated by a newline.
-    cache.line_matches.pop();
+    cache.line_matches.pop_back();
     let reused_line_count = cache.line_matches.len();
     cache.line_matches.extend(
         command
@@ -967,8 +971,8 @@ struct WrappedRowsCache {
     filtered_generation: u64,
     regex_pattern: Option<String>,
     first_line_sequence: Option<u64>,
-    line_row_counts: Vec<usize>,
-    rows: Rc<Vec<WrappedSegment>>,
+    line_row_counts: VecDeque<usize>,
+    rows: Rc<VecDeque<WrappedSegment>>,
     match_locations: Rc<Vec<MatchLocation>>,
 }
 
@@ -978,7 +982,7 @@ struct WrappedRowCountCache {
     max_width: usize,
     output_generation: u64,
     first_line_sequence: u64,
-    line_row_counts: Vec<usize>,
+    line_row_counts: VecDeque<usize>,
     total_rows: usize,
 }
 
@@ -1017,13 +1021,13 @@ fn update_wrapped_row_count_cache(
         return false;
     }
 
-    if let Some(last_row_count) = cache.line_row_counts.pop() {
+    if let Some(last_row_count) = cache.line_row_counts.pop_back() {
         cache.total_rows = cache.total_rows.saturating_sub(last_row_count);
     }
     let reused_line_count = cache.line_row_counts.len();
     for line in command.output_lines.iter().skip(reused_line_count) {
         let row_count = wrapped_row_count(line, max_width);
-        cache.line_row_counts.push(row_count);
+        cache.line_row_counts.push_back(row_count);
         cache.total_rows = cache.total_rows.saturating_add(row_count);
     }
     cache.output_generation = command.output_generation;
@@ -1066,7 +1070,7 @@ fn update_unfiltered_wrapped_cache(
     command_idx: usize,
     max_width: usize,
     output_generation: u64,
-) -> Option<Rc<Vec<WrappedSegment>>> {
+) -> Option<Rc<VecDeque<WrappedSegment>>> {
     if cache.command_idx != command_idx
         || cache.max_width != max_width
         || cache.filter_active
@@ -1104,7 +1108,7 @@ fn update_unfiltered_wrapped_cache(
 
     // The last retained line is mutable until another newline arrives.
     // Re-wrap it together with lines appended since the previous frame.
-    if let Some(last_row_count) = cache.line_row_counts.pop() {
+    if let Some(last_row_count) = cache.line_row_counts.pop_back() {
         rows.truncate(rows.len().saturating_sub(last_row_count));
     }
 
@@ -1413,7 +1417,7 @@ impl CommandRunnerState {
             let Some(command) = self.commands.get(command_idx) else {
                 return 0;
             };
-            let line_row_counts: Vec<usize> = command
+            let line_row_counts: VecDeque<usize> = command
                 .output_lines
                 .iter()
                 .map(|line| wrapped_row_count(line, max_width))
@@ -1490,7 +1494,7 @@ impl CommandRunnerState {
         &mut self,
         command_idx: usize,
         regex: Option<&Regex>,
-    ) -> Rc<Vec<WrappedSegment>> {
+    ) -> Rc<VecDeque<WrappedSegment>> {
         let max_width = self.output_content_width_for(command_idx);
         let filter_active = self.filter_active_for(command_idx);
         let output_generation = self
@@ -1528,8 +1532,8 @@ impl CommandRunnerState {
             }
         }
 
-        let mut rows = Vec::new();
-        let mut line_row_counts = Vec::new();
+        let mut rows = VecDeque::new();
+        let mut line_row_counts = VecDeque::new();
         let mut next_match_id = 0;
         if filter_active {
             if let Some(cmd) = self.commands.get(command_idx) {
@@ -1637,7 +1641,7 @@ impl CommandRunnerState {
         self.reveal_current_line(clamped);
     }
 
-    fn logical_line_number_at(rows: &[WrappedSegment], row_idx: usize) -> Option<usize> {
+    fn logical_line_number_at(rows: &VecDeque<WrappedSegment>, row_idx: usize) -> Option<usize> {
         if rows.is_empty() {
             return None;
         }
@@ -1653,7 +1657,7 @@ impl CommandRunnerState {
         }
     }
 
-    fn next_logical_row(rows: &[WrappedSegment], row_idx: usize) -> Option<usize> {
+    fn next_logical_row(rows: &VecDeque<WrappedSegment>, row_idx: usize) -> Option<usize> {
         let current_line = Self::logical_line_number_at(rows, row_idx)?;
         for idx in row_idx.saturating_add(1)..rows.len() {
             if let Some(line_number) = rows[idx].line_number {
@@ -1665,7 +1669,7 @@ impl CommandRunnerState {
         None
     }
 
-    fn prev_logical_row(rows: &[WrappedSegment], row_idx: usize) -> Option<usize> {
+    fn prev_logical_row(rows: &VecDeque<WrappedSegment>, row_idx: usize) -> Option<usize> {
         let current_line = Self::logical_line_number_at(rows, row_idx)?;
         if row_idx == 0 {
             return None;
@@ -1753,7 +1757,7 @@ impl CommandRunnerState {
 // ============================================================================
 
 impl CommandRunnerState {
-    fn match_locations_from_rows(rows: &[WrappedSegment]) -> Vec<MatchLocation> {
+    fn match_locations_from_rows(rows: &VecDeque<WrappedSegment>) -> Vec<MatchLocation> {
         // Match_ids are sequential starting from 0 and encountered in ascending order.
         // We only record the first row where each match_id appears.
         let mut locations: Vec<MatchLocation> = Vec::new();
@@ -2162,7 +2166,7 @@ impl CommandRunnerState {
             mode: result.mode,
             output_generation: result.output_generation,
             first_line_sequence: result.first_line_sequence,
-            line_matches: result.line_matches,
+            line_matches: result.line_matches.into(),
         };
         let cache_is_current = if let Some(regex) = result.regex.as_ref() {
             update_filter_match_cache(
@@ -2176,7 +2180,7 @@ impl CommandRunnerState {
         } else {
             cache.output_generation = command.output_generation;
             cache.first_line_sequence = command.first_line_sequence;
-            cache.line_matches = vec![false; command.output_lines.len()];
+            cache.line_matches = vec![false; command.output_lines.len()].into();
             true
         };
         if !cache_is_current {
@@ -2190,7 +2194,8 @@ impl CommandRunnerState {
             return false;
         }
 
-        self.filtered_lines = contextual_line_indices(&cache.line_matches, result.context);
+        self.filtered_lines =
+            contextual_line_indices(cache.line_matches.iter().copied(), result.context);
         self.filter_match_cache = Some(cache);
         self.displayed_filter = Some(ActiveFilter {
             command_idx: result.command_idx,
@@ -2315,7 +2320,7 @@ impl CommandRunnerState {
         let filtered_lines = self
             .filter_match_cache
             .as_ref()
-            .map(|cache| contextual_line_indices(&cache.line_matches, context))
+            .map(|cache| contextual_line_indices(cache.line_matches.iter().copied(), context))
             .unwrap_or_default();
 
         self.filtered_lines = filtered_lines;
@@ -2740,8 +2745,11 @@ impl CommandRunnerState {
             let line_count = self.unfiltered_wrapped_row_count(cmd_idx);
             let first_logical_line_number =
                 self.unfiltered_line_number_at_row(cmd_idx, self.scroll_offset);
-            let rows =
-                Rc::new(self.unfiltered_visible_rows(cmd_idx, self.scroll_offset, visible_rows));
+            let rows = Rc::new(VecDeque::from(self.unfiltered_visible_rows(
+                cmd_idx,
+                self.scroll_offset,
+                visible_rows,
+            )));
             (
                 rows,
                 self.scroll_offset,
@@ -4042,8 +4050,8 @@ mod test {
     }
 
     fn wrapped_cache(command: &CommandState, max_width: usize) -> WrappedRowsCache {
-        let mut rows = Vec::new();
-        let mut line_row_counts = Vec::new();
+        let mut rows = VecDeque::new();
+        let mut line_row_counts = VecDeque::new();
         for (line_idx, line) in command.output_lines.iter().enumerate() {
             let segments = wrap_line_with_highlights(line, &[], max_width, Some(line_idx + 1));
             line_row_counts.push(segments.len());
@@ -4149,7 +4157,7 @@ mod test {
 
         assert_eq!(rows[0].text, "one");
         assert_eq!(rows[0].text.as_ptr(), first_line_ptr);
-        assert_eq!(cache.line_row_counts, vec![1, 5, 2]);
+        assert_eq!(cache.line_row_counts, VecDeque::from([1, 5, 2]));
         assert_eq!(rows[1].line_number, Some(2));
         assert_eq!(rows[6].line_number, Some(3));
     }
@@ -4160,6 +4168,7 @@ mod test {
         command.append_output(b"one\ntwo\nthree");
         let mut cache = wrapped_cache(&command, 10);
         let second_line_ptr = cache.rows[1].text.as_ptr();
+        let second_row_ptr: *const WrappedSegment = &cache.rows[1];
 
         command.output_lines.pop_front();
         command.line_byte_lengths.pop_front();
@@ -4172,6 +4181,7 @@ mod test {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].text, "two");
         assert_eq!(rows[0].text.as_ptr(), second_line_ptr);
+        assert_eq!(&rows[0] as *const WrappedSegment, second_row_ptr);
         assert_eq!(rows[0].line_number, Some(1));
         assert_eq!(rows[1].text, "three");
         assert_eq!(rows[1].line_number, Some(2));
@@ -4191,7 +4201,7 @@ mod test {
         let line_matches: Vec<bool> = lines.iter().map(|line| regex.is_match(line)).collect();
 
         assert_eq!(
-            contextual_line_indices(&line_matches, 1),
+            contextual_line_indices(line_matches.iter().copied(), 1),
             vec![0, 1, 2, 3, 4]
         );
     }
@@ -4327,7 +4337,41 @@ mod test {
             SearchMode::CaseSensitive,
             &regex,
         ));
-        assert_eq!(cache.line_matches, vec![false, true, false]);
+        assert_eq!(cache.line_matches, VecDeque::from([false, true, false]));
+    }
+
+    #[test]
+    fn incremental_filter_cache_discards_trimmed_prefix() {
+        let regex = Regex::new("match").unwrap();
+        let mut command = command_state();
+        command.append_output(b"old\nmatch\ntail");
+        let mut cache = FilterMatchCache {
+            command_idx: 0,
+            pattern: "match".to_string(),
+            mode: SearchMode::CaseSensitive,
+            output_generation: command.output_generation,
+            first_line_sequence: command.first_line_sequence,
+            line_matches: command
+                .output_lines
+                .iter()
+                .map(|line| regex.is_match(line))
+                .collect(),
+        };
+
+        command.output_lines.pop_front();
+        command.line_byte_lengths.pop_front();
+        command.first_line_sequence += 1;
+        command.output_generation += 1;
+
+        assert!(update_filter_match_cache(
+            &command,
+            &mut cache,
+            0,
+            "match",
+            SearchMode::CaseSensitive,
+            &regex,
+        ));
+        assert_eq!(cache.line_matches, VecDeque::from([true, false]));
     }
 
     #[test]
@@ -4339,13 +4383,13 @@ mod test {
             max_width: 3,
             output_generation: command.output_generation,
             first_line_sequence: command.first_line_sequence,
-            line_row_counts: vec![1, 1],
+            line_row_counts: VecDeque::from([1, 1]),
             total_rows: 2,
         };
 
         command.append_output(b"-continued\nthree");
         assert!(update_wrapped_row_count_cache(&command, &mut cache, 0, 3,));
-        assert_eq!(cache.line_row_counts, vec![1, 5, 2]);
+        assert_eq!(cache.line_row_counts, VecDeque::from([1, 5, 2]));
         assert_eq!(cache.total_rows, 8);
         assert_eq!(line_index_at_wrapped_row(&cache, 0), Some((0, 0)));
         assert_eq!(line_index_at_wrapped_row(&cache, 6), Some((2, 6)));
