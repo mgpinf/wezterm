@@ -1064,6 +1064,25 @@ fn line_index_at_wrapped_row(
     None
 }
 
+fn clamp_paused_view(
+    total_rows: usize,
+    visible_rows: usize,
+    scroll_offset: usize,
+    current_line: Option<usize>,
+) -> (usize, Option<usize>) {
+    let scroll_offset = scroll_offset.min(total_rows.saturating_sub(visible_rows));
+    let current_line = if total_rows == 0 {
+        None
+    } else {
+        Some(
+            current_line
+                .unwrap_or(scroll_offset)
+                .min(total_rows.saturating_sub(1)),
+        )
+    };
+    (scroll_offset, current_line)
+}
+
 fn update_unfiltered_wrapped_cache(
     command: &CommandState,
     cache: &mut WrappedRowsCache,
@@ -1162,6 +1181,7 @@ struct CommandRunnerState {
     current_match_command: Option<usize>,
     current_line_idx: Option<usize>,
     current_line_command: Option<usize>,
+    follow_output: bool,
     auto_close_on_success: bool,
     screen_rows: usize,
     screen_cols: usize,
@@ -1202,6 +1222,7 @@ impl CommandRunnerState {
             current_match_command: None,
             current_line_idx: None,
             current_line_command: None,
+            follow_output: true,
             auto_close_on_success: args.auto_close_on_success,
             screen_rows: 24,
             screen_cols: 80,
@@ -1630,6 +1651,7 @@ impl CommandRunnerState {
     }
 
     fn set_current_line(&mut self, command_idx: usize, target: usize, total_rows: usize) {
+        self.follow_output = false;
         if total_rows == 0 {
             self.current_line_idx = None;
             self.current_line_command = Some(command_idx);
@@ -1685,6 +1707,7 @@ impl CommandRunnerState {
     }
 
     fn move_current_line(&mut self, command_idx: usize, delta: isize) {
+        self.follow_output = false;
         let total_rows = self.output_wrapped_row_count(command_idx);
         let current = match self.current_line_for(command_idx, total_rows) {
             Some(idx) => idx,
@@ -1905,6 +1928,7 @@ impl CommandRunnerState {
     }
 
     fn move_current_match(&mut self, command_idx: usize, forward: bool) {
+        self.follow_output = false;
         let regex = match self.active_search_regex_for(command_idx) {
             Some(regex) => regex,
             None => return,
@@ -1988,7 +2012,7 @@ impl CommandRunnerState {
         if self.filter_refresh_active_for(command_idx) {
             let (pattern, mode, context) = self.get_filter_params(command_idx);
             self.request_filter_update(command_idx, pattern, mode, context, true);
-        } else {
+        } else if self.follow_output {
             self.scroll_to_bottom();
         }
     }
@@ -2001,6 +2025,7 @@ impl CommandRunnerState {
     }
 
     fn begin_filter_edit(&mut self, command_idx: usize) {
+        self.follow_output = false;
         self.cancel_filter_update();
         self.filter_edit_original_lines = Some(self.filtered_lines.clone());
         self.displayed_filter = self
@@ -2160,6 +2185,15 @@ impl CommandRunnerState {
             return false;
         }
 
+        let preserve_view = self.filter_update_preserves_view(
+            result.command_idx,
+            &result.pattern,
+            result.mode,
+            result.context,
+        );
+        let previous_scroll_offset = self.scroll_offset;
+        let previous_current_line = self.current_line_idx;
+
         let mut cache = FilterMatchCache {
             command_idx: result.command_idx,
             pattern: result.pattern.clone(),
@@ -2204,7 +2238,10 @@ impl CommandRunnerState {
             context: result.context,
         });
         self.bump_filtered_generation();
-        self.scroll_offset = 0;
+        let follow_output = self.should_follow_output(result.command_idx);
+        if !preserve_view {
+            self.scroll_offset = 0;
+        }
 
         if let Some(regex) = result.regex {
             self.regex_cache = Some(RegexCache {
@@ -2212,7 +2249,18 @@ impl CommandRunnerState {
                 mode: result.mode,
                 regex: regex.clone(),
             });
-            if let Some(current_match) = self.ensure_current_match(result.command_idx, &regex) {
+            if follow_output {
+                self.clear_current_match();
+                self.scroll_to_bottom();
+            } else if preserve_view {
+                self.restore_paused_filter_view(
+                    result.command_idx,
+                    previous_scroll_offset,
+                    previous_current_line,
+                );
+            } else if let Some(current_match) =
+                self.ensure_current_match(result.command_idx, &regex)
+            {
                 self.current_line_command = Some(result.command_idx);
                 self.current_line_idx = Some(current_match.row_idx);
                 self.reveal_current_line(current_match.row_idx);
@@ -2221,9 +2269,59 @@ impl CommandRunnerState {
             }
         } else {
             self.clear_current_match();
-            self.reset_current_line_to_scroll_offset();
+            if preserve_view {
+                self.restore_paused_filter_view(
+                    result.command_idx,
+                    previous_scroll_offset,
+                    previous_current_line,
+                );
+            } else {
+                self.reset_current_line_to_scroll_offset();
+            }
         }
         true
+    }
+
+    fn filter_update_preserves_view(
+        &self,
+        command_idx: usize,
+        pattern: &str,
+        mode: SearchMode,
+        context: usize,
+    ) -> bool {
+        !self.follow_output
+            && matches!(
+                &self.view_mode,
+                ViewMode::Output {
+                    command_idx: current_idx
+                } if *current_idx == command_idx
+            )
+            && self
+                .displayed_filter
+                .as_ref()
+                .filter(|filter| filter.command_idx == command_idx)
+                .map(|filter| {
+                    filter.pattern == pattern && filter.mode == mode && filter.context == context
+                })
+                .unwrap_or(false)
+    }
+
+    fn restore_paused_filter_view(
+        &mut self,
+        command_idx: usize,
+        scroll_offset: usize,
+        current_line: Option<usize>,
+    ) {
+        let total_rows = self.output_wrapped_row_count(command_idx);
+        let (scroll_offset, current_line) = clamp_paused_view(
+            total_rows,
+            self.visible_output_rows(),
+            scroll_offset,
+            current_line,
+        );
+        self.scroll_offset = scroll_offset;
+        self.current_line_command = Some(command_idx);
+        self.current_line_idx = current_line;
     }
 
     fn set_active_filter(
@@ -2277,6 +2375,9 @@ impl CommandRunnerState {
                 return;
             }
         };
+        let preserve_view = self.filter_update_preserves_view(command_idx, pattern, mode, context);
+        let previous_scroll_offset = self.scroll_offset;
+        let previous_current_line = self.current_line_idx;
 
         let regex = match self.cached_regex(pattern, mode) {
             Some(regex) => regex,
@@ -2332,6 +2433,19 @@ impl CommandRunnerState {
         });
         self.bump_filtered_generation();
 
+        if self.should_follow_output(command_idx) {
+            self.clear_current_match();
+            self.scroll_to_bottom();
+            return;
+        }
+        if preserve_view {
+            self.restore_paused_filter_view(
+                command_idx,
+                previous_scroll_offset,
+                previous_current_line,
+            );
+            return;
+        }
         self.scroll_offset = 0;
         let current_match = self.ensure_current_match(command_idx, &regex);
         if let Some(current_match) = current_match {
@@ -2349,6 +2463,33 @@ impl CommandRunnerState {
 // ============================================================================
 
 impl CommandRunnerState {
+    fn should_follow_output(&self, command_idx: usize) -> bool {
+        self.follow_output
+            && matches!(
+                &self.view_mode,
+                ViewMode::Output {
+                    command_idx: current_idx
+                } if *current_idx == command_idx
+            )
+    }
+
+    fn resume_follow(&mut self, command_idx: usize) {
+        if self.current_command_idx() != Some(command_idx) {
+            return;
+        }
+        self.follow_output = true;
+        self.clear_current_match();
+        self.scroll_to_bottom();
+    }
+
+    fn toggle_follow(&mut self, command_idx: usize) {
+        if self.follow_output {
+            self.follow_output = false;
+        } else {
+            self.resume_follow(command_idx);
+        }
+    }
+
     fn visible_output_rows(&self) -> usize {
         // Reserve rows for header, search line, context line, separator, and footer
         self.screen_rows.saturating_sub(5)
@@ -2374,7 +2515,8 @@ impl CommandRunnerState {
         }
         self.view_mode = ViewMode::Output { command_idx };
         self.scroll_offset = 0;
-        if self.commands[command_idx].status.is_running() {
+        self.follow_output = self.commands[command_idx].status.is_running();
+        if self.follow_output {
             self.scroll_to_bottom();
         } else {
             self.reset_current_line_to_scroll_offset();
@@ -2382,6 +2524,7 @@ impl CommandRunnerState {
     }
 
     fn scroll_down(&mut self, amount: usize) {
+        self.follow_output = false;
         let max_offset = self
             .output_line_count()
             .saturating_sub(self.visible_output_rows());
@@ -2389,6 +2532,7 @@ impl CommandRunnerState {
     }
 
     fn scroll_up(&mut self, amount: usize) {
+        self.follow_output = false;
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
@@ -2636,6 +2780,7 @@ impl CommandRunnerState {
             x: Position::Absolute(0),
             y: Position::Absolute(0),
         });
+        let command_running = status.is_running();
         let status = match status {
             CommandStatus::Pending => "Pending",
             CommandStatus::Running => "Running",
@@ -2668,6 +2813,21 @@ impl CommandRunnerState {
                 writer.push(":", None);
                 writer.push(" ", None);
                 writer.push(code, Some(status_color));
+            }
+            if command_running {
+                let follow_color: ColorAttribute = if self.follow_output {
+                    AnsiColor::Green.into()
+                } else {
+                    AnsiColor::Yellow.into()
+                };
+                writer.push(" │ ", Some(separator_fg));
+                writer.push_bold_label("Follow", Some(label_fg));
+                writer.push(":", None);
+                writer.push(" ", None);
+                writer.push(
+                    if self.follow_output { "live" } else { "paused" },
+                    Some(follow_color),
+                );
             }
             writer.fill_remaining();
         }
@@ -2860,14 +3020,22 @@ impl CommandRunnerState {
             }
         }
 
-        // Footer bar (blank)
-        changes.extend([
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(self.screen_rows - 1),
-            },
-            Change::Text(" ".repeat(self.screen_cols)),
-        ]);
+        changes.push(Change::CursorPosition {
+            x: Position::Absolute(0),
+            y: Position::Absolute(self.screen_rows - 1),
+        });
+        {
+            let mut writer = SegmentWriter::new(&mut changes, self.screen_cols);
+            if command_running && !filter_active {
+                let help = if self.follow_output {
+                    "[Space] pause follow"
+                } else {
+                    "[Space] resume follow  [G/End] jump to latest"
+                };
+                writer.push(help, Some(context_value_fg));
+            }
+            writer.fill_remaining();
+        }
 
         if let Some(cursor_x) = filter_cursor_x {
             changes.extend([
@@ -3106,6 +3274,20 @@ impl CommandRunnerState {
         process_tx: &Sender<ProcessMessage>,
     ) -> ControlFlow {
         match event {
+            InputEvent::Key(KeyEvent {
+                key: KeyCode::Char(' '),
+                modifiers: Modifiers::NONE,
+            }) => {
+                self.reset_count();
+                self.toggle_follow(command_idx);
+            }
+            InputEvent::Key(KeyEvent {
+                key: KeyCode::End,
+                modifiers: Modifiers::NONE,
+            }) => {
+                self.reset_count();
+                self.resume_follow(command_idx);
+            }
             // Numeric keys for count prefix
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char(c),
@@ -3152,17 +3334,15 @@ impl CommandRunnerState {
                 key: KeyCode::Char('G'),
                 modifiers: Modifiers::SHIFT | Modifiers::NONE,
             }) => {
-                let total_rows = self.output_wrapped_row_count(command_idx);
-                if total_rows == 0 {
-                    self.reset_count();
-                    return ControlFlow::Continue;
-                }
                 if self.count_buffer.is_empty() {
                     self.reset_count();
-                    self.clear_current_match_if_present(command_idx);
-                    self.set_current_line(command_idx, total_rows.saturating_sub(1), total_rows);
+                    self.resume_follow(command_idx);
                 } else {
                     let count = self.take_count();
+                    let total_rows = self.output_wrapped_row_count(command_idx);
+                    if total_rows == 0 {
+                        return ControlFlow::Continue;
+                    }
                     if self.filter_active_for(command_idx) {
                         let regex = self.active_search_regex_for(command_idx);
                         let rows = self.output_wrapped_rows(command_idx, regex.as_ref());
@@ -3309,8 +3489,12 @@ impl CommandRunnerState {
                     .is_some()
                 {
                     self.clear_active_filter();
-                    self.scroll_offset = 0;
-                    self.reset_current_line_to_scroll_offset();
+                    if self.follow_output {
+                        self.resume_follow(command_idx);
+                    } else {
+                        self.scroll_offset = 0;
+                        self.reset_current_line_to_scroll_offset();
+                    }
                 }
             }
             // Tab increases context, Shift-Tab decreases (when filter is active)
@@ -3341,6 +3525,7 @@ impl CommandRunnerState {
                 modifiers: Modifiers::NONE,
             }) => {
                 self.reset_count();
+                self.resume_follow(command_idx);
                 let _ = process_tx.try_send(ProcessMessage::Rerun(command_idx));
             }
             InputEvent::Key(KeyEvent {
@@ -4393,5 +4578,12 @@ mod test {
         assert_eq!(cache.total_rows, 8);
         assert_eq!(line_index_at_wrapped_row(&cache, 0), Some((0, 0)));
         assert_eq!(line_index_at_wrapped_row(&cache, 6), Some((2, 6)));
+    }
+
+    #[test]
+    fn paused_view_is_preserved_and_clamped_as_output_changes() {
+        assert_eq!(clamp_paused_view(100, 20, 50, Some(55)), (50, Some(55)));
+        assert_eq!(clamp_paused_view(40, 20, 50, Some(55)), (20, Some(39)));
+        assert_eq!(clamp_paused_view(0, 20, 50, Some(55)), (0, None));
     }
 }
