@@ -1365,15 +1365,6 @@ impl CommandRunnerState {
         self.commands.iter().any(|c| c.status.is_running())
     }
 
-    fn current_command(&self) -> Option<&CommandState> {
-        match &self.view_mode {
-            ViewMode::Output { command_idx } | ViewMode::Filter { command_idx, .. } => {
-                self.commands.get(*command_idx)
-            }
-            _ => None,
-        }
-    }
-
     fn current_command_idx(&self) -> Option<usize> {
         match &self.view_mode {
             ViewMode::Output { command_idx } | ViewMode::Filter { command_idx, .. } => {
