@@ -21,6 +21,17 @@ use window::{Clipboard, Window, WindowOps};
 /// Maximum output buffer size per command (1MB)
 const MAX_OUTPUT_SIZE: usize = 1024 * 1024;
 
+/// Keep output processing cooperative so that a continuously streaming
+/// command cannot starve terminal input and rendering.
+const MAX_OUTPUT_MESSAGES_PER_TICK: usize = 64;
+const MAX_OUTPUT_BYTES_PER_TICK: usize = 256 * 1024;
+const OUTPUT_DRAIN_TIME_BUDGET: Duration = Duration::from_millis(4);
+
+/// Cap expensive wrapping and terminal rendering while logs are streaming.
+const RENDER_INTERVAL: Duration = Duration::from_millis(33);
+const ELAPSED_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const MAX_INPUT_POLL_INTERVAL: Duration = Duration::from_millis(16);
+
 #[derive(Debug, Clone, Copy)]
 struct CommandRunnerColors {
     list_header_fg: ColorAttribute,
@@ -1450,6 +1461,31 @@ impl CommandRunnerState {
 // ============================================================================
 
 impl CommandRunnerState {
+    fn refresh_streaming_view(&mut self, command_idx: usize) {
+        if self.current_command_idx() != Some(command_idx) {
+            return;
+        }
+
+        let has_active_filter = self
+            .active_filter
+            .as_ref()
+            .map(|filter| filter.command_idx == command_idx)
+            .unwrap_or(false)
+            || matches!(
+                &self.view_mode,
+                ViewMode::Filter {
+                    command_idx: filter_idx,
+                    ..
+                } if *filter_idx == command_idx
+            );
+
+        if has_active_filter {
+            self.reapply_filter();
+        } else {
+            self.scroll_to_bottom();
+        }
+    }
+
     fn reapply_filter(&mut self) {
         // Use active_filter if set (for streaming updates after Enter)
         // or get from current Filter view mode
@@ -2773,7 +2809,41 @@ enum ProcessMessage {
 /// Messages sent from the process manager
 enum OutputMessage {
     Output { idx: usize, data: Vec<u8> },
-    Started { idx: usize },
+}
+
+struct OutputBatch {
+    per_command: Vec<Option<Vec<u8>>>,
+    message_count: usize,
+    byte_count: usize,
+}
+
+impl OutputBatch {
+    fn new(command_count: usize) -> Self {
+        Self {
+            per_command: (0..command_count).map(|_| None).collect(),
+            message_count: 0,
+            byte_count: 0,
+        }
+    }
+
+    fn push(&mut self, idx: usize, data: Vec<u8>) {
+        self.message_count = self.message_count.saturating_add(1);
+        self.byte_count = self.byte_count.saturating_add(data.len());
+
+        let Some(batch) = self.per_command.get_mut(idx) else {
+            return;
+        };
+        if let Some(buffer) = batch {
+            buffer.extend_from_slice(&data);
+        } else {
+            *batch = Some(data);
+        }
+    }
+
+    fn reached_size_limit(&self) -> bool {
+        self.message_count >= MAX_OUTPUT_MESSAGES_PER_TICK
+            || self.byte_count >= MAX_OUTPUT_BYTES_PER_TICK
+    }
 }
 
 /// Ensures that closing the applet also terminates commands that are still
@@ -2814,7 +2884,6 @@ async fn spawn_command(
     }
 
     let mut child = cmd.spawn()?;
-    let _ = output_tx.try_send(OutputMessage::Started { idx });
 
     // Spawn readers for stdout and stderr
     if let Some(stdout) = child.stdout.take() {
@@ -2826,10 +2895,16 @@ async fn spawn_command(
                 match reader.read(&mut buf).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        let _ = tx.try_send(OutputMessage::Output {
-                            idx,
-                            data: buf[..n].to_vec(),
-                        });
+                        if tx
+                            .send(OutputMessage::Output {
+                                idx,
+                                data: buf[..n].to_vec(),
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -2847,10 +2922,16 @@ async fn spawn_command(
                 match reader.read(&mut buf).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        let _ = tx.try_send(OutputMessage::Output {
-                            idx,
-                            data: buf[..n].to_vec(),
-                        });
+                        if tx
+                            .send(OutputMessage::Output {
+                                idx,
+                                data: buf[..n].to_vec(),
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -2905,40 +2986,41 @@ pub fn run_command_runner(
 
     // Main event loop
     let mut dirty = true;
+    let mut force_render = true;
+    let mut last_render = Instant::now();
+    let mut last_elapsed_refresh = Instant::now();
+    let mut pending_streaming_refresh = None;
     loop {
-        // Process output messages (non-blocking)
-        while let Ok(msg) = output_rx.try_recv() {
-            match msg {
-                OutputMessage::Output { idx, data } => {
-                    if let Some(cmd) = state.commands.get_mut(idx) {
-                        cmd.append_output(&data);
-                        dirty = true;
-                        // Re-apply filter if viewing this command's output with filter active
-                        if let Some(view_idx) = state.current_command_idx() {
-                            if view_idx == idx {
-                                let has_active_filter = state
-                                    .active_filter
-                                    .as_ref()
-                                    .map(|af| af.command_idx == idx)
-                                    .unwrap_or(false)
-                                    || matches!(state.view_mode, ViewMode::Filter { .. });
+        // Drain only a bounded amount of output so that a command producing an
+        // endless stream cannot starve input, process control, or rendering.
+        // Chunks are coalesced per command and applied once below.
+        let drain_started = Instant::now();
+        let mut output_batch = OutputBatch::new(state.commands.len());
+        let mut drain_budget_exhausted = false;
+        loop {
+            if output_batch.reached_size_limit()
+                || drain_started.elapsed() >= OUTPUT_DRAIN_TIME_BUDGET
+            {
+                drain_budget_exhausted = true;
+                break;
+            }
 
-                                if has_active_filter {
-                                    state.reapply_filter();
-                                } else {
-                                    // Auto-scroll if not filtering
-                                    state.scroll_to_bottom();
-                                }
-                            }
-                        }
-                    }
-                }
-                OutputMessage::Started { idx } => {
-                    if let Some(cmd) = state.commands.get_mut(idx) {
-                        cmd.status = CommandStatus::Running;
-                        cmd.start_time = Some(Instant::now());
-                        dirty = true;
-                    }
+            match output_rx.try_recv() {
+                Ok(OutputMessage::Output { idx, data }) => output_batch.push(idx, data),
+                Err(_) => break,
+            }
+        }
+
+        for (idx, data) in output_batch.per_command.into_iter().enumerate() {
+            let Some(data) = data else {
+                continue;
+            };
+            let is_current_command = state.current_command_idx() == Some(idx);
+            if let Some(cmd) = state.commands.get_mut(idx) {
+                cmd.append_output(&data);
+                if is_current_command {
+                    dirty = true;
+                    pending_streaming_refresh = Some(idx);
                 }
             }
         }
@@ -3000,12 +3082,16 @@ pub fn run_command_runner(
                         let _ = child.kill();
                     }
 
+                    let is_current_command = state.current_command_idx() == Some(idx);
                     if let Some(cmd) = state.commands.get_mut(idx) {
                         cmd.status = CommandStatus::Running;
                         cmd.clear_output();
                         cmd.start_time = Some(Instant::now());
                         cmd.end_time = None;
                         dirty = true;
+                        if is_current_command {
+                            pending_streaming_refresh = Some(idx);
+                        }
 
                         let config = cmd.config.clone();
                         let tx = output_tx.clone();
@@ -3031,25 +3117,86 @@ pub fn run_command_runner(
             break;
         }
 
-        // Render if running or state changed
-        if dirty || state.any_running() {
-            state.render(&mut term)?;
-            dirty = false;
+        // Elapsed time is the only visible state that changes merely because a
+        // command is running, and it has one-second precision.
+        if state.any_running() && last_elapsed_refresh.elapsed() >= ELAPSED_REFRESH_INTERVAL {
+            dirty = true;
+            last_elapsed_refresh = Instant::now();
         }
 
-        // Poll for input with short timeout
-        match term.poll_input(Some(Duration::from_millis(50)))? {
-            Some(event) => match state.handle_input(event, &process_tx) {
-                ControlFlow::Continue => {
-                    dirty = true;
-                }
-                ControlFlow::Exit => break,
-            },
-            None => {
-                // Timeout, continue
+        // Refresh wrapping/filter state and render no more than once per frame.
+        // Output continues to be ingested between frames.
+        let render_due = force_render || (dirty && last_render.elapsed() >= RENDER_INTERVAL);
+        if render_due {
+            if let Some(command_idx) = pending_streaming_refresh.take() {
+                state.refresh_streaming_view(command_idx);
             }
+            state.render(&mut term)?;
+            dirty = false;
+            force_render = false;
+            last_render = Instant::now();
+        }
+
+        let poll_timeout = if drain_budget_exhausted {
+            Duration::ZERO
+        } else if dirty {
+            let until_render = RENDER_INTERVAL
+                .checked_sub(last_render.elapsed())
+                .unwrap_or(Duration::ZERO);
+            MAX_INPUT_POLL_INTERVAL.min(until_render)
+        } else {
+            MAX_INPUT_POLL_INTERVAL
+        };
+
+        // Poll input even when output is backlogged. A zero timeout services
+        // pending input without delaying the next bounded output batch.
+        match term.poll_input(Some(poll_timeout))? {
+            Some(event) => {
+                if let Some(command_idx) = pending_streaming_refresh.take() {
+                    state.refresh_streaming_view(command_idx);
+                }
+
+                match state.handle_input(event, &process_tx) {
+                    ControlFlow::Continue => {
+                        dirty = true;
+                    }
+                    ControlFlow::Exit => break,
+                }
+            }
+            None => {}
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn output_batch_coalesces_chunks_per_command_in_arrival_order() {
+        let mut batch = OutputBatch::new(2);
+        batch.push(0, b"first".to_vec());
+        batch.push(1, b"other".to_vec());
+        batch.push(0, b"-second".to_vec());
+
+        assert_eq!(batch.message_count, 3);
+        assert_eq!(batch.byte_count, 17);
+        assert_eq!(batch.per_command[0].as_deref(), Some(&b"first-second"[..]));
+        assert_eq!(batch.per_command[1].as_deref(), Some(&b"other"[..]));
+    }
+
+    #[test]
+    fn output_batch_enforces_message_and_byte_limits() {
+        let mut messages = OutputBatch::new(1);
+        for _ in 0..MAX_OUTPUT_MESSAGES_PER_TICK {
+            messages.push(0, Vec::new());
+        }
+        assert!(messages.reached_size_limit());
+
+        let mut bytes = OutputBatch::new(1);
+        bytes.push(0, vec![0; MAX_OUTPUT_BYTES_PER_TICK]);
+        assert!(bytes.reached_size_limit());
+    }
 }
