@@ -3585,8 +3585,14 @@ enum OutputMessage {
     },
 }
 
+#[derive(Default)]
+struct OutputBatchBuffer {
+    data: Vec<u8>,
+    has_data: bool,
+}
+
 struct OutputBatch {
-    per_command: Vec<Option<Vec<u8>>>,
+    per_command: Vec<OutputBatchBuffer>,
     message_count: usize,
     byte_count: usize,
 }
@@ -3594,24 +3600,36 @@ struct OutputBatch {
 impl OutputBatch {
     fn new(command_count: usize) -> Self {
         Self {
-            per_command: (0..command_count).map(|_| None).collect(),
+            per_command: (0..command_count)
+                .map(|_| OutputBatchBuffer::default())
+                .collect(),
             message_count: 0,
             byte_count: 0,
         }
+    }
+
+    fn reset(&mut self) {
+        for buffer in &mut self.per_command {
+            buffer.data.clear();
+            buffer.has_data = false;
+        }
+        self.message_count = 0;
+        self.byte_count = 0;
     }
 
     fn push(&mut self, idx: usize, data: Vec<u8>) {
         self.message_count = self.message_count.saturating_add(1);
         self.byte_count = self.byte_count.saturating_add(data.len());
 
-        let Some(batch) = self.per_command.get_mut(idx) else {
+        let Some(buffer) = self.per_command.get_mut(idx) else {
             return;
         };
-        if let Some(buffer) = batch {
-            buffer.extend_from_slice(&data);
+        if !buffer.has_data && data.len() > buffer.data.capacity() {
+            buffer.data = data;
         } else {
-            *batch = Some(data);
+            buffer.data.extend_from_slice(&data);
         }
+        buffer.has_data = true;
     }
 
     fn reached_size_limit(&self) -> bool {
@@ -3772,6 +3790,7 @@ pub fn run_command_runner(
     let mut last_filter_refresh = Instant::now();
     let mut pending_streaming_refresh = None;
     let mut force_streaming_refresh = false;
+    let mut output_batch = OutputBatch::new(state.commands.len());
     loop {
         while let Ok(result) = filter_result_rx.try_recv() {
             if state.apply_filter_job_result(result) {
@@ -3793,7 +3812,7 @@ pub fn run_command_runner(
         // endless stream cannot starve input, process control, or rendering.
         // Chunks are coalesced per command and applied once below.
         let drain_started = Instant::now();
-        let mut output_batch = OutputBatch::new(state.commands.len());
+        output_batch.reset();
         let mut drain_budget_exhausted = false;
         loop {
             if output_batch.reached_size_limit()
@@ -3822,14 +3841,14 @@ pub fn run_command_runner(
             }
         }
 
-        for (idx, data) in output_batch.per_command.into_iter().enumerate() {
-            let Some(data) = data else {
+        for (idx, buffer) in output_batch.per_command.iter().enumerate() {
+            if !buffer.has_data {
                 continue;
-            };
+            }
             let is_current_command = state.current_command_idx() == Some(idx);
             let filter_active = is_current_command && state.filter_refresh_active_for(idx);
             if let Some(cmd) = state.commands.get_mut(idx) {
-                cmd.append_output(&data);
+                cmd.append_output(&buffer.data);
                 if is_current_command {
                     pending_streaming_refresh = Some(idx);
                     if !filter_active {
@@ -4054,8 +4073,10 @@ mod test {
 
         assert_eq!(batch.message_count, 3);
         assert_eq!(batch.byte_count, 17);
-        assert_eq!(batch.per_command[0].as_deref(), Some(&b"first-second"[..]));
-        assert_eq!(batch.per_command[1].as_deref(), Some(&b"other"[..]));
+        assert!(batch.per_command[0].has_data);
+        assert!(batch.per_command[1].has_data);
+        assert_eq!(batch.per_command[0].data.as_slice(), b"first-second");
+        assert_eq!(batch.per_command[1].data.as_slice(), b"other");
     }
 
     #[test]
@@ -4069,6 +4090,25 @@ mod test {
         let mut bytes = OutputBatch::new(1);
         bytes.push(0, vec![0; MAX_OUTPUT_BYTES_PER_TICK]);
         assert!(bytes.reached_size_limit());
+    }
+
+    #[test]
+    fn output_batch_reset_retains_buffer_capacity() {
+        let mut batch = OutputBatch::new(1);
+        batch.push(0, vec![0; 1024]);
+        let buffer_ptr = batch.per_command[0].data.as_ptr();
+        let buffer_capacity = batch.per_command[0].data.capacity();
+
+        batch.reset();
+        assert_eq!(batch.message_count, 0);
+        assert_eq!(batch.byte_count, 0);
+        assert!(!batch.per_command[0].has_data);
+        assert!(batch.per_command[0].data.is_empty());
+        assert_eq!(batch.per_command[0].data.capacity(), buffer_capacity);
+
+        batch.push(0, b"next".to_vec());
+        assert_eq!(batch.per_command[0].data.as_ptr(), buffer_ptr);
+        assert_eq!(batch.per_command[0].data.as_slice(), b"next");
     }
 
     #[test]
