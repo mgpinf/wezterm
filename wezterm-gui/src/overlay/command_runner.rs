@@ -7,7 +7,6 @@ use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::process::{Child, Command, Stdio};
 use std::collections::VecDeque;
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 use termwiz::cell::{AttributeChange, CellAttributes, Intensity};
 use termwiz::color::{AnsiColor, ColorAttribute};
@@ -137,7 +136,6 @@ struct WrappedSegment {
 
 #[derive(Debug, Clone, Copy)]
 struct MatchLocation {
-    match_id: usize,
     row_idx: usize,
     line_number: usize,
 }
@@ -963,20 +961,6 @@ fn update_filter_match_cache(
 }
 
 #[derive(Debug, Clone)]
-struct WrappedRowsCache {
-    command_idx: usize,
-    max_width: usize,
-    filter_active: bool,
-    output_generation: u64,
-    filtered_generation: u64,
-    regex_pattern: Option<String>,
-    first_line_sequence: Option<u64>,
-    line_row_counts: VecDeque<usize>,
-    rows: Rc<VecDeque<WrappedSegment>>,
-    match_locations: Rc<Vec<MatchLocation>>,
-}
-
-#[derive(Debug, Clone)]
 struct WrappedRowCountCache {
     command_idx: usize,
     max_width: usize,
@@ -984,6 +968,201 @@ struct WrappedRowCountCache {
     first_line_sequence: u64,
     line_row_counts: VecDeque<usize>,
     total_rows: usize,
+}
+
+#[derive(Debug, Clone)]
+struct FilteredLayoutCache {
+    command_idx: usize,
+    max_width: usize,
+    filtered_generation: u64,
+    regex_pattern: Option<String>,
+    line_indices: Vec<usize>,
+    line_start_rows: Vec<usize>,
+    line_row_counts: Vec<usize>,
+    line_match_starts: Vec<usize>,
+    match_locations: Vec<MatchLocation>,
+    total_rows: usize,
+}
+
+fn measure_line_and_append_match_locations(
+    line: &str,
+    max_width: usize,
+    highlights: &[HighlightRange],
+    line_start_row: usize,
+    line_number: usize,
+    locations: &mut Vec<MatchLocation>,
+) -> usize {
+    if max_width == 0 {
+        return 1;
+    }
+
+    fn record_row_matches(
+        highlights: &[HighlightRange],
+        next_highlight: &mut usize,
+        row_start: usize,
+        row_end: usize,
+        row_idx: usize,
+        line_start_row: usize,
+        line_number: usize,
+        locations: &mut Vec<MatchLocation>,
+    ) {
+        while let Some(highlight) = highlights.get(*next_highlight) {
+            if highlight.end <= row_start {
+                *next_highlight += 1;
+                continue;
+            }
+            if highlight.start >= row_end {
+                break;
+            }
+            debug_assert_eq!(highlight.match_id, locations.len());
+            locations.push(MatchLocation {
+                row_idx: line_start_row.saturating_add(row_idx),
+                line_number,
+            });
+            *next_highlight += 1;
+        }
+    }
+
+    let mut row_idx = 0usize;
+    let mut row_start = 0usize;
+    let mut row_width = 0usize;
+    let mut cell_idx = 0usize;
+    let mut next_highlight = 0usize;
+    for ch in line.chars() {
+        let ch_width = char_column_width(ch);
+        if row_width + ch_width > max_width && row_width > 0 {
+            let row_end = row_start.saturating_add(row_width);
+            record_row_matches(
+                highlights,
+                &mut next_highlight,
+                row_start,
+                row_end,
+                row_idx,
+                line_start_row,
+                line_number,
+                locations,
+            );
+            row_idx = row_idx.saturating_add(1);
+            row_start = cell_idx;
+            row_width = 0;
+        }
+        row_width = row_width.saturating_add(ch_width);
+        cell_idx = cell_idx.saturating_add(ch_width);
+    }
+
+    let row_end = row_start.saturating_add(row_width);
+    record_row_matches(
+        highlights,
+        &mut next_highlight,
+        row_start,
+        row_end,
+        row_idx,
+        line_start_row,
+        line_number,
+        locations,
+    );
+    row_idx.saturating_add(1)
+}
+
+fn build_filtered_layout(
+    command: &CommandState,
+    command_idx: usize,
+    filtered_lines: &[usize],
+    filtered_generation: u64,
+    max_width: usize,
+    regex: Option<&Regex>,
+) -> FilteredLayoutCache {
+    let mut line_indices = Vec::with_capacity(filtered_lines.len());
+    let mut line_start_rows = Vec::with_capacity(filtered_lines.len());
+    let mut line_row_counts = Vec::with_capacity(filtered_lines.len());
+    let mut line_match_starts = Vec::with_capacity(filtered_lines.len());
+    let mut match_locations = Vec::new();
+    let mut total_rows = 0usize;
+    let mut next_match_id = 0usize;
+
+    for line_idx in filtered_lines {
+        let Some(line) = command.output_lines.get(*line_idx) else {
+            continue;
+        };
+        line_indices.push(*line_idx);
+        line_start_rows.push(total_rows);
+        line_match_starts.push(next_match_id);
+        let highlights = regex
+            .filter(|_| max_width > 0)
+            .map(|regex| match_ranges_in_cells(line, regex, &mut next_match_id))
+            .unwrap_or_default();
+        let row_count = measure_line_and_append_match_locations(
+            line,
+            max_width,
+            &highlights,
+            total_rows,
+            *line_idx + 1,
+            &mut match_locations,
+        );
+        line_row_counts.push(row_count);
+        total_rows = total_rows.saturating_add(row_count);
+    }
+
+    FilteredLayoutCache {
+        command_idx,
+        max_width,
+        filtered_generation,
+        regex_pattern: regex.map(|regex| regex.as_str().to_string()),
+        line_indices,
+        line_start_rows,
+        line_row_counts,
+        line_match_starts,
+        match_locations,
+        total_rows,
+    }
+}
+
+fn filtered_line_position_at_row(cache: &FilteredLayoutCache, row_idx: usize) -> Option<usize> {
+    if row_idx >= cache.total_rows {
+        return None;
+    }
+    match cache.line_start_rows.binary_search(&row_idx) {
+        Ok(line_position) => Some(line_position),
+        Err(0) => None,
+        Err(line_position) => Some(line_position - 1),
+    }
+}
+
+fn wrap_filtered_visible_rows(
+    command: &CommandState,
+    cache: &FilteredLayoutCache,
+    regex: Option<&Regex>,
+    start_row: usize,
+    row_count: usize,
+) -> VecDeque<WrappedSegment> {
+    if row_count == 0 {
+        return VecDeque::new();
+    }
+    let Some(first_line_position) = filtered_line_position_at_row(cache, start_row) else {
+        return VecDeque::new();
+    };
+    let mut line_start_row = cache.line_start_rows[first_line_position];
+    let mut next_match_id = cache.line_match_starts[first_line_position];
+
+    let mut rows = VecDeque::with_capacity(row_count);
+    for line_position in first_line_position..cache.line_indices.len() {
+        if rows.len() >= row_count {
+            break;
+        }
+        let line_idx = cache.line_indices[line_position];
+        let Some(line) = command.output_lines.get(line_idx) else {
+            continue;
+        };
+        let highlights = regex
+            .map(|regex| match_ranges_in_cells(line, regex, &mut next_match_id))
+            .unwrap_or_default();
+        let segments =
+            wrap_line_with_highlights(line, &highlights, cache.max_width, Some(line_idx + 1));
+        let skip = start_row.saturating_sub(line_start_row);
+        rows.extend(segments.into_iter().skip(skip).take(row_count - rows.len()));
+        line_start_row = line_start_row.saturating_add(cache.line_row_counts[line_position]);
+    }
+    rows
 }
 
 fn update_wrapped_row_count_cache(
@@ -1083,82 +1262,6 @@ fn clamp_paused_view(
     (scroll_offset, current_line)
 }
 
-fn update_unfiltered_wrapped_cache(
-    command: &CommandState,
-    cache: &mut WrappedRowsCache,
-    command_idx: usize,
-    max_width: usize,
-    output_generation: u64,
-) -> Option<Rc<VecDeque<WrappedSegment>>> {
-    if cache.command_idx != command_idx
-        || cache.max_width != max_width
-        || cache.filter_active
-        || cache.regex_pattern.is_some()
-    {
-        return None;
-    }
-
-    let cached_first_sequence = cache.first_line_sequence?;
-    let removed_line_count = command
-        .first_line_sequence
-        .checked_sub(cached_first_sequence)?;
-    if removed_line_count > cache.line_row_counts.len() as u64 {
-        return None;
-    }
-    let removed_line_count = removed_line_count as usize;
-    let retained_cached_line_count = cache
-        .line_row_counts
-        .len()
-        .saturating_sub(removed_line_count);
-    if retained_cached_line_count > command.output_lines.len() {
-        return None;
-    }
-
-    let removed_row_count = cache
-        .line_row_counts
-        .iter()
-        .take(removed_line_count)
-        .copied()
-        .sum::<usize>();
-    cache.line_row_counts.drain(..removed_line_count);
-
-    let rows = Rc::make_mut(&mut cache.rows);
-    rows.drain(..removed_row_count);
-
-    // The last retained line is mutable until another newline arrives.
-    // Re-wrap it together with lines appended since the previous frame.
-    if let Some(last_row_count) = cache.line_row_counts.pop_back() {
-        rows.truncate(rows.len().saturating_sub(last_row_count));
-    }
-
-    let reused_line_count = cache.line_row_counts.len();
-    for (line_idx, line) in command
-        .output_lines
-        .iter()
-        .enumerate()
-        .skip(reused_line_count)
-    {
-        let segments = wrap_line_with_highlights(line, &[], max_width, Some(line_idx + 1));
-        cache.line_row_counts.push(segments.len());
-        rows.extend(segments);
-    }
-
-    // Retained line numbers are relative to the current buffer, so a front
-    // trim only requires updating the first segment of each line.
-    let mut row_idx = 0;
-    for (line_idx, row_count) in cache.line_row_counts.iter().copied().enumerate() {
-        if let Some(segment) = rows.get_mut(row_idx) {
-            segment.line_number = Some(line_idx + 1);
-        }
-        row_idx = row_idx.saturating_add(row_count);
-    }
-
-    cache.output_generation = output_generation;
-    cache.first_line_sequence = Some(command.first_line_sequence);
-    cache.match_locations = Rc::new(Vec::new());
-    Some(Rc::clone(&cache.rows))
-}
-
 /// Main state for the command runner applet
 struct CommandRunnerState {
     commands: Vec<CommandState>,
@@ -1173,8 +1276,8 @@ struct CommandRunnerState {
     filter_request_generation: u64,
     filter_job_in_flight: Option<(u64, usize)>,
     filtered_generation: u64,
-    wrapped_rows_cache: Option<WrappedRowsCache>,
     wrapped_row_count_cache: Option<WrappedRowCountCache>,
+    filtered_layout_cache: Option<FilteredLayoutCache>,
     regex_cache: Option<RegexCache>,
     filter_match_cache: Option<FilterMatchCache>,
     current_match_idx: Option<usize>,
@@ -1214,8 +1317,8 @@ impl CommandRunnerState {
             filter_request_generation: 0,
             filter_job_in_flight: None,
             filtered_generation: 0,
-            wrapped_rows_cache: None,
             wrapped_row_count_cache: None,
+            filtered_layout_cache: None,
             regex_cache: None,
             filter_match_cache: None,
             current_match_idx: None,
@@ -1422,6 +1525,95 @@ impl CommandRunnerState {
 // ============================================================================
 
 impl CommandRunnerState {
+    fn ensure_filtered_layout(&mut self, command_idx: usize, regex: Option<&Regex>) -> bool {
+        let max_width = self.output_content_width_for(command_idx);
+        let regex_pattern = regex.map(|regex| regex.as_str());
+        if self
+            .filtered_layout_cache
+            .as_ref()
+            .filter(|cache| {
+                cache.command_idx == command_idx
+                    && cache.max_width == max_width
+                    && cache.filtered_generation == self.filtered_generation
+                    && cache.regex_pattern.as_deref() == regex_pattern
+            })
+            .is_some()
+        {
+            return true;
+        }
+
+        let Some(command) = self.commands.get(command_idx) else {
+            self.filtered_layout_cache = None;
+            return false;
+        };
+        self.filtered_layout_cache = Some(build_filtered_layout(
+            command,
+            command_idx,
+            &self.filtered_lines,
+            self.filtered_generation,
+            max_width,
+            regex,
+        ));
+        true
+    }
+
+    fn filtered_wrapped_row_count(&mut self, command_idx: usize, regex: Option<&Regex>) -> usize {
+        if !self.ensure_filtered_layout(command_idx, regex) {
+            return 0;
+        }
+        self.filtered_layout_cache
+            .as_ref()
+            .map(|cache| cache.total_rows)
+            .unwrap_or(0)
+    }
+
+    fn filtered_line_number_at_row(
+        &mut self,
+        command_idx: usize,
+        regex: Option<&Regex>,
+        row_idx: usize,
+    ) -> Option<usize> {
+        self.ensure_filtered_layout(command_idx, regex);
+        let cache = self.filtered_layout_cache.as_ref()?;
+        let line_position = filtered_line_position_at_row(cache, row_idx)?;
+        cache
+            .line_indices
+            .get(line_position)
+            .map(|line_idx| line_idx + 1)
+    }
+
+    fn filtered_row_for_line_number(
+        &mut self,
+        command_idx: usize,
+        regex: Option<&Regex>,
+        line_number: usize,
+    ) -> Option<usize> {
+        self.ensure_filtered_layout(command_idx, regex);
+        let cache = self.filtered_layout_cache.as_ref()?;
+        let line_idx = line_number.checked_sub(1)?;
+        let line_position = cache.line_indices.binary_search(&line_idx).ok()?;
+        cache.line_start_rows.get(line_position).copied()
+    }
+
+    fn filtered_visible_rows(
+        &mut self,
+        command_idx: usize,
+        regex: Option<&Regex>,
+        start_row: usize,
+        row_count: usize,
+    ) -> VecDeque<WrappedSegment> {
+        if row_count == 0 || !self.ensure_filtered_layout(command_idx, regex) {
+            return VecDeque::new();
+        }
+        let Some(cache) = self.filtered_layout_cache.as_ref() else {
+            return VecDeque::new();
+        };
+        let Some(command) = self.commands.get(command_idx) else {
+            return VecDeque::new();
+        };
+        wrap_filtered_visible_rows(command, cache, regex, start_row, row_count)
+    }
+
     fn unfiltered_wrapped_row_count(&mut self, command_idx: usize) -> usize {
         let max_width = self.output_content_width_for(command_idx);
         let cache_updated = match (
@@ -1511,112 +1703,85 @@ impl CommandRunnerState {
         rows
     }
 
-    fn output_wrapped_rows(
-        &mut self,
-        command_idx: usize,
-        regex: Option<&Regex>,
-    ) -> Rc<VecDeque<WrappedSegment>> {
-        let max_width = self.output_content_width_for(command_idx);
-        let filter_active = self.filter_active_for(command_idx);
-        let output_generation = self
-            .commands
-            .get(command_idx)
-            .map(|cmd| cmd.output_generation)
-            .unwrap_or(0);
-        let regex_pattern = regex.map(|regex| regex.as_str().to_string());
-        if let Some(cache) = &self.wrapped_rows_cache {
-            if cache.command_idx == command_idx
-                && cache.max_width == max_width
-                && cache.filter_active == filter_active
-                && (filter_active || cache.output_generation == output_generation)
-                && (!filter_active || cache.filtered_generation == self.filtered_generation)
-                && cache.regex_pattern.as_deref() == regex_pattern.as_deref()
-            {
-                return Rc::clone(&cache.rows);
-            }
-        }
-
-        if !filter_active && regex_pattern.is_none() {
-            if let (Some(command), Some(cache)) = (
-                self.commands.get(command_idx),
-                self.wrapped_rows_cache.as_mut(),
-            ) {
-                if let Some(rows) = update_unfiltered_wrapped_cache(
-                    command,
-                    cache,
-                    command_idx,
-                    max_width,
-                    output_generation,
-                ) {
-                    return rows;
-                }
-            }
-        }
-
-        let mut rows = VecDeque::new();
-        let mut line_row_counts = VecDeque::new();
-        let mut next_match_id = 0;
-        if filter_active {
-            if let Some(cmd) = self.commands.get(command_idx) {
-                for line_idx in &self.filtered_lines {
-                    let Some(line) = cmd.output_lines.get(*line_idx) else {
-                        continue;
-                    };
-                    let line_number = Some(*line_idx + 1);
-                    let highlights = regex
-                        .map(|regex| match_ranges_in_cells(line, regex, &mut next_match_id))
-                        .unwrap_or_default();
-                    rows.extend(wrap_line_with_highlights(
-                        line,
-                        &highlights,
-                        max_width,
-                        line_number,
-                    ));
-                }
-            }
-        } else if let Some(cmd) = self.commands.get(command_idx) {
-            for (line_idx, line) in cmd.output_lines.iter().enumerate() {
-                let line_number = Some(line_idx + 1);
-                let highlights = regex
-                    .map(|regex| match_ranges_in_cells(line, regex, &mut next_match_id))
-                    .unwrap_or_default();
-                let segments = wrap_line_with_highlights(line, &highlights, max_width, line_number);
-                line_row_counts.push(segments.len());
-                rows.extend(segments);
-            }
-        }
-
-        let first_line_sequence = if filter_active {
-            None
-        } else {
-            self.commands
-                .get(command_idx)
-                .map(|cmd| cmd.first_line_sequence)
-        };
-        let rows = Rc::new(rows);
-        let match_locations = Rc::new(Self::match_locations_from_rows(rows.as_ref()));
-        self.wrapped_rows_cache = Some(WrappedRowsCache {
-            command_idx,
-            max_width,
-            filter_active,
-            output_generation,
-            filtered_generation: self.filtered_generation,
-            regex_pattern,
-            first_line_sequence,
-            line_row_counts,
-            rows: Rc::clone(&rows),
-            match_locations,
-        });
-        rows
-    }
-
     fn output_wrapped_row_count(&mut self, command_idx: usize) -> usize {
         if !self.filter_active_for(command_idx) {
             self.unfiltered_wrapped_row_count(command_idx)
         } else {
             let regex = self.active_search_regex_for(command_idx);
-            self.output_wrapped_rows(command_idx, regex.as_ref()).len()
+            self.filtered_wrapped_row_count(command_idx, regex.as_ref())
         }
+    }
+
+    fn output_line_number_at_row(&mut self, command_idx: usize, row_idx: usize) -> Option<usize> {
+        if self.filter_active_for(command_idx) {
+            let regex = self.active_search_regex_for(command_idx);
+            self.filtered_line_number_at_row(command_idx, regex.as_ref(), row_idx)
+        } else {
+            self.unfiltered_line_number_at_row(command_idx, row_idx)
+        }
+    }
+
+    fn output_row_for_line_number(
+        &mut self,
+        command_idx: usize,
+        line_number: usize,
+    ) -> Option<usize> {
+        if self.filter_active_for(command_idx) {
+            let regex = self.active_search_regex_for(command_idx);
+            return self.filtered_row_for_line_number(command_idx, regex.as_ref(), line_number);
+        }
+
+        self.unfiltered_wrapped_row_count(command_idx);
+        let cache = self.wrapped_row_count_cache.as_ref()?;
+        let line_idx = line_number.checked_sub(1)?;
+        if line_idx >= cache.line_row_counts.len() {
+            return None;
+        }
+        Some(cache.line_row_counts.iter().take(line_idx).copied().sum())
+    }
+
+    fn next_output_line_row(&mut self, command_idx: usize, row_idx: usize) -> Option<usize> {
+        if self.filter_active_for(command_idx) {
+            let regex = self.active_search_regex_for(command_idx);
+            self.ensure_filtered_layout(command_idx, regex.as_ref());
+            let cache = self.filtered_layout_cache.as_ref()?;
+            let line_position = filtered_line_position_at_row(cache, row_idx)?;
+            return cache.line_start_rows.get(line_position + 1).copied();
+        }
+
+        self.unfiltered_wrapped_row_count(command_idx);
+        let cache = self.wrapped_row_count_cache.as_ref()?;
+        let (line_idx, line_start_row) = line_index_at_wrapped_row(cache, row_idx)?;
+        cache
+            .line_row_counts
+            .get(line_idx)
+            .map(|row_count| line_start_row.saturating_add(*row_count))
+            .filter(|next_row| *next_row < cache.total_rows)
+    }
+
+    fn previous_output_line_row(&mut self, command_idx: usize, row_idx: usize) -> Option<usize> {
+        if self.filter_active_for(command_idx) {
+            let regex = self.active_search_regex_for(command_idx);
+            self.ensure_filtered_layout(command_idx, regex.as_ref());
+            let cache = self.filtered_layout_cache.as_ref()?;
+            let line_position = filtered_line_position_at_row(cache, row_idx)?;
+            return line_position
+                .checked_sub(1)
+                .and_then(|previous| cache.line_start_rows.get(previous).copied());
+        }
+
+        self.unfiltered_wrapped_row_count(command_idx);
+        let cache = self.wrapped_row_count_cache.as_ref()?;
+        let (line_idx, _) = line_index_at_wrapped_row(cache, row_idx)?;
+        let previous_line = line_idx.checked_sub(1)?;
+        Some(
+            cache
+                .line_row_counts
+                .iter()
+                .take(previous_line)
+                .copied()
+                .sum(),
+        )
     }
 }
 
@@ -1663,49 +1828,6 @@ impl CommandRunnerState {
         self.reveal_current_line(clamped);
     }
 
-    fn logical_line_number_at(rows: &VecDeque<WrappedSegment>, row_idx: usize) -> Option<usize> {
-        if rows.is_empty() {
-            return None;
-        }
-        let mut idx = row_idx.min(rows.len().saturating_sub(1));
-        loop {
-            if let Some(line_number) = rows[idx].line_number {
-                return Some(line_number);
-            }
-            if idx == 0 {
-                return None;
-            }
-            idx -= 1;
-        }
-    }
-
-    fn next_logical_row(rows: &VecDeque<WrappedSegment>, row_idx: usize) -> Option<usize> {
-        let current_line = Self::logical_line_number_at(rows, row_idx)?;
-        for idx in row_idx.saturating_add(1)..rows.len() {
-            if let Some(line_number) = rows[idx].line_number {
-                if line_number != current_line {
-                    return Some(idx);
-                }
-            }
-        }
-        None
-    }
-
-    fn prev_logical_row(rows: &VecDeque<WrappedSegment>, row_idx: usize) -> Option<usize> {
-        let current_line = Self::logical_line_number_at(rows, row_idx)?;
-        if row_idx == 0 {
-            return None;
-        }
-        for idx in (0..row_idx).rev() {
-            if let Some(line_number) = rows[idx].line_number {
-                if line_number != current_line {
-                    return Some(idx);
-                }
-            }
-        }
-        None
-    }
-
     fn move_current_line(&mut self, command_idx: usize, delta: isize) {
         self.follow_output = false;
         let total_rows = self.output_wrapped_row_count(command_idx);
@@ -1713,13 +1835,6 @@ impl CommandRunnerState {
             Some(idx) => idx,
             None => return,
         };
-        let regex = self.active_search_regex_for(command_idx);
-        let rows = self.output_wrapped_rows(command_idx, regex.as_ref());
-        if rows.is_empty() {
-            self.current_line_idx = None;
-            self.current_line_command = Some(command_idx);
-            return;
-        }
 
         let steps = if delta >= 0 {
             delta as usize
@@ -1733,9 +1848,9 @@ impl CommandRunnerState {
         let mut row_idx = current.min(total_rows.saturating_sub(1));
         for _ in 0..steps {
             let next = if delta >= 0 {
-                Self::next_logical_row(rows.as_ref(), row_idx)
+                self.next_output_line_row(command_idx, row_idx)
             } else {
-                Self::prev_logical_row(rows.as_ref(), row_idx)
+                self.previous_output_line_row(command_idx, row_idx)
             };
             if let Some(next) = next {
                 row_idx = next;
@@ -1780,42 +1895,15 @@ impl CommandRunnerState {
 // ============================================================================
 
 impl CommandRunnerState {
-    fn match_locations_from_rows(rows: &VecDeque<WrappedSegment>) -> Vec<MatchLocation> {
-        // Match_ids are sequential starting from 0 and encountered in ascending order.
-        // We only record the first row where each match_id appears.
-        let mut locations: Vec<MatchLocation> = Vec::new();
-        let mut current_line_number = None;
-        for (row_idx, segment) in rows.iter().enumerate() {
-            if segment.line_number.is_some() {
-                current_line_number = segment.line_number;
-            }
-            let line_number = current_line_number.unwrap_or(0);
-            for hl in &segment.highlights {
-                // Only record first occurrence of each match_id
-                if hl.match_id == locations.len() {
-                    locations.push(MatchLocation {
-                        match_id: hl.match_id,
-                        row_idx,
-                        line_number,
-                    });
-                }
-            }
-        }
-        locations
-    }
-
-    fn match_locations_for(&mut self, command_idx: usize, regex: &Regex) -> Vec<MatchLocation> {
-        let rows = self.output_wrapped_rows(command_idx, Some(regex));
-        self.wrapped_rows_cache
+    fn ensure_current_match(&mut self, command_idx: usize, regex: &Regex) -> Option<MatchLocation> {
+        self.ensure_filtered_layout(command_idx, Some(regex));
+        let match_count = self
+            .filtered_layout_cache
             .as_ref()
             .filter(|cache| cache.command_idx == command_idx)
-            .map(|cache| cache.match_locations.as_ref().clone())
-            .unwrap_or_else(|| Self::match_locations_from_rows(rows.as_ref()))
-    }
-
-    fn ensure_current_match(&mut self, command_idx: usize, regex: &Regex) -> Option<MatchLocation> {
-        let matches = self.match_locations_for(command_idx, regex);
-        if matches.is_empty() {
+            .map(|cache| cache.match_locations.len())
+            .unwrap_or(0);
+        if match_count == 0 {
             self.reset_current_match(command_idx);
             return None;
         }
@@ -1825,9 +1913,8 @@ impl CommandRunnerState {
             self.current_match_idx = None;
         }
 
-        let max = matches.len();
         let idx = match self.current_match_idx {
-            Some(idx) if idx < max => idx,
+            Some(idx) if idx < match_count => idx,
             _ => {
                 self.current_match_idx = Some(0);
                 self.current_match_command = Some(command_idx);
@@ -1835,7 +1922,11 @@ impl CommandRunnerState {
             }
         };
         self.current_match_idx = Some(idx);
-        Some(matches[idx])
+        self.filtered_layout_cache
+            .as_ref()?
+            .match_locations
+            .get(idx)
+            .copied()
     }
 
     fn clear_current_match(&mut self) {
@@ -1849,11 +1940,7 @@ impl CommandRunnerState {
     }
 
     fn clear_current_match_if_present(&mut self, command_idx: usize) {
-        let regex = match self.active_search_regex_for(command_idx) {
-            Some(regex) => regex,
-            None => return,
-        };
-        if self.match_locations_for(command_idx, &regex).is_empty() {
+        if self.active_search_regex_for(command_idx).is_none() {
             return;
         }
         self.current_match_command = Some(command_idx);
@@ -1883,14 +1970,7 @@ impl CommandRunnerState {
             Some(idx) => idx,
             None => return,
         };
-        let regex = self.active_search_regex_for(command_idx);
-        let rows = self.output_wrapped_rows(command_idx, regex.as_ref());
-        if rows.is_empty() {
-            return;
-        }
-
-        let row_idx = current_row.min(rows.len().saturating_sub(1));
-        let line_number = Self::logical_line_number_at(rows.as_ref(), row_idx);
+        let line_number = self.output_line_number_at_row(command_idx, current_row);
 
         let text = if let Some(line_number) = line_number {
             let line_idx = line_number.saturating_sub(1);
@@ -1918,8 +1998,7 @@ impl CommandRunnerState {
                     .and_then(|cmd| join_lines(&cmd.output_lines, line_idx, count))
             }
         } else {
-            rows.get(self.scroll_offset)
-                .map(|segment| segment.text.to_string())
+            None
         };
 
         if let Some(text) = text {
@@ -1936,59 +2015,61 @@ impl CommandRunnerState {
         if self.current_match_command != Some(command_idx) {
             self.reset_current_match(command_idx);
         }
-        let rows = self.output_wrapped_rows(command_idx, Some(&regex));
-        let matches = self
-            .wrapped_rows_cache
+        self.ensure_filtered_layout(command_idx, Some(&regex));
+        let match_count = self
+            .filtered_layout_cache
             .as_ref()
-            .filter(|cache| cache.command_idx == command_idx)
-            .map(|cache| Rc::clone(&cache.match_locations))
-            .unwrap_or_else(|| Rc::new(Self::match_locations_from_rows(rows.as_ref())));
-        if matches.is_empty() {
-            drop(rows);
+            .map(|cache| cache.match_locations.len())
+            .unwrap_or(0);
+        if match_count == 0 {
             self.reset_current_match(command_idx);
             return;
         }
 
-        let max = matches.len();
         let anchor_line = if self.current_line_command == Some(command_idx) {
-            self.current_line_idx
-                .and_then(|idx| Self::logical_line_number_at(rows.as_ref(), idx))
+            match self.current_line_idx {
+                Some(idx) => self.output_line_number_at_row(command_idx, idx),
+                None => None,
+            }
         } else {
             None
         };
-        let next_idx = if let Some(anchor_line) = anchor_line {
-            if forward {
-                matches
-                    .iter()
-                    .position(|loc| loc.line_number > anchor_line)
-                    .unwrap_or(0)
+        let (next_idx, row_idx) = {
+            let matches = &self.filtered_layout_cache.as_ref().unwrap().match_locations;
+            let next_idx = if let Some(anchor_line) = anchor_line {
+                if forward {
+                    matches
+                        .iter()
+                        .position(|loc| loc.line_number > anchor_line)
+                        .unwrap_or(0)
+                } else {
+                    matches
+                        .iter()
+                        .rposition(|loc| loc.line_number < anchor_line)
+                        .unwrap_or(match_count - 1)
+                }
             } else {
-                matches
-                    .iter()
-                    .rposition(|loc| loc.line_number < anchor_line)
-                    .unwrap_or(max - 1)
-            }
-        } else {
-            match self.current_match_idx {
-                Some(idx) if idx < max => {
-                    if forward {
-                        (idx + 1) % max
-                    } else {
-                        (idx + max - 1) % max
+                match self.current_match_idx {
+                    Some(idx) if idx < match_count => {
+                        if forward {
+                            (idx + 1) % match_count
+                        } else {
+                            (idx + match_count - 1) % match_count
+                        }
+                    }
+                    _ => {
+                        if forward {
+                            0
+                        } else {
+                            match_count - 1
+                        }
                     }
                 }
-                _ => {
-                    if forward {
-                        0
-                    } else {
-                        max - 1
-                    }
-                }
-            }
+            };
+            (next_idx, matches[next_idx].row_idx)
         };
 
         self.current_match_idx = Some(next_idx);
-        let row_idx = matches[next_idx].row_idx;
         self.current_line_command = Some(command_idx);
         self.current_line_idx = Some(row_idx);
         self.reveal_current_line(row_idx);
@@ -2900,16 +2981,17 @@ impl CommandRunnerState {
         let visible_rows = self.visible_output_rows();
         let start_row = 4;
         let regex = self.active_search_regex_for(cmd_idx);
-        let use_virtual_rows = !self.filter_active_for(cmd_idx) && regex.is_none();
-        let (rows, row_base, line_count, first_logical_line_number) = if use_virtual_rows {
-            let line_count = self.unfiltered_wrapped_row_count(cmd_idx);
+        let filtered_output = self.filter_active_for(cmd_idx);
+        let (rows, row_base, line_count, first_logical_line_number) = if filtered_output {
+            let line_count = self.filtered_wrapped_row_count(cmd_idx, regex.as_ref());
             let first_logical_line_number =
-                self.unfiltered_line_number_at_row(cmd_idx, self.scroll_offset);
-            let rows = Rc::new(VecDeque::from(self.unfiltered_visible_rows(
+                self.filtered_line_number_at_row(cmd_idx, regex.as_ref(), self.scroll_offset);
+            let rows = self.filtered_visible_rows(
                 cmd_idx,
+                regex.as_ref(),
                 self.scroll_offset,
                 visible_rows,
-            )));
+            );
             (
                 rows,
                 self.scroll_offset,
@@ -2917,9 +2999,20 @@ impl CommandRunnerState {
                 first_logical_line_number,
             )
         } else {
-            let rows = self.output_wrapped_rows(cmd_idx, regex.as_ref());
-            let line_count = rows.len();
-            (rows, 0, line_count, None)
+            let line_count = self.unfiltered_wrapped_row_count(cmd_idx);
+            let first_logical_line_number =
+                self.unfiltered_line_number_at_row(cmd_idx, self.scroll_offset);
+            let rows = VecDeque::from(self.unfiltered_visible_rows(
+                cmd_idx,
+                self.scroll_offset,
+                visible_rows,
+            ));
+            (
+                rows,
+                self.scroll_offset,
+                line_count,
+                first_logical_line_number,
+            )
         };
         let active_line_number = if line_count == 0 {
             None
@@ -2932,20 +3025,14 @@ impl CommandRunnerState {
                 Some(self.scroll_offset.min(line_count - 1))
             };
             let row_idx = current_row.unwrap_or(0);
-            if use_virtual_rows {
-                self.unfiltered_line_number_at_row(cmd_idx, row_idx)
+            if filtered_output {
+                self.filtered_line_number_at_row(cmd_idx, regex.as_ref(), row_idx)
             } else {
-                Self::logical_line_number_at(rows.as_ref(), row_idx)
+                self.unfiltered_line_number_at_row(cmd_idx, row_idx)
             }
         };
-        let current_match_id = if self.current_match_command == Some(cmd_idx) {
-            self.current_match_idx.and_then(|idx| {
-                self.wrapped_rows_cache
-                    .as_ref()
-                    .filter(|cache| cache.command_idx == cmd_idx)
-                    .and_then(|cache| cache.match_locations.get(idx))
-                    .map(|loc| loc.match_id)
-            })
+        let current_match_id = if filtered_output && self.current_match_command == Some(cmd_idx) {
+            self.current_match_idx
         } else {
             None
         };
@@ -3343,23 +3430,9 @@ impl CommandRunnerState {
                     if total_rows == 0 {
                         return ControlFlow::Continue;
                     }
-                    if self.filter_active_for(command_idx) {
-                        let regex = self.active_search_regex_for(command_idx);
-                        let rows = self.output_wrapped_rows(command_idx, regex.as_ref());
-                        let target_row = rows.iter().enumerate().find_map(|(idx, segment)| {
-                            if segment.line_number == Some(count) {
-                                Some(idx)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(row_idx) = target_row {
-                            self.clear_current_match_if_present(command_idx);
-                            self.set_current_line(command_idx, row_idx, total_rows);
-                        }
-                    } else {
+                    if let Some(row_idx) = self.output_row_for_line_number(command_idx, count) {
                         self.clear_current_match_if_present(command_idx);
-                        self.set_current_line(command_idx, count.saturating_sub(1), total_rows);
+                        self.set_current_line(command_idx, row_idx, total_rows);
                     }
                 }
             }
@@ -4234,29 +4307,6 @@ mod test {
         })
     }
 
-    fn wrapped_cache(command: &CommandState, max_width: usize) -> WrappedRowsCache {
-        let mut rows = VecDeque::new();
-        let mut line_row_counts = VecDeque::new();
-        for (line_idx, line) in command.output_lines.iter().enumerate() {
-            let segments = wrap_line_with_highlights(line, &[], max_width, Some(line_idx + 1));
-            line_row_counts.push(segments.len());
-            rows.extend(segments);
-        }
-
-        WrappedRowsCache {
-            command_idx: 0,
-            max_width,
-            filter_active: false,
-            output_generation: command.output_generation,
-            filtered_generation: 0,
-            regex_pattern: None,
-            first_line_sequence: Some(command.first_line_sequence),
-            line_row_counts,
-            rows: Rc::new(rows),
-            match_locations: Rc::new(Vec::new()),
-        }
-    }
-
     #[test]
     fn output_batch_coalesces_chunks_per_command_in_arrival_order() {
         let mut batch = OutputBatch::new(2);
@@ -4326,50 +4376,6 @@ mod test {
         );
         assert_eq!(command.first_line_sequence, 4);
         assert_eq!(command.next_line_sequence, 5);
-    }
-
-    #[test]
-    fn incremental_wrapping_reuses_completed_lines() {
-        let mut command = command_state();
-        command.append_output(b"one\ntwo");
-        let mut cache = wrapped_cache(&command, 3);
-        let first_line_ptr = cache.rows[0].text.as_ptr();
-
-        command.append_output(b"-continued\nthree");
-        let rows =
-            update_unfiltered_wrapped_cache(&command, &mut cache, 0, 3, command.output_generation)
-                .unwrap();
-
-        assert_eq!(rows[0].text, "one");
-        assert_eq!(rows[0].text.as_ptr(), first_line_ptr);
-        assert_eq!(cache.line_row_counts, VecDeque::from([1, 5, 2]));
-        assert_eq!(rows[1].line_number, Some(2));
-        assert_eq!(rows[6].line_number, Some(3));
-    }
-
-    #[test]
-    fn incremental_wrapping_discards_trimmed_prefix_and_renumbers_lines() {
-        let mut command = command_state();
-        command.append_output(b"one\ntwo\nthree");
-        let mut cache = wrapped_cache(&command, 10);
-        let second_line_ptr = cache.rows[1].text.as_ptr();
-        let second_row_ptr: *const WrappedSegment = &cache.rows[1];
-
-        command.output_lines.pop_front();
-        command.line_byte_lengths.pop_front();
-        command.first_line_sequence += 1;
-        command.output_generation += 1;
-        let rows =
-            update_unfiltered_wrapped_cache(&command, &mut cache, 0, 10, command.output_generation)
-                .unwrap();
-
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].text, "two");
-        assert_eq!(rows[0].text.as_ptr(), second_line_ptr);
-        assert_eq!(&rows[0] as *const WrappedSegment, second_row_ptr);
-        assert_eq!(rows[0].line_number, Some(1));
-        assert_eq!(rows[1].text, "three");
-        assert_eq!(rows[1].line_number, Some(2));
     }
 
     #[test]
@@ -4578,6 +4584,86 @@ mod test {
         assert_eq!(cache.total_rows, 8);
         assert_eq!(line_index_at_wrapped_row(&cache, 0), Some((0, 0)));
         assert_eq!(line_index_at_wrapped_row(&cache, 6), Some((2, 6)));
+    }
+
+    #[test]
+    fn filtered_layout_tracks_wrapped_rows_and_match_offsets() {
+        let mut command = command_state();
+        command.append_output(b"match\nctx\nmatch match");
+        let regex = Regex::new("match").unwrap();
+
+        let cache = build_filtered_layout(&command, 0, &[0, 1, 2], 7, 4, Some(&regex));
+
+        assert_eq!(cache.line_indices, vec![0, 1, 2]);
+        assert_eq!(cache.line_start_rows, vec![0, 2, 3]);
+        assert_eq!(cache.line_row_counts, vec![2, 1, 3]);
+        assert_eq!(cache.line_match_starts, vec![0, 1, 1]);
+        assert_eq!(
+            cache
+                .match_locations
+                .iter()
+                .map(|location| (location.row_idx, location.line_number))
+                .collect::<Vec<_>>(),
+            vec![(0, 1), (3, 3), (4, 3)]
+        );
+        assert_eq!(cache.total_rows, 6);
+        assert_eq!(filtered_line_position_at_row(&cache, 0), Some(0));
+        assert_eq!(filtered_line_position_at_row(&cache, 1), Some(0));
+        assert_eq!(filtered_line_position_at_row(&cache, 2), Some(1));
+        assert_eq!(filtered_line_position_at_row(&cache, 5), Some(2));
+        assert_eq!(filtered_line_position_at_row(&cache, 6), None);
+
+        let rows = wrap_filtered_visible_rows(&command, &cache, Some(&regex), 1, 3);
+        assert_eq!(
+            rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>(),
+            vec!["h", "ctx", "matc"]
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.line_number).collect::<Vec<_>>(),
+            vec![None, Some(2), Some(3)]
+        );
+        assert_eq!(rows[0].highlights[0].match_id, 0);
+        assert_eq!(rows[2].highlights[0].match_id, 1);
+    }
+
+    #[test]
+    fn filtered_layout_does_not_assign_ids_to_zero_width_matches() {
+        let mut command = command_state();
+        command.append_output(b"first\nsecond");
+        let regex = Regex::new("^").unwrap();
+
+        let cache = build_filtered_layout(&command, 0, &[0, 1], 1, 80, Some(&regex));
+
+        assert_eq!(cache.line_match_starts, vec![0, 0]);
+        assert!(cache.match_locations.is_empty());
+    }
+
+    #[test]
+    fn match_locations_follow_wide_character_wrapping() {
+        let mut command = command_state();
+        command.append_output("a界b".as_bytes());
+        let regex = Regex::new("界").unwrap();
+
+        let cache = build_filtered_layout(&command, 0, &[0], 1, 2, Some(&regex));
+
+        assert_eq!(cache.match_locations.len(), 1);
+        assert_eq!(cache.match_locations[0].row_idx, 1);
+    }
+
+    #[test]
+    fn filtered_layout_measurement_matches_wrapped_row_count() {
+        for (line, max_width) in [("", 4), ("abcdef", 2), ("a界b", 2), ("e\u{301}x", 1)] {
+            let measured = measure_line_and_append_match_locations(
+                line,
+                max_width,
+                &[],
+                0,
+                1,
+                &mut Vec::new(),
+            );
+
+            assert_eq!(measured, wrapped_row_count(line, max_width));
+        }
     }
 
     #[test]
