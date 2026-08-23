@@ -882,6 +882,61 @@ impl CopyRenderable {
         self.select_to_cursor_pos();
     }
 
+    fn logical_line_at_cursor(&self) -> Option<LogicalLine> {
+        self.delegate
+            .get_logical_lines(self.cursor.y..self.cursor.y + 1)
+            .into_iter()
+            .find(|line| line.contains_y(self.cursor.y))
+    }
+
+    fn move_to_logical_line_position(&mut self, position: LogicalLinePosition) {
+        let Some(line) = self.logical_line_at_cursor() else {
+            return;
+        };
+        let (y, x) = logical_line_position_target(&line, position);
+        self.cursor.x = x;
+        self.cursor.y = y;
+        self.select_to_cursor_pos();
+    }
+
+    fn move_by_logical_line(&mut self, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+
+        let Some(current) = self.logical_line_at_cursor() else {
+            return;
+        };
+        let dims = self.delegate.get_dimensions();
+        let max_row = dims.scrollback_top + dims.scrollback_rows as StableRowIndex;
+        let target_y = if delta < 0 {
+            if current.first_row <= dims.scrollback_top {
+                return;
+            }
+            current.first_row - 1
+        } else {
+            let target_y = current.first_row + current.physical_lines.len() as StableRowIndex;
+            if target_y >= max_row {
+                return;
+            }
+            target_y
+        };
+
+        let Some(target) = self
+            .delegate
+            .get_logical_lines(target_y..target_y + 1)
+            .into_iter()
+            .find(|line| line.contains_y(target_y))
+        else {
+            return;
+        };
+
+        let (y, x) = logical_line_vertical_target(&current, &target, self.cursor.x, self.cursor.y);
+        self.cursor.x = x;
+        self.cursor.y = y;
+        self.select_to_cursor_pos();
+    }
+
     fn move_to_selection_other_end(&mut self) {
         if let Some(old_start) = self.start {
             // Swap cursor & start of selection
@@ -1519,6 +1574,7 @@ impl Pane for CopyOverlay {
                     MoveToStartOfNextLine => render.move_to_start_of_next_line(),
                     MoveToSelectionOtherEnd => render.move_to_selection_other_end(),
                     MoveToSelectionOtherEndHoriz => render.move_to_selection_other_end_horiz(),
+                    MoveBackwardLogicalLine => render.move_by_logical_line(-1),
                     MoveBackwardWord => render.move_backward_one_word(),
                     MoveBackwardWhitespaceWord => {
                         render.move_whitespace_word(WhitespaceWordMotion::BackwardStart)
@@ -1526,6 +1582,7 @@ impl Pane for CopyOverlay {
                     MoveBackwardWhitespaceWordEnd => {
                         render.move_whitespace_word(WhitespaceWordMotion::BackwardEnd)
                     }
+                    MoveForwardLogicalLine => render.move_by_logical_line(1),
                     MoveForwardWord => render.move_forward_one_word(),
                     MoveForwardWordEnd => render.move_to_end_of_word(),
                     MoveForwardWhitespaceWord => {
@@ -1533,6 +1590,15 @@ impl Pane for CopyOverlay {
                     }
                     MoveForwardWhitespaceWordEnd => {
                         render.move_whitespace_word(WhitespaceWordMotion::ForwardEnd)
+                    }
+                    MoveToStartOfLogicalLine => {
+                        render.move_to_logical_line_position(LogicalLinePosition::Start)
+                    }
+                    MoveToStartOfLogicalLineContent => {
+                        render.move_to_logical_line_position(LogicalLinePosition::StartOfContent)
+                    }
+                    MoveToEndOfLogicalLineContent => {
+                        render.move_to_logical_line_position(LogicalLinePosition::EndOfContent)
                     }
                     MoveRight => render.move_right_single_cell(),
                     MoveLeft => render.move_left_single_cell(),
@@ -1909,6 +1975,137 @@ fn is_whitespace_word(word: &str) -> bool {
         c.is_whitespace()
     } else {
         false
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LogicalLinePosition {
+    Start,
+    StartOfContent,
+    EndOfContent,
+}
+
+fn logical_line_position_target(
+    line: &LogicalLine,
+    position: LogicalLinePosition,
+) -> (StableRowIndex, usize) {
+    let logical_x = match position {
+        LogicalLinePosition::Start => 0,
+        LogicalLinePosition::StartOfContent => line
+            .logical
+            .visible_cells()
+            .find(|cell| cell.str() != " ")
+            .map(|cell| cell.cell_index())
+            .unwrap_or(0),
+        LogicalLinePosition::EndOfContent => line
+            .logical
+            .visible_cells()
+            .filter(|cell| cell.str() != " ")
+            .last()
+            .map(|cell| cell.cell_index())
+            .unwrap_or(0),
+    };
+    line.logical_x_to_physical_coord(logical_x)
+}
+
+fn logical_line_vertical_target(
+    current: &LogicalLine,
+    target: &LogicalLine,
+    cursor_x: usize,
+    cursor_y: StableRowIndex,
+) -> (StableRowIndex, usize) {
+    let logical_x = current.xy_to_logical_x(cursor_x, cursor_y);
+    target.logical_x_to_physical_coord(logical_x)
+}
+
+#[cfg(test)]
+mod logical_line_tests {
+    use super::*;
+
+    fn logical_line(first_row: StableRowIndex, parts: &[&str]) -> LogicalLine {
+        let attrs = CellAttributes::default();
+        let mut physical_lines = parts
+            .iter()
+            .map(|part| Line::from_text(part, &attrs, SEQ_ZERO, None))
+            .collect::<Vec<_>>();
+        let last_idx = physical_lines.len().saturating_sub(1);
+        for line in physical_lines.iter_mut().take(last_idx) {
+            line.set_last_cell_was_wrapped(true, SEQ_ZERO);
+        }
+
+        LogicalLine {
+            physical_lines,
+            logical: Line::from_text(&parts.concat(), &attrs, SEQ_ZERO, None),
+            first_row,
+        }
+    }
+
+    #[test]
+    fn positions_map_across_wrapped_rows() {
+        let line = logical_line(10, &["  abc", "-def  "]);
+
+        assert_eq!(
+            logical_line_position_target(&line, LogicalLinePosition::Start),
+            (10, 0)
+        );
+        assert_eq!(
+            logical_line_position_target(&line, LogicalLinePosition::StartOfContent),
+            (10, 2)
+        );
+        assert_eq!(
+            logical_line_position_target(&line, LogicalLinePosition::EndOfContent),
+            (11, 3)
+        );
+    }
+
+    #[test]
+    fn blank_logical_lines_use_their_start_position() {
+        let line = logical_line(4, &["   ", "  "]);
+
+        assert_eq!(
+            logical_line_position_target(&line, LogicalLinePosition::StartOfContent),
+            (4, 0)
+        );
+        assert_eq!(
+            logical_line_position_target(&line, LogicalLinePosition::EndOfContent),
+            (4, 0)
+        );
+    }
+
+    #[test]
+    fn vertical_movement_preserves_the_logical_column() {
+        let current = logical_line(10, &["abcde", "fghij"]);
+        let target = logical_line(20, &["12345", "67890"]);
+
+        assert_eq!(
+            logical_line_vertical_target(&current, &target, 2, 11),
+            (21, 2)
+        );
+    }
+
+    #[test]
+    fn vertical_movement_preserves_columns_beyond_short_content() {
+        let current = logical_line(10, &["abcde", "fghij"]);
+        let target = logical_line(20, &["xy"]);
+
+        assert_eq!(
+            logical_line_vertical_target(&current, &target, 2, 11),
+            (20, 7)
+        );
+    }
+
+    #[test]
+    fn wide_cells_map_to_their_physical_rows() {
+        let line = logical_line(5, &[" 你", "好 "]);
+
+        assert_eq!(
+            logical_line_position_target(&line, LogicalLinePosition::StartOfContent),
+            (5, 1)
+        );
+        assert_eq!(
+            logical_line_position_target(&line, LogicalLinePosition::EndOfContent),
+            (6, 0)
+        );
     }
 }
 

@@ -76,6 +76,24 @@ The default key assignments in copy mode are as follows:
 | Move to other end of the selection| <kbd>o</kbd> |
 | Move to other end of the selection horizontally| <kbd>Shift</kbd> + <kbd>O</kbd> (useful in Rectangular mode) |
 
+### Moving by logical lines
+
+{{since('nightly')}}
+
+Terminal output can soft-wrap one logical line across multiple physical rows.
+The existing row motions continue to operate on physical rows. The following
+unbound actions are available when movement should treat wrapped rows as one
+logical line:
+
+* [MoveBackwardLogicalLine](config/lua/keyassignment/CopyMode/MoveBackwardLogicalLine.md) and
+  [MoveForwardLogicalLine](config/lua/keyassignment/CopyMode/MoveForwardLogicalLine.md) move
+  between logical lines while preserving the unwrapped logical column
+* [MoveToStartOfLogicalLine](config/lua/keyassignment/CopyMode/MoveToStartOfLogicalLine.md)
+  moves to the first cell of the logical line
+* [MoveToStartOfLogicalLineContent](config/lua/keyassignment/CopyMode/MoveToStartOfLogicalLineContent.md)
+  and [MoveToEndOfLogicalLineContent](config/lua/keyassignment/CopyMode/MoveToEndOfLogicalLineContent.md)
+  move to the first and last non-space cells of the logical line
+
 ### Selecting an entire shell command block
 
 {{since('nightly')}}
