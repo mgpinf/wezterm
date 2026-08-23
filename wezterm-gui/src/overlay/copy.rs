@@ -1043,6 +1043,38 @@ impl CopyRenderable {
         self.select_to_cursor_pos();
     }
 
+    fn move_whitespace_word(&mut self, motion: WhitespaceWordMotion) {
+        let dims = self.delegate.get_dimensions();
+        let max_row = dims.scrollback_top + dims.scrollback_rows as isize;
+        let mut y = self.cursor.y;
+        let mut cursor_x = Some(self.cursor.x);
+
+        loop {
+            let (top, lines) = self.delegate.get_lines(y..y + 1);
+            if let Some(line) = lines.first() {
+                if let Some(target_x) = whitespace_word_target(line, cursor_x, motion) {
+                    self.cursor.x = target_x;
+                    self.cursor.y = top;
+                    self.select_to_cursor_pos();
+                    return;
+                }
+            }
+
+            if motion.is_forward() {
+                if y + 1 >= max_row {
+                    return;
+                }
+                y += 1;
+            } else {
+                if y <= dims.scrollback_top {
+                    return;
+                }
+                y -= 1;
+            }
+            cursor_x = None;
+        }
+    }
+
     fn move_by_zone(&mut self, mut delta: isize, zone_type: Option<SemanticType>) {
         if delta == 0 {
             return;
@@ -1488,8 +1520,20 @@ impl Pane for CopyOverlay {
                     MoveToSelectionOtherEnd => render.move_to_selection_other_end(),
                     MoveToSelectionOtherEndHoriz => render.move_to_selection_other_end_horiz(),
                     MoveBackwardWord => render.move_backward_one_word(),
+                    MoveBackwardWhitespaceWord => {
+                        render.move_whitespace_word(WhitespaceWordMotion::BackwardStart)
+                    }
+                    MoveBackwardWhitespaceWordEnd => {
+                        render.move_whitespace_word(WhitespaceWordMotion::BackwardEnd)
+                    }
                     MoveForwardWord => render.move_forward_one_word(),
                     MoveForwardWordEnd => render.move_to_end_of_word(),
+                    MoveForwardWhitespaceWord => {
+                        render.move_whitespace_word(WhitespaceWordMotion::ForwardStart)
+                    }
+                    MoveForwardWhitespaceWordEnd => {
+                        render.move_whitespace_word(WhitespaceWordMotion::ForwardEnd)
+                    }
                     MoveRight => render.move_right_single_cell(),
                     MoveLeft => render.move_left_single_cell(),
                     MoveUp => render.move_up_single_row(),
@@ -1868,6 +1912,197 @@ fn is_whitespace_word(word: &str) -> bool {
     }
 }
 
+#[derive(Clone, Copy)]
+enum WhitespaceWordMotion {
+    BackwardStart,
+    BackwardEnd,
+    ForwardStart,
+    ForwardEnd,
+}
+
+impl WhitespaceWordMotion {
+    fn is_forward(self) -> bool {
+        matches!(self, Self::ForwardStart | Self::ForwardEnd)
+    }
+}
+
+fn whitespace_word_target(
+    line: &Line,
+    cursor_x: Option<usize>,
+    motion: WhitespaceWordMotion,
+) -> Option<usize> {
+    let mut spans = vec![];
+    let mut current_span: Option<Range<usize>> = None;
+
+    for cell in line.visible_cells() {
+        if cell.str().chars().all(char::is_whitespace) {
+            if let Some(span) = current_span.take() {
+                spans.push(span);
+            }
+            continue;
+        }
+
+        let cell_end = cell.cell_index().saturating_add(cell.width().max(1));
+        match &mut current_span {
+            Some(span) => span.end = cell_end,
+            None => current_span = Some(cell.cell_index()..cell_end),
+        }
+    }
+
+    if let Some(span) = current_span {
+        spans.push(span);
+    }
+
+    match motion {
+        WhitespaceWordMotion::BackwardStart => match cursor_x {
+            Some(cursor_x) => spans
+                .iter()
+                .rev()
+                .find(|span| span.start < cursor_x)
+                .map(|span| span.start),
+            None => spans.last().map(|span| span.start),
+        },
+        WhitespaceWordMotion::BackwardEnd => match cursor_x {
+            Some(cursor_x) => spans
+                .iter()
+                .rev()
+                .find(|span| span.end.saturating_sub(1) < cursor_x)
+                .map(|span| span.end - 1),
+            None => spans.last().map(|span| span.end - 1),
+        },
+        WhitespaceWordMotion::ForwardStart => match cursor_x {
+            Some(cursor_x) => spans
+                .iter()
+                .find(|span| span.start > cursor_x)
+                .map(|span| span.start),
+            None => spans.first().map(|span| span.start),
+        },
+        WhitespaceWordMotion::ForwardEnd => match cursor_x {
+            Some(cursor_x) => spans
+                .iter()
+                .find(|span| span.end.saturating_sub(1) > cursor_x)
+                .map(|span| span.end - 1),
+            None => spans.first().map(|span| span.end - 1),
+        },
+    }
+}
+
+#[cfg(test)]
+mod whitespace_word_tests {
+    use super::*;
+
+    fn line(text: &str) -> Line {
+        Line::from_text(text, &CellAttributes::default(), SEQ_ZERO, None)
+    }
+
+    #[test]
+    fn punctuation_is_part_of_a_whitespace_word() {
+        let line = line("git --work-tree=/tmp/repo status");
+
+        assert_eq!(
+            whitespace_word_target(&line, Some(0), WhitespaceWordMotion::ForwardStart),
+            Some(4)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(3), WhitespaceWordMotion::ForwardStart),
+            Some(4)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(4), WhitespaceWordMotion::ForwardStart),
+            Some(26)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(20), WhitespaceWordMotion::BackwardStart),
+            Some(4)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(4), WhitespaceWordMotion::BackwardStart),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn word_end_motions_skip_the_current_endpoint() {
+        let line = line("git --work-tree=/tmp/repo status");
+
+        assert_eq!(
+            whitespace_word_target(&line, Some(4), WhitespaceWordMotion::ForwardEnd),
+            Some(24)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(24), WhitespaceWordMotion::ForwardEnd),
+            Some(31)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(20), WhitespaceWordMotion::BackwardEnd),
+            Some(2)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(25), WhitespaceWordMotion::BackwardEnd),
+            Some(24)
+        );
+    }
+
+    #[test]
+    fn row_boundary_search_uses_the_first_or_last_word() {
+        let line = line("git --work-tree=/tmp/repo status");
+
+        assert_eq!(
+            whitespace_word_target(&line, None, WhitespaceWordMotion::ForwardStart),
+            Some(0)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, None, WhitespaceWordMotion::ForwardEnd),
+            Some(2)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, None, WhitespaceWordMotion::BackwardStart),
+            Some(26)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, None, WhitespaceWordMotion::BackwardEnd),
+            Some(31)
+        );
+    }
+
+    #[test]
+    fn unicode_cell_widths_are_preserved() {
+        let line = line("αβ 你好 z");
+
+        assert_eq!(
+            whitespace_word_target(&line, Some(0), WhitespaceWordMotion::ForwardStart),
+            Some(3)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(3), WhitespaceWordMotion::ForwardEnd),
+            Some(6)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(6), WhitespaceWordMotion::BackwardStart),
+            Some(3)
+        );
+        assert_eq!(
+            whitespace_word_target(&line, Some(8), WhitespaceWordMotion::BackwardEnd),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn blank_lines_have_no_whitespace_words() {
+        let line = line(" \t\u{00a0}");
+
+        for motion in [
+            WhitespaceWordMotion::BackwardStart,
+            WhitespaceWordMotion::BackwardEnd,
+            WhitespaceWordMotion::ForwardStart,
+            WhitespaceWordMotion::ForwardEnd,
+        ] {
+            assert_eq!(whitespace_word_target(&line, Some(0), motion), None);
+            assert_eq!(whitespace_word_target(&line, None, motion), None);
+        }
+    }
+}
+
 pub fn search_key_table() -> KeyTable {
     let mut table = KeyTable::default();
     for (key, mods, action) in [
@@ -2018,9 +2253,29 @@ pub fn copy_key_table() -> KeyTable {
             KeyAssignment::CopyMode(CopyModeAssignment::MoveForwardWord),
         ),
         (
+            WKeyCode::Char('W'),
+            Modifiers::NONE,
+            KeyAssignment::CopyMode(CopyModeAssignment::MoveForwardWhitespaceWord),
+        ),
+        (
+            WKeyCode::Char('W'),
+            Modifiers::SHIFT,
+            KeyAssignment::CopyMode(CopyModeAssignment::MoveForwardWhitespaceWord),
+        ),
+        (
             WKeyCode::Char('e'),
             Modifiers::NONE,
             KeyAssignment::CopyMode(CopyModeAssignment::MoveForwardWordEnd),
+        ),
+        (
+            WKeyCode::Char('E'),
+            Modifiers::NONE,
+            KeyAssignment::CopyMode(CopyModeAssignment::MoveForwardWhitespaceWordEnd),
+        ),
+        (
+            WKeyCode::Char('E'),
+            Modifiers::SHIFT,
+            KeyAssignment::CopyMode(CopyModeAssignment::MoveForwardWhitespaceWordEnd),
         ),
         (
             WKeyCode::LeftArrow,
@@ -2041,6 +2296,16 @@ pub fn copy_key_table() -> KeyTable {
             WKeyCode::Char('b'),
             Modifiers::NONE,
             KeyAssignment::CopyMode(CopyModeAssignment::MoveBackwardWord),
+        ),
+        (
+            WKeyCode::Char('B'),
+            Modifiers::NONE,
+            KeyAssignment::CopyMode(CopyModeAssignment::MoveBackwardWhitespaceWord),
+        ),
+        (
+            WKeyCode::Char('B'),
+            Modifiers::SHIFT,
+            KeyAssignment::CopyMode(CopyModeAssignment::MoveBackwardWhitespaceWord),
         ),
         (
             WKeyCode::Char('0'),

@@ -53,6 +53,26 @@ return {
         action = act.CopyMode 'JumpToMatchingBracket',
       },
       {
+        key = 'B',
+        mods = 'NONE',
+        action = act.CopyMode 'MoveBackwardWhitespaceWord',
+      },
+      {
+        key = 'B',
+        mods = 'SHIFT',
+        action = act.CopyMode 'MoveBackwardWhitespaceWord',
+      },
+      {
+        key = 'E',
+        mods = 'NONE',
+        action = act.CopyMode 'MoveForwardWhitespaceWordEnd',
+      },
+      {
+        key = 'E',
+        mods = 'SHIFT',
+        action = act.CopyMode 'MoveForwardWhitespaceWordEnd',
+      },
+      {
         key = 'F',
         mods = 'NONE',
         action = act.CopyMode { JumpBackward = { prev_char = false } },
@@ -127,6 +147,16 @@ return {
         key = 'V',
         mods = 'SHIFT',
         action = act.CopyMode { SetSelectionMode = 'Line' },
+      },
+      {
+        key = 'W',
+        mods = 'NONE',
+        action = act.CopyMode 'MoveForwardWhitespaceWord',
+      },
+      {
+        key = 'W',
+        mods = 'SHIFT',
+        action = act.CopyMode 'MoveForwardWhitespaceWord',
       },
       {
         key = '^',
